@@ -1,0 +1,65 @@
+# Build trees and compiled outputs
+build/
+build_*/
+cmake-build*/
+CMakeFiles/
+CMakeCache.txt
+Testing/
+compile_commands.json
+*.o
+*.obj
+*.a
+*.elf
+*.bin
+*.hex
+*.map
+*.su
+*.d
+*.md5
+
+# Local release artifacts and historical staging
+/release/
+/staging/
+/staging_*/
+/release_staging*/
+
+# Machine-specific configuration; retain reviewed sdkconfig.defaults
+/sdkconfig
+/sdkconfig.old
+sdkconfig.*.old
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local test evidence: publish sanitized reports deliberately
+/host_tests/evidence*/
+/evidence/
+/logs/
+*.log
+
+# References and hardware materials are outside the source repository
+/reference/
+/references/
+/reference_*/
+/lab101/
+/hardware/
+/schematics/
+/bom/
+
+# Local assistant/editor state and caches
+.claude/
+.codex/
+.idea/
+.vscode/
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.swp
+*.swo
