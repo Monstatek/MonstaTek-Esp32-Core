@@ -8,11 +8,11 @@
 | SDK used for reviewed build | ESP-IDF v6.0.1 |
 | Candidate identity | rc12 |
 | Application size | 1,443,072 bytes |
-| Application SHA-256 | `52c004dfd25469626c012209a5bc701343facf99092ae5460dc4414da6813760` |
-| Reviewed source commit | `e0df42e45915ad05efd9c173f362e0a7c7a0e664` |
+| Application SHA-256 | `00c11f8bb069f840c572df3bd5fed0b82a7a0d507657d6d93b89d2507642f790` |
+| Reviewed source commit | `9dedbb12cdbd4f977693858e917f37c50ba14a48` |
 | Merged-package size | 1,508,608 bytes |
-| Merged-package MD5 | `34658FF390F1C6F6A6CF0F6791BF0B9A` |
-| Merged-package SHA-256 | `C0971F75DCC3C26DDD89CAF8FCA0421C9BA92AA98C8F0449645C5478D6B4A0EE` |
+| Merged-package MD5 | `814C2FF53B9B3C771658C07F651B890F` |
+| Merged-package SHA-256 | `0455E4B77F6814B3EB56B3D19E0232515DCDAF43838D0E74CE6280CEF3DCD2B6` |
 
 This application hash identifies the application image; the merged-package
 fields identify the complete flash image (bootloader + partition table +
@@ -67,6 +67,10 @@ correct build of an earlier, incompletely-synced state of this repository.
    so a rejected package leaves the requested output location exactly as
    it was found. All three additions have end-to-end tests exercising the
    real packaging entry point.
+4. This record itself was updated to the resulting final source commit
+   and re-verified artifact hashes below. This is a documentation-only
+   change; see "Clean-source verification" for the exact one-file diff
+   this update itself makes relative to the reviewed source commit.
 
 See `docs/DECISION_LOG.md` for the itemized technical history. No List A
 behavior, protocol value, identifier, or opcode changed at any point in
@@ -80,8 +84,8 @@ The reported host suite contained 70 tests, with full ASan/UBSan and TSan runs p
 
 ## Clean-source verification
 
-On 2026-09-08, a fresh clone of this repository's local commit
-`e0df42e45915ad05efd9c173f362e0a7c7a0e664` (not a working-tree copy) was built
+On 2026-09-09, a fresh clone of this repository's local commit
+`9dedbb12cdbd4f977693858e917f37c50ba14a48` (not a working-tree copy) was built
 in isolation.
 
 - Both source generators were byte-idempotent, verified independently inside
@@ -91,9 +95,9 @@ in isolation.
   focused Community/C3 deferred-completion test additionally passed 100/100
   adversarial repetitions under each configuration.
 - A fresh ESP-IDF v6.0.1 ESP32-C6 build succeeded and was independently
-  repeated (same build directory, re-run after CMake regeneration); both
+  reconfirmed (same build directory, re-run after CMake regeneration); both
   produced the identical application: 1,443,072 bytes, SHA-256
-  `52c004dfd25469626c012209a5bc701343facf99092ae5460dc4414da6813760`.
+  `00c11f8bb069f840c572df3bd5fed0b82a7a0d507657d6d93b89d2507642f790`.
 - The resource gate passed with 109,144 bytes of free DIRAM; the stack-usage
   gate passed 9/9 chains, measured from a separate disposable build directory
   so the reviewed build directory itself was never touched by the
@@ -106,7 +110,14 @@ in isolation.
   the audited application above at its documented offset (0x010000); the
   MD5 sidecar is exactly 32 uppercase hex bytes with no whitespace; the
   packaging manifest correctly recorded the exact source commit and a
-  clean (non-dirty) working tree.
+  clean (non-dirty) working tree -- using the same packaging tool that
+  built this package, now independently verifying that build/source-root
+  binding rather than trusting it.
+
+This record's own update is a documentation-only commit on top of
+`9dedbb12cdbd4f977693858e917f37c50ba14a48` -- the exact source commit and
+artifact identity above describe that commit, not this record's own later
+commit, which touches no build-affecting file.
 
 This establishes source-set completeness, application reproducibility for
 this exact reviewed source commit (see the embedded-version-string note
