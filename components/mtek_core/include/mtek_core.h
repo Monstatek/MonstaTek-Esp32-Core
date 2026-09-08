@@ -53,7 +53,7 @@ typedef struct mtk_request_ctx {
     uint32_t boot_epoch;
     uint8_t authorization_level;  /* Sec 10 of 002-service-registry.md: Phase 1 always 0 */
     mtk_sink_t sink;
-    /* P0 correction (Codex read-only re-audit, "genuine peer-session
+    /* P0 correction (follow-up read-only audit, "genuine peer-session
      * ownership"): 0 means "not session-scoped" (every adapter except
      * native SPI -- Bedge/C3 and factory UART have no peer-reboot concept
      * of their own, matching mtk_core.h's own established boot_epoch doc
@@ -119,7 +119,7 @@ void mtk_core_init(uint32_t boot_epoch);
 uint32_t mtk_core_boot_epoch(void);
 void mtk_core_reset(uint32_t new_boot_epoch); /* Sec 8: invalidates every token/cursor/etc from the prior epoch */
 
-/* P0 correction (Codex read-only re-audit, "genuine peer-session
+/* P0 correction (follow-up read-only audit, "genuine peer-session
  * ownership"): a SEPARATE, transport-facing counter from boot_epoch --
  * deliberately never touched by mtk_core_reset/a global core reset, and
  * never mistaken for "the ESP itself rebooted" (mtk_request_ctx_t's own
@@ -134,7 +134,7 @@ void mtk_core_reset(uint32_t new_boot_epoch); /* Sec 8: invalidates every token/
 uint32_t mtk_core_session_generation(void);
 uint32_t mtk_core_bump_session_generation(void); /* returns the NEW (post-bump) generation */
 
-/* P0 correction (Codex read-only re-audit, "final P0 concurrency-closure
+/* P0 correction (follow-up read-only audit, "final P0 concurrency-closure
  * round", issue 2 "worker-finalization/session-reset race"): a worker
  * can win mtk_op_claim_finalization/mtk_op_transition_by_token for its
  * own token an instant BEFORE a concurrent peer-session reset bumps
@@ -145,7 +145,7 @@ uint32_t mtk_core_bump_session_generation(void); /* returns the NEW (post-bump) 
  * ONE moment, not "is my session still the current one right up until
  * I actually publish."
  *
- * Further correction (Codex read-only re-audit, "one P0 race remains"):
+ * Further correction (follow-up read-only audit, "one P0 race remains"):
  * an EARLIER version of this fix was a single point-in-time re-check
  * (`mtk_op_confirm_still_current_session`) taken right before publish --
  * but a single check only proves the generation had not YET changed at
@@ -210,7 +210,7 @@ void mtk_op_set_won_hook(mtk_op_won_hook_t hook);
 mtk_operation_record_t *mtk_op_alloc(uint16_t service_id, uint16_t opcode, uint64_t now_ms, int *out_no_memory);
 mtk_operation_record_t *mtk_op_find(uint32_t token, uint32_t boot_epoch);
 
-/* Release-tooling-round P0 correction (Codex independent audit, "the same
+/* Release-tooling-round P0 correction (independent audit, "the same
  * slot-reuse/ABA hazard remains through every production mtk_op_alloc()
  * call site"): a caller that dereferences the raw pointer mtk_op_alloc
  * returns for anything beyond the SAME expression that read it risks the
@@ -358,7 +358,7 @@ int mtk_op_transition_by_token_family(uint32_t token, uint32_t boot_epoch,
 int mtk_op_claim_finalization_family(uint32_t token, uint32_t boot_epoch,
                                      uint16_t expected_service_id, uint16_t expected_start_opcode);
 
-/* Release-tooling-round P0 correction (Codex independent audit, "make old
+/* Release-tooling-round P0 correction (independent audit, "make old
  * tokens unusable"): immediately frees a TERMINAL record's slot (rather
  * than waiting out MTK_OP_RETENTION_MS), so a subsequent mtk_op_snapshot/
  * mtk_op_transition_by_token/mtk_op_find for (token, boot_epoch) reports
@@ -373,7 +373,7 @@ int mtk_op_claim_finalization_family(uint32_t token, uint32_t boot_epoch,
  * retention window. */
 int mtk_op_evict(uint32_t token, uint32_t boot_epoch);
 
-/* P0 correction (Codex read-only re-audit, "genuine peer-session
+/* P0 correction (follow-up read-only audit, "genuine peer-session
  * ownership" -- "Invalidate every old-session operation token, including
  * terminal retained tokens"): sweeps every one of the fixed 8 table
  * slots and evicts (mtk_op_evict's own semantics) every TERMINAL one

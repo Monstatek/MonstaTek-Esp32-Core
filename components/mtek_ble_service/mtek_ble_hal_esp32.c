@@ -47,7 +47,7 @@ static atomic_int s_synced;
  * early, so mtek_ble_hal_esp32_init (which creates it) can appear before
  * the GATT client section further down without a forward-declaration. */
 static SemaphoreHandle_t s_notify_mutex;
-/* P0 correction (Codex read-only re-audit, "Round 8: final concurrency
+/* P0 correction (follow-up read-only audit, "Round 8: final concurrency
  * and resource-failure closure", item 4 "audit every BLE xSemaphoreCreate
  * Binary and s_notify_mutex allocation before use"): xSemaphoreCreateMutex
  * can fail (heap exhaustion) and every call site below previously called
@@ -107,7 +107,7 @@ static void on_sync(void) {
 }
 static void host_task(void *param) { (void)param; nimble_port_run(); nimble_port_freertos_deinit(); }
 
-/* P0 correction (Codex read-only re-audit, "Round 8: final concurrency and
+/* P0 correction (follow-up read-only audit, "Round 8: final concurrency and
  * resource-failure closure", item 4): a failed s_notify_mutex allocation
  * previously left every conn_gap_cb/esp32_gatt_poll_notify/_disconnected/
  * notify_dropped_count call site taking/giving a NULL FreeRTOS handle --

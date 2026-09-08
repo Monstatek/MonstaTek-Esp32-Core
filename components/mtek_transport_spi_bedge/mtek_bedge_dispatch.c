@@ -356,7 +356,7 @@ static void extract_sta_scan_generation(bedge_capture_t *cap, const mtk_async_fr
 static void extract_gatt_connection_token(bedge_capture_t *cap, const mtk_async_frame_t *ev) {
     mtk_gatt_connect_complete_ev_t e; memset(&e, 0, sizeof(e));
     mtk_decode(&mtk_gatt_connect_complete_ev_t_desc, &e, ev->body, ev->body_len, NULL);
-    /* RC12 Astra-closure item 2: retain the real terminal status (OK on a
+    /* RC12 RC12 closure item 2: retain the real terminal status (OK on a
      * live connection, TIMEOUT on a failed one) so the sync path can NAK a
      * genuine failure; a connection_token is stored ONLY on success. */
     cap->event_status = e.status;
@@ -1090,7 +1090,7 @@ static void handle_gatt_connect(mtk_bedge_dispatch_ctx_t *dctx, const uint8_t *p
     /* Deferred: the continuation harvests the connection_token (for a later
      * GATT_DISCONNECT) and delivers the bare-status reply. */
     if (cap->deferred) return;
-    /* RC12 Astra-closure item 2: honest terminal-failure semantics, kept
+    /* RC12 RC12 closure item 2: honest terminal-failure semantics, kept
      * equivalent to the deferred continuation below. Three outcomes:
      *   - real connection (terminal event OK, token captured): store the
      *     token, bare RESP OK;
@@ -1200,7 +1200,7 @@ void mtek_bedge_dispatch_poll_outbound(mtk_bedge_dispatch_ctx_t *dctx,
                     mtk_gatt_connect_complete_ev_t e; memset(&e, 0, sizeof(e));
                     mtk_decode(&mtk_gatt_connect_complete_ev_t_desc, &e, f.body, f.body_len, NULL);
                     dctx->pending_event_ok = (e.status == MTK_STATUS_OK);
-                    dctx->pending_event_status = (uint8_t)e.status; /* RC12 Astra-closure item 2: retain for a failure NAK */
+                    dctx->pending_event_status = (uint8_t)e.status; /* RC12 RC12 closure item 2: retain for a failure NAK */
                     dctx->pending_event_conn_token = e.connection_token;
                 }
             }
@@ -1236,7 +1236,7 @@ void mtek_bedge_dispatch_poll_outbound(mtk_bedge_dispatch_ctx_t *dctx,
             if (dctx->pending_event_ok) { dctx->sta_scan_generation = dctx->pending_event_generation; dctx->sta_scan_has_generation = 1; }
             cap->status = MTK_STATUS_OK; cap->body_len = 0;
         } else { /* MTK_BEDGE_CONT_GATT */
-            /* RC12 Astra-closure item 2: honest terminal-failure semantics,
+            /* RC12 RC12 closure item 2: honest terminal-failure semantics,
              * equivalent to handle_gatt_connect's synchronous tail. A real
              * connection -> store the token and a bare RESP OK; a terminal
              * failure (TIMEOUT) -> the mapped NAK and NO stored token, so a

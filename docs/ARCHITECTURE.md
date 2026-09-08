@@ -48,10 +48,11 @@ boundary and must never define or bloat the canonical core.
   compiled in unconditionally, never module-gated); stable radio/
   transport/storage primitives (Wi-Fi/BLE HAL abstractions, capture
   service); capability negotiation (`GET_CAPABILITIES`/`GET_VERSION`).
-  Raw TX and the monitor-mode primitives used by deauthentication,
-  handshake capture, and packet capture live in canonical core because
-  they are general, reusable platform capabilities. SoftAP and PMKID
-  capture remain explicit unsupported capability placeholders.
+  SoftAP, raw-TX, and monitor-mode primitives live in canonical core
+  because they are general, reusable platform capabilities (a station-
+  mode radio can always be put into AP or monitor mode; that is not a
+  community-specific behavior) even though their full request/response
+  logic is not yet implemented this session (`docs/PROVENANCE.md`).
 
 ### Transport adapters (three, boot-exclusive, `SPI_PROTOCOL_V1.md`
 "Runtime transport selection")

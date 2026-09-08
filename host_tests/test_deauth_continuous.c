@@ -125,7 +125,7 @@ MTK_TEST_MAIN_BEGIN
     mtk_spi_native_header_t hdr = base_req_hdr(start_op->service_id, start_op->opcode, 1, (uint16_t)blen);
     mtek_spi_native_dispatch_feed_cell(&dctx, &hdr, buf, 1, &resp_hdr, resp_payload, &resp_len);
 
-    /* RC11 verification correction (Codex independent audit): mtek_spi_
+    /* RC11 verification correction (independent audit): mtek_spi_
      * native_dispatch.c's own dispatch_complete_message (via its shared
      * try_deliver_frame helper) explicitly permits the just-dispatched
      * request to already be answered by the time THIS call returns -- "the
@@ -134,14 +134,14 @@ MTK_TEST_MAIN_BEGIN
      * not an implementation accident. Requiring IDLE unconditionally here
      * was therefore flaky by design (a fast worker thread can race its own
      * accept-response push ahead of this call's own final delivery check),
-     * not merely rare under contention -- Codex reproduced it directly
-     * (one full TSan-suite failure, 1 failure in 10 isolated repetitions).
+     * not merely rare under contention -- the follow-up audit reproduced it
+     * directly (one full TSan-suite failure, 1 failure in 10 isolated repetitions).
      * Both protocol-legal outcomes are accepted below; every other
      * class/status is rejected, and if no valid token is obtained this
      * test fails cleanly with a single explicit early exit -- never by
      * falling through into the rest of the test body, which would spend
      * thousands of iterations re-asserting against an invalid all-zero
-     * token (exactly Codex's own "cascading assertions" symptom: every
+     * token (exactly the follow-up audit's own "cascading assertions" symptom: every
      * DEAUTH_STATUS call below would get NOT_FOUND instead of OK, in a
      * loop bounded at 4000 iterations). */
     uint32_t op_token = 0;

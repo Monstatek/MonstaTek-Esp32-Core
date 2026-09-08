@@ -1,6 +1,6 @@
-/* Release-tooling-round P0 correction, ROUND 5 (Codex read-only re-audit,
- * "final P0 concurrency-closure round"), FURTHER CORRECTED (Codex read-
- * only re-audit, "one P0 race remains" -- see mtk_op_begin_publish_guard's
+/* Release-tooling-round P0 correction, ROUND 5 (follow-up read-only audit,
+ * "final P0 concurrency-closure round"), FURTHER CORRECTED (follow-up
+ * read-only audit, "one P0 race remains" -- see mtk_op_begin_publish_guard's
  * own doc comment in mtek_core.h for the full account): round 4 closed
  * the arbiter-release-timing hazard for STA_CONNECT/BLE_SCAN/GATT_CONNECT's
  * own peer-reset path, but a further read-only re-audit found four
@@ -236,7 +236,7 @@ static void test_atomic_arbiter_release(void) {
 
 /* ==== B. Worker-finalization/session-reset race (issue 2). =============
  *
- * P0 correction (Codex read-only re-audit, "one P0 race remains"): the
+ * P0 correction (follow-up read-only audit, "one P0 race remains"): the
  * FIRST version of this test paused a worker inside mtk_op_confirm_
  * still_current_session (a single point-in-time re-check) and then sent
  * a real HELLO SYNCHRONOUSLY on the main thread while the worker sat

@@ -26,7 +26,7 @@
 static uint64_t s_now = 1000;
 static uint64_t now_ms(void) { return s_now; }
 
-/* Release-tooling-round P0 correction (Codex independent audit, "Native SPI
+/* Release-tooling-round P0 correction (independent audit, "Native SPI
  * confuses the STM32 and ESP boot epochs"): deliberately DISTINCT from every
  * peer/dctx epoch value this file uses (0x1234, 0x5678) -- proves the ESP's
  * own canonical epoch (mtk_core_boot_epoch()) is used for operation-token

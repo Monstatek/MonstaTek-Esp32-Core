@@ -43,14 +43,14 @@ idf_component_register(
 # produced byte-identical `mtkcore.bin` output (see docs/DECISION_LOG.md
 # for the exact verification and its result) -- not asserted from this
 # constant's mere existence.
-# RC11 release-finalization correction (Codex independent audit): this
+# RC11 release-finalization correction (independent audit): this
 # was left at "rc7" through every RC8-RC11 correction round -- a real,
 # wire-visible staleness (GET_VERSION exposes this exact string) the
 # audit correctly flagged as making the whole release package's own
 # identity untrustworthy regardless of how much source-level work had
 # actually landed since rc7 was set. Bumped to "rc11" to match the real
 # state of the tree this candidate is packaged from.
-# RC12 final blocker correction (Codex read-only audit): the deferred
+# RC12 final blocker correction (read-only audit): the deferred
 # Community response/event state machine and the cross-operation-token
 # family validation landed since rc11 was set; bumped to "rc12" so the
 # GET_VERSION-exposed identity matches the tree this candidate is

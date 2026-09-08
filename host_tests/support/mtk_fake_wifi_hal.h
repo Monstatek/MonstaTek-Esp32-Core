@@ -21,7 +21,7 @@ typedef struct {
     mtk_hal_ap_record_t ap_results[8]; unsigned ap_count;
     mtk_hal_station_record_t sta_results[8]; unsigned sta_count;
     mtk_hal_connect_result_t connect_result; int connect_rc;
-    /* P0 correction (Codex read-only re-audit, "genuine peer-session
+    /* P0 correction (follow-up read-only audit, "genuine peer-session
      * ownership"): mirrors promisc_start_delay_ms's own established
      * precedent -- an optional REAL delay (ms) before connect() checks its
      * own injected result, giving a test's own concurrent thread a
@@ -144,7 +144,7 @@ typedef struct {
     unsigned ap_scan_poll_count_per_call;
     unsigned ap_scan_polls_done;
     unsigned ap_scan_call_count;
-    /* P0 correction (Codex read-only re-audit, "final focused
+    /* P0 correction (follow-up read-only audit, "final focused
      * concurrency-correction round", issue 4): when set, ap_scan_cancel()
      * still records that cancellation was genuinely signalled
      * (ap_scan_cancel_count still increments) but deliberately does NOT

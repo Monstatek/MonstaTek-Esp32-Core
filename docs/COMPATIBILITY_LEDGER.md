@@ -9,10 +9,15 @@ SPI v1.
 
 ## What this module is
 
-A translation layer between a community/legacy SPI wire protocol
-(Bedge/C3-lineage `m1_link`) and the canonical `mtk_router_dispatch` API.
-It exists so a legacy/community host can reach the firmware's canonical
-services. Canonical behavior is not shaped to match adapter quirks.
+An independently clean-room-implemented (`docs/PROVENANCE.md`) optional
+translation layer: a community/legacy SPI wire protocol (Bedge/C3-lineage
+`m1_link`, confirmed via `001-profile-bootstrap-feasibility.md` and
+`002-adapter-translation-matrix.md` in the accepted facts-only contract
+package) on one side, and the canonical `mtk_router_dispatch` API on the
+other. It exists so a legacy/community host that only speaks that wire
+protocol can still reach this firmware's real canonical services --
+never the other way around: canonical behavior is never shaped to match
+this module's quirks.
 
 ## Where the detailed citations live
 
@@ -38,7 +43,7 @@ or any canonical-core service's own documentation.**
 
 ## Naming
 
-- RC11 release-finalization correction (Codex independent audit): renamed
+- RC11 release-finalization correction (independent audit): renamed
   from "M1 Compatibility SPI". User-facing name (Kconfig, release notes,
   this project's own documentation prose): **M1 Community Compatibility**
   (or **M1 Community Compatibility (legacy Bedge/C3 wire profile)** on
@@ -51,11 +56,12 @@ or any canonical-core service's own documentation.**
   git version control to review it against, under this session's time
   budget).
 
-## Scope limits
+## Known scope limits (see `docs/PROVENANCE.md` for the full, current list)
 
-- Compatibility is claimed per implemented and tested operation, not for every
-  third-party application or undocumented extension.
-- The 12-opcode BLE compatibility family and `WIFI_MODE_GET`/`SET` remain
-  capability-`DISABLED` for this profile.
-- Unsupported or unconfirmed mappings must remain explicit; the adapter must
-  never guess a payload layout or fabricate success.
+- Two opcodes (`HANDSHAKE_READ`, `GATT_CONNECT`... now closed this
+  review round from newly-supplied exact facts) and a handful of others
+  whose exact Bedge-side wire byte layout remains unconfirmed are
+  explicit, cited, tested blockers -- never guessed.
+- The 12-opcode BLE compatibility family and `WIFI_MODE_GET`/`SET` are
+  capability-`DISABLED` for this profile per the accepted contract itself
+  -- not a module-boundary decision, a contract fact.

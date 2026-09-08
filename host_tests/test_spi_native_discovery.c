@@ -30,7 +30,7 @@
 
 #define MTK_DISCOVERY_CELL_SIZE MTK_BEDGE_CELL_SIZE /* 512: shared discovery-phase transaction size */
 
-/* Release-tooling-round P0 correction (Codex independent audit, "Native SPI
+/* Release-tooling-round P0 correction (independent audit, "Native SPI
  * confuses the STM32 and ESP boot epochs"): deliberately DISTINCT from the
  * peer's own HELLO epoch (0x1234) below -- proves HELLO_ACK stamps the
  * ESP's own canonical epoch (mtk_core_boot_epoch()), never the peer's. */

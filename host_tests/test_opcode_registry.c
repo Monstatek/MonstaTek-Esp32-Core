@@ -40,7 +40,7 @@ MTK_TEST_MAIN_BEGIN
     /* DEAUTH_START/STOP/STATUS: List B, SUPPORTED by default for every
      * profile except factory-UART's DEAUTH_STATUS (no status query
      * command exists on the factory console), per 002-service-registry.md
-     * Sec 7 / Codex Review 10 item 1. */
+     * Sec 7 / contract review 10 item 1. */
     const mtk_opcode_entry_t *deauth_start = mtk_opcode_find(0x0001, 0x0010);
     MTK_CHECK_EQ(deauth_start->cap_native, MTK_CAP_SUPPORTED);
     MTK_CHECK_EQ(deauth_start->cap_factory_uart, MTK_CAP_SUPPORTED);

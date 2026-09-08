@@ -93,7 +93,7 @@ typedef struct {
 } mtk_spi_native_sync_capture_t;
 
 typedef struct {
-    /* Release-tooling-round P0 correction (Codex independent audit, "Native
+    /* Release-tooling-round P0 correction (independent audit, "Native
      * SPI confuses the STM32 and ESP boot epochs"): this field tracks ONLY
      * the currently-recognized PEER (STM32) boot epoch -- adopted from an
      * inbound HELLO's own header field (SPI_PROTOCOL_V1.md: "boot_epoch:

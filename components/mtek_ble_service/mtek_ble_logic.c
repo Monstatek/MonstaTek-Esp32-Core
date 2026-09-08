@@ -32,7 +32,7 @@ void mtek_ble_set_hal(const mtk_ble_hal_t *hal) { s_hal = hal; }
 void mtek_ble_service_init(uint64_t (*now_ms_fn)(void)) { s_now_ms = now_ms_fn; }
 static uint64_t now_ms(void) { return s_now_ms ? s_now_ms() : 0; }
 
-/* P0 correction (Codex read-only re-audit, "next focused P0 session-
+/* P0 correction (follow-up read-only audit, "next focused P0 session-
  * publication closure round") -- see mtek_ble_service.h's own doc
  * comment on mtek_ble_service_set_lock for the full rationale. */
 static mtk_ble_lock_fn s_ble_lock, s_ble_unlock;
@@ -104,7 +104,7 @@ static void handle_ble_scan_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry
     if (mtk_decode(op->req_desc, &req, req_bytes, req_len, NULL) != MTK_CODEC_OK) { respond_empty(ctx, MTK_STATUS_PROTOCOL_ERROR); return; }
     if (mtk_arbiter_acquire(MTK_ARB_BS, 0) != MTK_ARB_GRANT_OK) { respond_empty(ctx, MTK_STATUS_BUSY); return; }
     int no_mem = 0;
-    /* Release-tooling-round P0 correction (Codex independent audit): the
+    /* Release-tooling-round P0 correction (independent audit): the
      * identity is copied out atomically at mint time -- no raw record
      * pointer is retained past this point, including across the ACCEPTED
      * response and the (potentially HAL-synchronous) scan call below. */
@@ -121,7 +121,7 @@ static void handle_ble_scan_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry
     int n = s_hal && s_hal->scan ? s_hal->scan(req.mode, req.duration_ms, namebuf, s_scan.items, BLE_MAX_DEVICES) : 0;
     if (n < 0) n = 0;
     if ((unsigned)n > BLE_MAX_DEVICES) n = BLE_MAX_DEVICES;
-    /* P0 correction (Codex read-only re-audit, "genuine peer-session
+    /* P0 correction (follow-up read-only audit, "genuine peer-session
      * ownership" -- "prevent late workers ... from publishing state,
      * emitting responses/events, or releasing a newer operation's radio
      * lease"): state publish/event emission below remain gated on
@@ -133,7 +133,7 @@ static void handle_ble_scan_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry
      * was blocked, this path must never publish s_scan or emit an event
      * into a session that has already moved on.
      *
-     * P0 correction (Codex read-only re-audit, "final P0 concurrency-
+     * P0 correction (follow-up read-only audit, "final P0 concurrency-
      * closure round", issue 2, further corrected by "one P0 race
      * remains"): `won` alone only proves nobody else finalized this
      * token BEFORE this exact instant -- a peer-session reset can still
@@ -152,7 +152,7 @@ static void handle_ble_scan_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry
     if (won) {
         mtk_op_transition_by_token(id.token, id.boot_epoch, MTK_OPS_COMPLETED, MTK_STATUS_OK, now_ms());
     }
-    /* P0 correction (Codex read-only re-audit, "final focused
+    /* P0 correction (follow-up read-only audit, "final focused
      * concurrency-correction round", issue 2; "final P0 concurrency-
      * closure round", issue 1): the arbiter release is OUTSIDE the `won`
      * gate -- a peer-reset canceller may already have won the op-table
@@ -187,7 +187,7 @@ static void handle_ble_scan_stop(mtk_request_ctx_t *ctx, const mtk_opcode_entry_
                                   const uint8_t *req_bytes, size_t req_len) {
     mtk_ble_scan_stop_req_t req; memset(&req, 0, sizeof(req));
     if (mtk_decode(op->req_desc, &req, req_bytes, req_len, NULL) != MTK_CODEC_OK) { respond_empty(ctx, MTK_STATUS_PROTOCOL_ERROR); return; }
-    /* Release-tooling-round P0 correction (Codex independent audit,
+    /* Release-tooling-round P0 correction (independent audit,
      * "operation-table pointer has a find/unlock/use ABA race"): never
      * retain a raw mtk_op_find() pointer past the lock that produced it --
      * a concurrent transition/gc/alloc on another worker can evict and
@@ -200,7 +200,7 @@ static void handle_ble_scan_stop(mtk_request_ctx_t *ctx, const mtk_opcode_entry_
     /* RC12 item 1: family gate (BLE_SCAN_START) -- a non-BLE_SCAN token is
      * rejected NOT_FOUND before any transition/arbiter interaction. */
     if (!mtk_op_snapshot_family(req.operation_token, ctx->boot_epoch, BLE_SERVICE_ID, BLE_SCAN_START_OPCODE, &snap)) { respond_empty(ctx, MTK_STATUS_NOT_FOUND); return; }
-    /* P0 correction (Codex read-only re-audit, "final P0 concurrency-
+    /* P0 correction (follow-up read-only audit, "final P0 concurrency-
      * closure round", issue 3 "Correct ordinary STOP paths as well as
      * peer-reset paths ... BLE_SCAN_STOP ... must not release, restore,
      * or reuse radio ownership while a blocking HAL scan/connect
@@ -272,7 +272,7 @@ static void handle_ble_adv_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry_
     if (mtk_decode(op->req_desc, &req, req_bytes, req_len, NULL) != MTK_CODEC_OK) { respond_empty(ctx, MTK_STATUS_PROTOCOL_ERROR); return; }
     if (mtk_arbiter_acquire(MTK_ARB_BA, 0) != MTK_ARB_GRANT_OK) { respond_empty(ctx, MTK_STATUS_BUSY); return; }
     int no_mem = 0;
-    /* Release-tooling-round P0 correction (Codex independent audit): the
+    /* Release-tooling-round P0 correction (independent audit): the
      * identity is copied out atomically at mint time -- no raw record
      * pointer is retained past this point. */
     mtk_op_id_t id = mtk_op_alloc_id(op->service_id, op->opcode, now_ms(), &no_mem);
@@ -298,7 +298,7 @@ static void handle_ble_adv_stop(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t
                                  const uint8_t *req_bytes, size_t req_len) {
     mtk_ble_adv_stop_req_t req; memset(&req, 0, sizeof(req));
     if (mtk_decode(op->req_desc, &req, req_bytes, req_len, NULL) != MTK_CODEC_OK) { respond_empty(ctx, MTK_STATUS_PROTOCOL_ERROR); return; }
-    /* Release-tooling-round P0 correction (Codex independent audit): see
+    /* Release-tooling-round P0 correction (independent audit): see
      * handle_ble_scan_stop's doc comment above -- token-based snapshot/
      * transition, never a retained mtk_op_find() pointer. */
     mtk_operation_record_t snap;
@@ -372,7 +372,7 @@ static void handle_ble_adv_status(mtk_request_ctx_t *ctx, const mtk_opcode_entry
  * data-racy": TOKEN, not a retained `mtk_operation_record_t *` -- same
  * ABA-hazard rationale as mtek_wifi_logic.c's s_deauth/s_hs and
  * mtek_capture_logic.c's s_cap (each service's own struct doc comment). */
-/* P0 correction (Codex read-only re-audit, "next focused P0 session-
+/* P0 correction (follow-up read-only audit, "next focused P0 session-
  * publication closure round", requirement 3): session_generation, the
  * ORIGINATING session's own (mtk_request_ctx_t's own field, 0 for every
  * non-native-SPI adapter -- never fenced), stored once at handle_
@@ -406,7 +406,7 @@ static void handle_signal_meter_start(mtk_request_ctx_t *ctx, const mtk_opcode_e
     if (!s_tick_task_ready) { respond_empty(ctx, MTK_STATUS_NOT_READY); return; }
     if (mtk_arbiter_acquire(MTK_ARB_SM, 0) != MTK_ARB_GRANT_OK) { respond_empty(ctx, MTK_STATUS_BUSY); return; }
     int no_mem = 0;
-    /* Release-tooling-round P0 correction (Codex independent audit): the
+    /* Release-tooling-round P0 correction (independent audit): the
      * identity is copied out atomically at mint time -- no raw record
      * pointer is retained past this point, including across the ACCEPTED
      * response and the immediate mtek_ble_signal_meter_tick() call just
@@ -428,7 +428,7 @@ static void handle_signal_meter_start(mtk_request_ctx_t *ctx, const mtk_opcode_e
 }
 
 void mtek_ble_signal_meter_tick(void) {
-    /* P0 correction (Codex read-only re-audit, "next focused P0 session-
+    /* P0 correction (follow-up read-only audit, "next focused P0 session-
      * publication closure round", requirement 4): every field this tick
      * touches is now protected by ble_lock -- this struct previously had
      * NO lock at all, a genuine data race against handle_signal_meter_
@@ -443,7 +443,7 @@ void mtek_ble_signal_meter_tick(void) {
     uint32_t boot_epoch = s_sig.ctx.boot_epoch;
     ble_unlock();
     if (!active) return;
-    /* Release-tooling-round P0 correction (Codex independent audit): a
+    /* Release-tooling-round P0 correction (independent audit): a
      * retained mtk_op_find() pointer here would still race a concurrent
      * STOP (handle_signal_meter_stop) between this check and the FAILED
      * transition below, even though s_sig.token itself (a plain uint32_t)
@@ -493,7 +493,7 @@ void mtek_ble_signal_meter_tick(void) {
             ble_lock(); if (s_sig.token == token) s_sig.active = 0; ble_unlock();
             return;
         }
-        /* P0 correction (Codex read-only re-audit, "final P0 concurrency-
+        /* P0 correction (follow-up read-only audit, "final P0 concurrency-
          * closure round", issue 1): atomic ownership-checked release,
          * matching every other class release site across this tree --
          * this one was missed in that round since s_sig had no lock/
@@ -553,7 +553,7 @@ static void handle_signal_meter_stop(mtk_request_ctx_t *ctx, const mtk_opcode_en
     /* Gated on mtk_op_transition_by_token_family's own return value, matching
      * every other STOP-vs-natural-completion race fixed this round. */
     if (mtk_op_transition_by_token_family(req.operation_token, ctx->boot_epoch, BLE_SERVICE_ID, SIGNAL_METER_START_OPCODE, MTK_OPS_STOPPED, MTK_STATUS_OK, now_ms())) {
-        /* P0 correction (Codex read-only re-audit, "final P0 concurrency-
+        /* P0 correction (follow-up read-only audit, "final P0 concurrency-
          * closure round", issue 1, applied here in the following round
          * once s_sig gained a lock): atomic ownership-checked release. */
         mtk_arbiter_release_if_owner(MTK_ARB_SM, req.operation_token);
@@ -571,7 +571,7 @@ static void handle_signal_meter_stop(mtk_request_ctx_t *ctx, const mtk_opcode_en
 
 typedef struct { uint32_t connection_token; uint16_t attr_handle; uint8_t mode; uint8_t active; } gatt_sub_t;
 typedef struct { uint16_t start_handle; uint16_t end_handle; } gatt_svc_range_t;
-/* P0 correction (Codex read-only re-audit, "next focused P0 session-
+/* P0 correction (follow-up read-only audit, "next focused P0 session-
  * publication closure round", requirements 3/4): every field below is
  * now protected by ble_lock/ble_unlock -- this struct previously had NO
  * lock of any kind, a genuine data race between request handlers (a
@@ -645,7 +645,7 @@ static int gatt_snapshot_identity_with_range(uint32_t connection_token, uint16_t
     return ok;
 }
 
-/* P0 correction (Codex read-only re-audit, "Round 8: final concurrency and
+/* P0 correction (follow-up read-only audit, "Round 8: final concurrency and
  * resource-failure closure", item 2 "make all GATT session access
  * identity-safe" / "do not use vendor_handle alone as identity; handles
  * can be reused"): every handler below that needs vendor_handle for a HAL
@@ -693,7 +693,7 @@ static void handle_gatt_connect(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t
     if (mtk_decode(op->req_desc, &req, req_bytes, req_len, NULL) != MTK_CODEC_OK) { respond_empty(ctx, MTK_STATUS_PROTOCOL_ERROR); return; }
     if (mtk_arbiter_acquire(MTK_ARB_GC, 0) != MTK_ARB_GRANT_OK) { respond_empty(ctx, MTK_STATUS_BUSY); return; }
     int no_mem = 0;
-    /* Release-tooling-round P0 correction (Codex independent audit): the
+    /* Release-tooling-round P0 correction (independent audit): the
      * identity is copied out atomically at mint time -- no raw record
      * pointer is retained past this point, including across the ACCEPTED
      * response and the (potentially slow/blocking) gatt_connect HAL call
@@ -707,7 +707,7 @@ static void handle_gatt_connect(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t
 
     uint16_t vh = 0;
     int rc = s_hal && s_hal->gatt_connect ? s_hal->gatt_connect(to_hal_mac(req.target.addr), req.target.addr_type, 30000, &vh) : -1;
-    /* P0 correction (Codex read-only re-audit, "genuine peer-session
+    /* P0 correction (follow-up read-only audit, "genuine peer-session
      * ownership" -- "prevent late workers ... from publishing state,
      * emitting responses/events, or releasing a newer operation's radio
      * lease"): gatt_connect() above can block for up to its own 30000ms
@@ -721,7 +721,7 @@ static void handle_gatt_connect(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t
     uint8_t connected_now = (rc == 0);
     mtk_op_state_t final_state = connected_now ? MTK_OPS_COMPLETED : MTK_OPS_TIMED_OUT;
     uint8_t final_status = connected_now ? MTK_STATUS_OK : MTK_STATUS_TIMEOUT;
-    /* P0 correction (Codex read-only re-audit, "final focused
+    /* P0 correction (follow-up read-only audit, "final focused
      * concurrency-correction round", issue 3: "Replace class-only cleanup
      * with token-owned/conditional release ... apply the same ownership
      * rule anywhere an old worker could release or tear down newer
@@ -739,7 +739,7 @@ static void handle_gatt_connect(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t
      * defense-in-depth against ever releasing a newer GATT_CONNECT's own
      * lease should that invariant change.
      *
-     * P0 correction (Codex read-only re-audit, "final P0 concurrency-
+     * P0 correction (follow-up read-only audit, "final P0 concurrency-
      * closure round", issue 2, further corrected by "one P0 race
      * remains"): winning this transition alone only proves nobody else
      * finalized this token BEFORE this exact instant -- a peer-session
@@ -757,7 +757,7 @@ static void handle_gatt_connect(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t
     if (guard_open) {
         mtk_gatt_connect_complete_ev_t ev = {0}; ev.operation_token = id.token;
         if (connected_now) {
-            /* P0 correction (Codex read-only re-audit, "next focused P0
+            /* P0 correction (follow-up read-only audit, "next focused P0
              * session-publication closure round", requirement 4): ble_lock
              * now protects this publish against mtek_ble_gatt_tick's own
              * concurrent read/write of the SAME fields (a genuine,
@@ -822,7 +822,7 @@ static void handle_gatt_disconnect(mtk_request_ctx_t *ctx, const mtk_opcode_entr
     ble_unlock();
     if (do_disconnect) {
         if (s_hal && s_hal->gatt_disconnect) s_hal->gatt_disconnect(vendor_handle);
-        /* P0 correction (Codex read-only re-audit, "final P0
+        /* P0 correction (follow-up read-only audit, "final P0
          * concurrency-closure round", issue 1): atomic ownership-checked
          * release (mtk_arbiter_release_if_owner) instead of an
          * unconditional mtk_arbiter_release, for the same defense-in-
@@ -1258,7 +1258,7 @@ uint8_t mtek_ble_gatt_take_remote_disconnect_notice(uint8_t *reason_out) {
 }
 
 void mtek_ble_gatt_tick(void) {
-    /* P0 correction (Codex read-only re-audit, "next focused P0 session-
+    /* P0 correction (follow-up read-only audit, "next focused P0 session-
      * publication closure round", requirement 4): s_gatt previously had
      * NO lock of any kind -- a genuine data race between this tick (a
      * separate, independently-scheduled task on a real target,
@@ -1268,7 +1268,7 @@ void mtek_ble_gatt_tick(void) {
      * UNLOCKED and (for the notify path) un-guarded until the final
      * validated publish -- never hold a lock or the publish guard across
      * an external call. */
-    /* P0 correction (Codex read-only re-audit, "Round 8: final concurrency
+    /* P0 correction (follow-up read-only audit, "Round 8: final concurrency
      * and resource-failure closure", item 2 "do not use vendor_handle
      * alone as identity; handles can be reused"): connection_token is now
      * part of this snapshot too, and part of BOTH re-validations below --
@@ -1316,7 +1316,7 @@ void mtek_ble_gatt_tick(void) {
         if (s_gatt.connected && s_gatt.connection_token == connection_token && s_gatt.vendor_handle == vendor_handle) {
             s_gatt.connected = 0;
             ble_unlock();
-            /* P0 correction (Codex read-only re-audit, "final P0
+            /* P0 correction (follow-up read-only audit, "final P0
              * concurrency-closure round", issue 1): atomic ownership-
              * checked release, matching every other GC release site in
              * this file. */
@@ -1368,7 +1368,7 @@ void mtek_ble_gatt_tick(void) {
     }
 }
 
-/* Release-tooling-round P0 correction (Codex independent audit, "peer
+/* Release-tooling-round P0 correction (independent audit, "peer
  * session invalidation"): see mtek_ble_service.h's own doc comment on this
  * function's declaration for the full rationale. BLE_SCAN's own handler
  * always runs its scan and finalizes synchronously within one call (this
@@ -1388,7 +1388,7 @@ mtk_op_id_t mtek_ble_cancel_active_for_peer_reset(void) {
     uint32_t epoch = mtk_core_boot_epoch();
     switch (active) {
         case MTK_ARB_BS:
-            /* P0 correction (Codex read-only re-audit, "final focused
+            /* P0 correction (follow-up read-only audit, "final focused
              * concurrency-correction round", issue 2): deliberately does
              * NOT release MTK_ARB_BS here -- the old scan() call has no
              * cancel hook and may still genuinely be running on another
@@ -1412,7 +1412,7 @@ mtk_op_id_t mtek_ble_cancel_active_for_peer_reset(void) {
         case MTK_ARB_SM:
             if (mtk_op_transition_by_token(tok, epoch, MTK_OPS_STOPPED, MTK_STATUS_OK, now_ms())) {
                 mtk_arbiter_release(MTK_ARB_SM);
-                /* P0 correction (Codex read-only re-audit, "Round 8: final
+                /* P0 correction (follow-up read-only audit, "Round 8: final
                  * concurrency and resource-failure closure", item 2 "audit
                  * every s_gatt read/write" -- s_sig shares the SAME lock
                  * domain): this write reached s_sig completely unlocked,
@@ -1439,7 +1439,7 @@ mtk_op_id_t mtek_ble_cancel_active_for_peer_reset(void) {
              * DISCONNECT carve-out: not operation-token-addressed for
              * teardown), where the live resource is the CONNECTION itself.
              *
-             * P0 correction (Codex read-only re-audit, "final focused
+             * P0 correction (follow-up read-only audit, "final focused
              * concurrency-correction round", issues 2/3): case (1)
              * deliberately does NOT release MTK_ARB_GC here -- the old
              * blocking gatt_connect() call has no cancel hook and may
@@ -1456,7 +1456,7 @@ mtk_op_id_t mtek_ble_cancel_active_for_peer_reset(void) {
             if (mtk_op_transition_by_token(tok, epoch, MTK_OPS_STOPPED, MTK_STATUS_OK, now_ms())) {
                 id.token = tok; id.boot_epoch = epoch;
             } else {
-                /* P0 correction (Codex read-only re-audit, "Round 8: final
+                /* P0 correction (follow-up read-only audit, "Round 8: final
                  * concurrency and resource-failure closure", item 2 "audit
                  * every s_gatt read/write"): connected/connection_token/
                  * vendor_handle were previously read, and connected=0
@@ -1476,7 +1476,7 @@ mtk_op_id_t mtek_ble_cancel_active_for_peer_reset(void) {
                 ble_unlock();
                 if (was_connected) {
                     if (s_hal && s_hal->gatt_disconnect) s_hal->gatt_disconnect(vendor_handle);
-                    /* P0 correction (Codex read-only re-audit, "final P0
+                    /* P0 correction (follow-up read-only audit, "final P0
                      * concurrency-closure round", issue 1): atomic
                      * ownership-checked release, matching every other GC
                      * release site in this file. */

@@ -261,7 +261,7 @@ static int find_json_hex_field(const uint8_t *buf, long size, const char *field_
 
 /* Same idea as find_json_hex_field, for a plain unquoted JSON integer
  * field (`"field_name": 12345`). RC11 release-finalization correction
- * (Codex independent audit) "strengthen merged-image-map validation...
+ * (independent audit) "strengthen merged-image-map validation...
  * application size": app_size_bytes is this test's own independent,
  * C-side cross-check of the same field tools/package_release.py's own
  * Python-side validate_map_against_bin already enforces -- an
@@ -357,7 +357,7 @@ int main(void) {
     snprintf(manifest_path, sizeof(manifest_path), "%s/PACKAGING_MANIFEST.md", release_dir);
     printf("test_release_artifact: resolved release directory: %s\n", release_dir);
 
-    /* RC11 release-finalization correction (Codex independent audit): "In
+    /* RC11 release-finalization correction (independent audit): "In
      * the final release-artifact test configuration, missing MtkCore.bin,
      * MtkCore.md5, merged_image_map.json, partitions.csv, or PACKAGING_
      * MANIFEST.md must fail. Do not return success with a NOTE. If a
@@ -518,8 +518,7 @@ int main(void) {
                 }
             }
 
-            /* RC11 release-finalization correction (Codex independent
-             * audit) "strengthen merged-image-map validation... require
+            /* RC11 release-finalization correction (independent audit) "strengthen merged-image-map validation... require
              * and verify... application size": independent C-side
              * cross-check of app_size_bytes against the real merged
              * binary's own application segment length. */

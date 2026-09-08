@@ -1,4 +1,4 @@
-/* Release-tooling-round P0 correction, ROUND 7 (Codex read-only re-audit,
+/* Release-tooling-round P0 correction, ROUND 7 (follow-up read-only audit,
  * "next focused P0 session-publication closure round"): rounds 5/6 closed
  * the publish/reset race for STA_CONNECT alone (mtk_op_begin_publish_guard,
  * test_p0_concurrency_closure_round5.c's own test_won_session_reset_race).
@@ -40,7 +40,7 @@
  *      full SIGNAL_METER_START/tick/STOP cycle with both explicitly
  *      unregistered.
  *
- *      P0 correction (Codex read-only re-audit, "Round 8: final
+ *      P0 correction (follow-up read-only audit, "Round 8: final
  *      concurrency and resource-failure closure", item 5): an EARLIER
  *      version of this doc comment (and of main/app_main.c's own design)
  *      mischaracterized this as itself a SAFE degraded mode on a real

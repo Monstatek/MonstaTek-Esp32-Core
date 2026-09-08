@@ -417,7 +417,7 @@ MTK_TEST_MAIN_BEGIN
     }
 
     /* ===================================================================
-     * PHASE 6 (RC12 Astra-closure item 1): the EXACT original dispatch
+     * PHASE 6 (RC12 RC12 closure item 1): the EXACT original dispatch
      * boundary. blocking_runner returns only after the worker has emitted
      * ACCEPTED and parked in the gated HAL, so dispatch_async_with_event's
      * OWN INITIAL DRAIN sees {response present, terminal event withheld} --
@@ -476,7 +476,7 @@ MTK_TEST_MAIN_BEGIN
     }
 
     /* ===================================================================
-     * PHASE 7 (RC12 Astra-closure item 1, event-only preservation).
+     * PHASE 7 (RC12 RC12 closure item 1, event-only preservation).
      *
      * Production ordering makes event-before-response IMPOSSIBLE: every
      * ACCEPTED_ASYNC handler calls respond(ACCEPTED) BEFORE the blocking HAL
@@ -528,7 +528,7 @@ MTK_TEST_MAIN_BEGIN
     }
 
     /* ===================================================================
-     * PHASE 8 (RC12 Astra-closure item 2): honest GATT terminal-failure.
+     * PHASE 8 (RC12 RC12 closure item 2): honest GATT terminal-failure.
      * A failed connect (HAL rc != 0 -> terminal GATT_CONNECT_COMPLETE status
      * TIMEOUT -- mtek_ble_logic.c handle_gatt_connect's only failure status)
      * must NAK, store NO token, and leave a later GATT_DISCONNECT unable to

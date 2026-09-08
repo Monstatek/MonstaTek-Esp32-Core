@@ -1,4 +1,4 @@
-/* Release-tooling-round P0 correction (Codex independent audit, "Native SPI
+/* Release-tooling-round P0 correction (independent audit, "Native SPI
  * confuses the STM32 and ESP boot epochs"): mtek_spi_native_dispatch.c used
  * to adopt a real peer's own random HELLO boot_epoch into dctx->boot_epoch,
  * then reuse that SAME field both for the canonical request context's
@@ -11,9 +11,9 @@
  * epoch, the dctx seed, and mtk_core's own epoch (0x1234 or
  * MTK_TEST_BOOT_EPOCH), which could never distinguish "coincidentally
  * equal" from "correctly independent" -- exactly why this defect reached
- * this point undetected by the existing suite (Codex's own audit finding).
+ * this point undetected by the existing suite (follow-up audit finding).
  *
- * Release-tooling-round P0 correction, ROUND 2 (Codex read-only re-audit,
+ * Release-tooling-round P0 correction, ROUND 2 (follow-up read-only audit,
  * "the new peer-reboot test encodes the wrong lifecycle"): this test's own
  * FIRST version wrongly asserted that an operation started under
  * PEER_EPOCH_A stays fully usable (STATUS/STOP both succeeding) after a

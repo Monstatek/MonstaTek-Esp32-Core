@@ -1,4 +1,4 @@
-/* Release-tooling-round P0 correction, ROUND 3 (Codex read-only re-audit,
+/* Release-tooling-round P0 correction, ROUND 3 (follow-up read-only audit,
  * "genuine peer-session generation ownership"): two scenarios that
  * specifically need the real native-SPI wire/dctx layer (unlike
  * test_peer_session_invalidation_services.c's own direct per-service
@@ -166,7 +166,7 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(resp_hdr.msg_class, MTK_SPI_CLASS_HELLO_ACK);
         MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_NONE); /* nothing was ever minted for the stale request */
 
-        /* P0 correction (Codex read-only re-audit, "final focused
+        /* P0 correction (follow-up read-only audit, "final focused
          * concurrency-correction round"), adversarial test: "Old deferred
          * request ID N -> peer HELLO/reset -> new request with the same
          * ID N before the old worker wakes." request_id=100's own
@@ -236,7 +236,7 @@ MTK_TEST_MAIN_BEGIN
             MTK_CHECK_EQ(resp_hdr.status, MTK_STATUS_OK);
         }
 
-        /* P0 correction (Codex read-only re-audit, "final focused
+        /* P0 correction (follow-up read-only audit, "final focused
          * concurrency-correction round", issue 1): async_trampoline no
          * longer calls the original sink's emit_response at all for a
          * stale request -- it releases its router pool slot in silence.

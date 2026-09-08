@@ -53,10 +53,10 @@ Required List B (never module-gated, always compiled in): deauthentication
 (`DEAUTH_START/STOP/STATUS`, all three target modes), WPA handshake
 capture, MonstaShark capture.
 
-Raw TX and the monitor-mode paths used by deauthentication, handshake
-capture, and MonstaShark capture are implemented and not module-gated.
-SoftAP and PMKID capture are not module-gated, but remain unsupported at
-the service-logic layer.
+SoftAP, raw-TX, and monitor-mode canonical opcodes are not module-gated
+(candidates for canonical-core "general reusable platform capability"
+status per `docs/ARCHITECTURE.md`) but are also not yet implemented at
+the service-logic layer this session (`docs/PROVENANCE.md`).
 
 ## Release artifact naming (owner-approved, coordinated change)
 

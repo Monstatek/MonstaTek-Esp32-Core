@@ -6,7 +6,7 @@
 static uint32_t s_boot_epoch;
 static uint32_t s_next_token_seq;
 static mtk_operation_record_t s_ops[MTK_BUDGET_MAX_OPERATION_TOKENS];
-/* P0 correction (Codex read-only re-audit, "genuine peer-session
+/* P0 correction (follow-up read-only audit, "genuine peer-session
  * ownership"): see mtek_core.h's own doc comment on mtk_core_session_
  * generation/mtk_core_bump_session_generation -- deliberately separate
  * from s_boot_epoch above, never touched by anything but native SPI's
@@ -55,7 +55,7 @@ uint32_t mtk_core_session_generation(void) {
     return g;
 }
 
-/* P0 correction (Codex read-only re-audit, "one P0 race remains"): a
+/* P0 correction (follow-up read-only audit, "one P0 race remains"): a
  * lock DISTINCT from s_lock/s_unlock above -- see mtk_op_begin_publish_
  * guard's own doc comment (mtek_core.h) for the full self-deadlock
  * rationale. Acquired here, briefly, around the bump itself (never

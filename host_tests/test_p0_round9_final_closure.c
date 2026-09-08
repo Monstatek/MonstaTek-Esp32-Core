@@ -1,5 +1,5 @@
-/* Release-tooling-round P0 correction, ROUND 9 (based on Codex's Round 8
- * read-only re-audit): six further gaps found past round 8's own
+/* Release-tooling-round P0 correction, ROUND 9 (based on the Round 8
+ * follow-up read-only audit): six further gaps found past round 8's own
  * concurrency and resource-failure closure:
  *
  *  1. mtek_wifi_hal_esp32_init() could fail (a required mutex/event-group/

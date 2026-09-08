@@ -15,7 +15,7 @@ void mtek_wifi_service_tick(void);
 /* Restore prior radio state and release its lease only when restoration
  * succeeds. Failure quarantines the radio behind the existing lease.
  *
- * P0 correction (Codex read-only re-audit, "final P0 concurrency-closure
+ * P0 correction (follow-up read-only audit, "final P0 concurrency-closure
  * round", issue 1 "audit all production call sites, including Wi-Fi
  * restore/release paths -- not only GATT"): `owner_token` is the calling
  * operation's own token; the release below goes through mtk_arbiter_
@@ -50,7 +50,7 @@ const mtk_wifi_hal_t *mtek_wifi_get_hal(void); /* reused by mtek_capture_service
 typedef void (*mtk_wifi_lock_fn)(void);
 void mtek_wifi_service_set_lock(mtk_wifi_lock_fn lock, mtk_wifi_lock_fn unlock);
 
-/* Release-tooling-round P0 correction (Codex independent audit, "peer
+/* Release-tooling-round P0 correction (independent audit, "peer
  * session invalidation"): SPI_PROTOCOL_V1.md's own "Reset and
  * resynchronization" rule requires a changed peer boot_epoch (a native SPI
  * peer reboot) to invalidate "in-flight requests ... and operation tokens

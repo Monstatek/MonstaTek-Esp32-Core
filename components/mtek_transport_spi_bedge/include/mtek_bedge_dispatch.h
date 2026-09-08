@@ -27,7 +27,7 @@ typedef struct {
     uint32_t scan_generation;
     uint8_t got_connection_token;
     uint32_t connection_token;
-    /* RC12 Astra-closure item 2 "honest GATT terminal-failure semantics":
+    /* RC12 RC12 closure item 2 "honest GATT terminal-failure semantics":
      * the terminal event's own canonical status (MTK_STATUS_OK on a real
      * connect, MTK_STATUS_TIMEOUT on a failed one -- mtek_ble_logic.c
      * handle_gatt_connect's only two terminal outcomes). Lets the GATT
@@ -144,7 +144,7 @@ typedef struct {
     uint8_t pending_response_status;   /* its canonical status */
     uint8_t pending_have_event;        /* the awaited terminal event has arrived */
     uint8_t pending_event_ok;          /* that event's own status was OK (GATT) */
-    uint8_t pending_event_status;      /* RC12 Astra-closure item 2: the terminal
+    uint8_t pending_event_status;      /* RC12 RC12 closure item 2: the terminal
                                         * event's canonical status, so a deferred
                                         * GATT failure maps to the correct NAK
                                         * instead of an unconditional OK */

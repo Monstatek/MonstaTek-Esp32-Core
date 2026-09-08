@@ -96,11 +96,11 @@ static const char *TAG = "mtek_spi";
 
 static void IRAM_ATTR spi_post_setup_cb(spi_slave_transaction_t *t) {
     (void)t;
-    gpio_set_level(PIN_HANDSHAKE, 1); /* armed & safe to clock */
+    gpio_set_level(PIN_HANDSHAKE, 1); /* raise HANDSHAKE: peer may now clock this transaction */
 }
 static void IRAM_ATTR spi_post_trans_cb(spi_slave_transaction_t *t) {
     (void)t;
-    gpio_set_level(PIN_HANDSHAKE, 0); /* transfer done; re-arm before next */
+    gpio_set_level(PIN_HANDSHAKE, 0); /* drop HANDSHAKE now that the transfer finished; ready for the next one */
 }
 
 /* RC12 hardening round, item 4 (P1/P2): returns 0 only if every GPIO

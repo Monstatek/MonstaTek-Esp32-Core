@@ -6,7 +6,7 @@
 
 typedef struct {
     mtk_hal_ble_adv_t scan_results[8]; unsigned scan_count;
-    /* P0 correction (Codex read-only re-audit, "final focused
+    /* P0 correction (follow-up read-only audit, "final focused
      * concurrency-correction round"): mirrors mtk_fake_wifi_hal.h's own
      * connect_delay_ms/promisc_start_delay_ms precedent -- an optional
      * REAL delay (ms) before scan()/gatt_connect() check their own
@@ -41,8 +41,8 @@ typedef struct {
     int remote_disconnect_pending; /* test sets this to simulate a real BLE_GAP_EVENT_DISCONNECT */
     uint8_t remote_disconnect_reason; /* RC8 independent audit P0-6: test sets this to simulate a real HCI-level reason code */
     uint32_t notify_dropped_count; /* RC7 independent audit item 9: test sets this to simulate real HAL-side overflow */
-    unsigned gatt_disconnect_call_count; /* P0 correction (Codex read-only re-audit, "genuine peer-session ownership"): proves a peer-reset invalidation genuinely tore down a live/mid-connect GATT session */
-    /* P0 correction (Codex read-only re-audit, "Round 8: final concurrency
+    unsigned gatt_disconnect_call_count; /* P0 correction (follow-up read-only audit, "genuine peer-session ownership"): proves a peer-reset invalidation genuinely tore down a live/mid-connect GATT session */
+    /* P0 correction (follow-up read-only audit, "Round 8: final concurrency
      * and resource-failure closure", item 2): mirrors scan_delay_ms/gatt_
      * connect_delay_ms's own established pattern -- an optional REAL delay
      * (ms) before gatt_discover()/gatt_read() check their own injected
@@ -69,7 +69,7 @@ typedef struct {
 static mtk_fake_ble_state_t g_fake_ble;
 static inline void mtk_fake_ble_reset(void) { memset(&g_fake_ble, 0, sizeof(g_fake_ble)); }
 
-/* P0 correction (Codex read-only re-audit, "final focused concurrency-
+/* P0 correction (follow-up read-only audit, "final focused concurrency-
  * correction round"): mirrors mtk_fake_wifi_hal.h's own established lock
  * pattern exactly -- a real TSan run against this round's own new
  * concurrent BLE_SCAN/GATT_CONNECT tests caught a genuine data race
@@ -113,7 +113,7 @@ static void fake_ble_gatt_disconnect(uint16_t vendor_handle) {
 }
 static int fake_ble_gatt_discover(uint16_t vendor_handle, mtk_hal_gatt_service_t *out, unsigned max_out) {
     (void)vendor_handle;
-    /* P0 correction (Codex read-only re-audit, "Round 8: final concurrency
+    /* P0 correction (follow-up read-only audit, "Round 8: final concurrency
      * and resource-failure closure", item 2 test coverage): gatt_op_
      * delay_ms exists precisely so a test can reconfigure g_fake_ble.
      * gatt_service_count/gatt_services[] on a DIFFERENT thread while this

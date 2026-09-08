@@ -1,4 +1,4 @@
-/* RC12 hardware-compatibility round 2 (Codex read-only gate): "the actual
+/* RC12 hardware-compatibility round 2 (read-only gate): "the actual
  * UART command-processing loop is still created only after the same
  * unconditional Wi-Fi/NimBLE initialization span ... RC12 can falsely
  * announce readiness and then fail the mode command exactly as RC11 did."

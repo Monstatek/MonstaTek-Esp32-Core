@@ -102,7 +102,7 @@ static struct {
      * fix for s_hs and its handle_deauth_start's own established
      * rationale for its background send loop. */
     uint32_t boot_epoch;
-    /* P0 correction (Codex read-only re-audit, "next focused P0 session-
+    /* P0 correction (follow-up read-only audit, "next focused P0 session-
      * publication closure round", requirement 3 "store and validate the
      * originating session generation for every long-lived callback/
      * tick/session object"): mtk_request_ctx_t's own session_generation
@@ -205,7 +205,7 @@ static int frame_matches_filter(const uint8_t *frame, uint16_t len, const mtk_ca
 }
 
 static void frame_cb(void *user, const uint8_t *frame, uint16_t len, int8_t rssi, uint8_t channel) {
-    /* P0 correction (Codex read-only re-audit, "Round 8: final concurrency
+    /* P0 correction (follow-up read-only audit, "Round 8: final concurrency
      * and resource-failure closure", item 3 "close promiscuous-callback
      * session ABA"): `user` is now this exact registration's own
      * immutable token, captured once at handle_capture_start's own
@@ -243,7 +243,7 @@ static void frame_cb(void *user, const uint8_t *frame, uint16_t len, int8_t rssi
     if (!mtk_op_snapshot(registered_token, boot_epoch, &cap_snap)) return;
     if (mtk_op_state_is_terminal(cap_snap.state) || cap_snap.state == MTK_OPS_STOPPING) return;
 
-    /* P0 correction (Codex read-only re-audit, "next focused P0 session-
+    /* P0 correction (follow-up read-only audit, "next focused P0 session-
      * publication closure round"): the op-table check above only proves
      * this session was not YET finalized at that exact instant -- a
      * concurrent peer-session reset (which itself finalizes an active
@@ -427,7 +427,7 @@ static void handle_capture_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry_
     mtk_arbiter_grant_t g = mtk_arbiter_acquire(MTK_ARB_M, 0);
     if (g != MTK_ARB_GRANT_OK) { respond_empty(ctx, MTK_STATUS_BUSY); return; }
     int no_mem = 0;
-    /* Release-tooling-round P0 correction (Codex independent audit): the
+    /* Release-tooling-round P0 correction (independent audit): the
      * identity is copied out atomically at mint time -- no raw record
      * pointer is retained past this point, including across the ACCEPTED
      * response and the promisc_start call below (which can synchronously
@@ -522,7 +522,7 @@ void mtek_capture_set_hop_tick_pause_hook(mtk_capture_hop_tick_pause_hook_t hook
  * symbol was not renamed), this is this whole session's own general
  * periodic driver, called regardless of whether hop mode is active. */
 void mtek_capture_channel_hop_tick(uint64_t now) {
-    /* P0 correction (Codex read-only re-audit, "Round 8: final concurrency
+    /* P0 correction (follow-up read-only audit, "Round 8: final concurrency
      * and resource-failure closure", item 3 "put every s_cap token/epoch/
      * session read under cap_lock"): token/boot_epoch were previously read
      * completely UNLOCKED here -- a genuine data race against cap_lock-
@@ -606,7 +606,7 @@ void mtek_capture_channel_hop_tick(uint64_t now) {
      * service.h's own doc comment. */
     if (s_hop_tick_pause_hook) s_hop_tick_pause_hook();
 
-    /* P0 correction (Codex read-only re-audit, "next focused P0 session-
+    /* P0 correction (follow-up read-only audit, "next focused P0 session-
      * publication closure round"): the real radio channel switch below
      * is a HAL round-trip that must never be held under the publish
      * guard (requirement 5: the guard covers only final validation,
@@ -640,7 +640,7 @@ void mtek_capture_channel_hop_tick(uint64_t now) {
     mtk_op_end_publish_guard();
 }
 
-/* Release-tooling-round P0 correction (Codex independent audit, "peer
+/* Release-tooling-round P0 correction (independent audit, "peer
  * session invalidation"): see mtek_capture_service.h's own doc comment on
  * this function's declaration for the full rationale. capture_teardown
  * itself already gates on mtk_op_claim_finalization, so this is a safe
@@ -670,7 +670,7 @@ static void capture_teardown(uint32_t token, uint32_t epoch, uint8_t reason, uin
      * releasing MTK_ARB_M below (mtek_wifi_restore_and_release) -- not
      * after, as the previous ordering did.
      *
-     * P0 correction (Codex read-only re-audit, "next focused P0 session-
+     * P0 correction (follow-up read-only audit, "next focused P0 session-
      * publication closure round"): the earlier ordering's own doc
      * comment already warned "a concurrent handle_capture_start could
      * already have reset s_cap for a brand-new session ... by the time
@@ -805,7 +805,7 @@ static void handle_capture_poll_read(mtk_request_ctx_t *ctx, const mtk_opcode_en
 
     uint8_t out[1 + 25 + 1000];
     cap_lock();
-    /* P0 correction (Codex read-only re-audit, "Round 8: final concurrency
+    /* P0 correction (follow-up read-only audit, "Round 8: final concurrency
      * and resource-failure closure", item 3 "put every s_cap token/epoch/
      * session read under cap_lock"): token/mode were previously read
      * completely UNLOCKED here -- a genuine data race against cap_lock-

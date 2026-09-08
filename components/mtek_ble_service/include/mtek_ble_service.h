@@ -10,7 +10,7 @@ extern "C" {
 void mtek_ble_service_init(uint64_t (*now_ms_fn)(void));
 void mtek_ble_service_register(void); /* registers service_id 0x0002 (ble) and 0x0003 (gatt) */
 
-/* P0 correction (Codex read-only re-audit, "next focused P0 session-
+/* P0 correction (follow-up read-only audit, "next focused P0 session-
  * publication closure round", requirement 4 "protect s_sig, s_gatt, and
  * any other callback/task-shared service state with appropriate
  * dedicated locking"): this file previously had NO lock of any kind --
@@ -112,7 +112,7 @@ void mtek_ble_service_mark_tick_task_failed(void);
  * callback (mtek_ble_hal_esp32.c's conn_gap_cb), not a placeholder. */
 uint8_t mtek_ble_gatt_take_remote_disconnect_notice(uint8_t *reason_out);
 
-/* Release-tooling-round P0 correction (Codex independent audit, "peer
+/* Release-tooling-round P0 correction (independent audit, "peer
  * session invalidation"): see mtek_wifi_service.h's mtek_wifi_cancel_
  * active_for_peer_reset for the full rationale -- the BLE-owned
  * counterpart. Cancels and cleans up whatever BLE-owned operation

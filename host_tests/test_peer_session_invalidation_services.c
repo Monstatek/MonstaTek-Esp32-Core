@@ -1,4 +1,4 @@
-/* Release-tooling-round P0 correction, ROUND 3 (Codex read-only re-audit,
+/* Release-tooling-round P0 correction, ROUND 3 (follow-up read-only audit,
  * "genuine peer-session generation ownership"): the prior round's peer-
  * session invalidation cancelled the single currently arbiter-active
  * operation, but a further read-only re-audit found this incomplete:
@@ -55,7 +55,7 @@ static pthread_mutex_t s_mutex = PTHREAD_MUTEX_INITIALIZER;
 static void router_lock(void) { pthread_mutex_lock(&s_mutex); }
 static void router_unlock(void) { pthread_mutex_unlock(&s_mutex); }
 
-/* P0 correction (Codex read-only re-audit, "one P0 race remains"): a
+/* P0 correction (follow-up read-only audit, "one P0 race remains"): a
  * SEPARATE mutex for mtk_op_set_publish_lock, distinct from s_mutex
  * above -- see mtek_core.h's own doc comment on mtk_op_begin_publish_
  * guard for why it must never share a lock with anything a sink's own
@@ -206,7 +206,7 @@ MTK_TEST_MAIN_BEGIN
          * quiesced. */
         mtk_op_id_t cancelled = mtek_wifi_cancel_active_for_peer_reset();
         MTK_CHECK_EQ(cancelled.token, tok);
-        /* P0 correction (Codex read-only re-audit, "final focused
+        /* P0 correction (follow-up read-only audit, "final focused
          * concurrency-correction round", issue 2): the arbiter is
          * deliberately NOT released here -- the old connect() call has no
          * cancel hook and may still genuinely be running on another
@@ -398,7 +398,7 @@ MTK_TEST_MAIN_BEGIN
 
         mtk_op_id_t cancelled = mtek_ble_cancel_active_for_peer_reset();
         MTK_CHECK_EQ(cancelled.token, id.token);
-        /* P0 correction (Codex read-only re-audit, "final focused
+        /* P0 correction (follow-up read-only audit, "final focused
          * concurrency-correction round", issues 2/3): the arbiter is
          * deliberately NOT released here -- a real mid-connect worker's
          * blocking gatt_connect() call has no cancel hook and may still

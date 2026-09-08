@@ -177,7 +177,7 @@ void mtek_spi_native_dispatch_init(mtk_spi_native_dispatch_ctx_t *dctx, uint32_t
  * never on a REPEATED HELLO carrying the SAME epoch -- idempotent by
  * construction, since the caller only invokes this on a genuine change).
  *
- * P0 correction (Codex read-only re-audit, "genuine peer-session
+ * P0 correction (follow-up read-only audit, "genuine peer-session
  * ownership"): a read-only re-audit of the prior round's own peer-session
  * invalidation found it incomplete: it cancelled only the SINGLE
  * currently arbiter-active operation, leaving (a) any OTHER terminal-but-
@@ -334,7 +334,7 @@ static void stage_cell(mtk_spi_native_dispatch_ctx_t *dctx, uint8_t msg_class, u
                         const uint8_t *body, size_t body_len,
                         mtk_spi_native_header_t *resp_hdr, uint8_t *resp_payload, uint16_t *resp_payload_len) {
     mtk_spi_native_header_t tmpl;
-    /* Release-tooling-round P0 correction (Codex independent audit): every
+    /* Release-tooling-round P0 correction (independent audit): every
      * cell staged here is ESP-originated (RESPONSE/EVENT/STREAM) -- always
      * stamped with the ESP's OWN epoch (mtk_core_boot_epoch()), never
      * dctx's peer-epoch tracker. See mtk_spi_native_dispatch_ctx_t's own
@@ -525,7 +525,7 @@ static void dispatch_complete_message(mtk_spi_native_dispatch_ctx_t *dctx, uint1
         mtk_request_ctx_t ctx;
         ctx.profile = MTK_PROFILE_NATIVE_SPI;
         ctx.correlation = request_id;
-        /* Release-tooling-round P0 correction (Codex independent audit,
+        /* Release-tooling-round P0 correction (independent audit,
          * "Native SPI confuses the STM32 and ESP boot epochs"): the
          * canonical request context's boot_epoch is always the ESP's OWN
          * in-memory epoch (002-canonical-core-contract.md §2/§3.4) --
@@ -534,7 +534,7 @@ static void dispatch_complete_message(mtk_spi_native_dispatch_ctx_t *dctx, uint1
          * mtk_core_boot_epoch() (the value every operation token is
          * actually minted/looked-up under). */
         ctx.boot_epoch = mtk_core_boot_epoch();
-        /* P0 correction (Codex read-only re-audit, "genuine peer-session
+        /* P0 correction (follow-up read-only audit, "genuine peer-session
          * ownership"): this SYNCHRONOUS-lifecycle path never actually gets
          * deferred to the router's async pool (mtk_router_dispatch calls
          * the handler directly, on this same thread, before returning), so
@@ -596,10 +596,10 @@ static void dispatch_complete_message(mtk_spi_native_dispatch_ctx_t *dctx, uint1
     ctx.profile = MTK_PROFILE_NATIVE_SPI;
     ctx.correlation = request_id;
     /* See the sync-dispatch path's identical assignment above for the full
-     * rationale (release-tooling-round P0 correction, Codex independent
+     * rationale (release-tooling-round P0 correction, independent
      * audit): always the ESP's own epoch, never dctx's peer-epoch tracker. */
     ctx.boot_epoch = mtk_core_boot_epoch();
-    /* P0 correction (Codex read-only re-audit, "genuine peer-session
+    /* P0 correction (follow-up read-only audit, "genuine peer-session
      * ownership"): THIS is the path async_trampoline's own fence actually
      * protects -- an ACCEPTED_ASYNC opcode genuinely deferred to the
      * router's async pool, whose worker may not start running until well
@@ -645,7 +645,7 @@ void mtek_spi_native_dispatch_feed_cell(mtk_spi_native_dispatch_ctx_t *dctx, con
         mtk_transport_counters_add_packet_seq_gap();
     }
     if (hdr->msg_class == MTK_SPI_CLASS_HELLO) {
-        /* Release-tooling-round P0 correction (Codex independent audit,
+        /* Release-tooling-round P0 correction (independent audit,
          * "Native SPI confuses the STM32 and ESP boot epochs"):
          * `dctx->peer_boot_epoch` is this dctx's own record of the
          * CURRENTLY RECOGNIZED PEER epoch only -- seeded at init from a

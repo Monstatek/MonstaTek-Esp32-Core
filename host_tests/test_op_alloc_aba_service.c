@@ -1,4 +1,4 @@
-/* Release-tooling-round P0 correction, ROUND 2 (Codex read-only re-audit,
+/* Release-tooling-round P0 correction, ROUND 2 (follow-up read-only audit,
  * "the same slot-reuse/ABA hazard remains through all 11 production
  * mtk_op_alloc() call sites"): the prior round fixed every mtk_op_find()
  * call site (never retain a raw pointer past the lock that produced it)

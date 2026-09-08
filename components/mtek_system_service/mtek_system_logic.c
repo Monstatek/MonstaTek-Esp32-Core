@@ -234,7 +234,7 @@ static void handle_time_sync_start(mtk_request_ctx_t *ctx, const mtk_opcode_entr
     }
     if (!s_sta_query || !s_sta_query()) { respond_empty(ctx, MTK_STATUS_NOT_READY); return; }
     int no_mem = 0;
-    /* Release-tooling-round P0 correction (Codex independent audit, "the
+    /* Release-tooling-round P0 correction (independent audit, "the
      * same slot-reuse/ABA hazard remains through every production
      * mtk_op_alloc() call site"): the identity (token, boot_epoch) is
      * copied out atomically at mint time (mtk_op_alloc_id's own doc
@@ -250,7 +250,7 @@ static void handle_time_sync_start(mtk_request_ctx_t *ctx, const mtk_opcode_entr
      * per its own contracted non-success terminal shape (all-zero time
      * fields) rather than fabricating a successful sync.
      *
-     * P0 correction (Codex read-only re-audit, "Round 8: final concurrency
+     * P0 correction (follow-up read-only audit, "Round 8: final concurrency
      * and resource-failure closure", item 1): TIME_SYNC_START is ACCEPTED_
      * ASYNC and this tail runs on a deferred worker exactly like deauth's
      * own natural-completion tail -- previously it transitioned the token

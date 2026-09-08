@@ -1,4 +1,4 @@
-/* Release-tooling-round P0 correction, ROUND 8 (Codex read-only re-audit,
+/* Release-tooling-round P0 correction, ROUND 8 (follow-up read-only audit,
  * "final concurrency and resource-failure closure"): four further gaps
  * found past round 7's own session-publication closure:
  *

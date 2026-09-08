@@ -88,7 +88,7 @@ static _Thread_local int t_running_on_worker;
 
 static void async_trampoline(void *arg) {
     mtk_router_async_slot_t *slot = (mtk_router_async_slot_t *)arg;
-    /* P0 correction (Codex read-only re-audit, "genuine peer-session
+    /* P0 correction (follow-up read-only audit, "genuine peer-session
      * ownership" -- "Cancel or generation-fence queued and running
      * old-session workers"): this slot was captured (mtk_router_dispatch,
      * below) BEFORE this worker thread ever actually started running --
@@ -100,7 +100,7 @@ static void async_trampoline(void *arg) {
      * created by the NEW session. session_generation==0 (every non-
      * native-SPI adapter) is never fenced.
      *
-     * P0 correction (Codex read-only re-audit, "final focused
+     * P0 correction (follow-up read-only audit, "final focused
      * concurrency-correction round", issue 1): a stale request must
      * release its slot WITHOUT emitting any response/event into the
      * shared native-SPI queue. The request's own request_id may already

@@ -207,6 +207,5 @@ is deterministic, not incidental.
 
 ## Radio arbitration classes
 
-See `components/mtek_arbiter/include/mtek_arbiter.h` and the generated
-`components/mtek_schema/generated/mtek_arbiter_tables.c` for the current
-class and pairwise-policy definitions.
+See `components/mtek_arbiter/include` and `002-resource-arbiter.md` for
+the full class/pairwise-policy table; unchanged by this session's work.

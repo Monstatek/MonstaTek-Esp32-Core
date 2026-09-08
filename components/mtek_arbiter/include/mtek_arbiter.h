@@ -47,7 +47,7 @@ void mtk_arbiter_force_release(void);
 
 void mtk_arbiter_release(mtk_arbiter_class_t cls); /* no-op unless cls is the active class */
 
-/* P0 correction (Codex read-only re-audit, "final P0 concurrency-closure
+/* P0 correction (follow-up read-only audit, "final P0 concurrency-closure
  * round", issue 1): every production call site used to check ownership
  * with `mtk_arbiter_active_token() == token` and, if true, separately
  * call `mtk_arbiter_release(cls)` -- two independent lock acquisitions

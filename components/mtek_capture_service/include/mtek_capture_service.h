@@ -112,7 +112,7 @@ void mtek_capture_set_hop_tick_pause_hook(mtk_capture_hop_tick_pause_hook_t hook
  * session-permanent degradation, never re-armed. */
 void mtek_capture_service_mark_tick_task_failed(void);
 
-/* Release-tooling-round P0 correction (Codex independent audit, "peer
+/* Release-tooling-round P0 correction (independent audit, "peer
  * session invalidation"): see mtek_wifi_service.h's mtek_wifi_cancel_
  * active_for_peer_reset for the full rationale -- the capture-owned
  * counterpart (MonstaShark, MTK_ARB_M). Reuses the exact same teardown

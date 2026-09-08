@@ -63,7 +63,7 @@ static const char *TAG = "mtek_main";
 
 static uint64_t now_ms(void) { return (uint64_t)(esp_timer_get_time() / 1000); }
 
-/* P0 correction (Codex read-only re-audit, "Round 8: final concurrency and
+/* P0 correction (follow-up read-only audit, "Round 8: final concurrency and
  * resource-failure closure", item 4): round 7's own fix made every *_lock_v/
  * *_unlock_v wrapper null-safe so a failed xSemaphoreCreateMutex could never
  * reach xSemaphoreTake/Give on a NULL handle (undefined behavior) -- but
@@ -114,7 +114,7 @@ static void mtek_enter_safe_failure_state(const char *reason) {
  * runtime as RC6 did (RC7 independent audit P0 "The locks are installed
  * only inside the SPI task ... A UART-primary build ... never installs
  * core/arbiter/queue locks"). */
-/* P0 correction (Codex read-only re-audit, "next focused P0 session-
+/* P0 correction (follow-up read-only audit, "next focused P0 session-
  * publication closure round", requirement 7): xSemaphoreCreateMutex can
  * fail (heap exhaustion) and every wrapper below previously called
  * xSemaphoreTake/Give unconditionally on whatever it got back -- a NULL
@@ -123,7 +123,7 @@ static void mtek_enter_safe_failure_state(const char *reason) {
  * this file now null-checks its own handle first, degrading to a no-op
  * critical section rather than crashing or invoking UB on a NULL handle.
  *
- * P0 correction (Codex read-only re-audit, "Round 8: final concurrency and
+ * P0 correction (follow-up read-only audit, "Round 8: final concurrency and
  * resource-failure closure", item 4/5): a no-op critical section is NOT
  * itself a safe degraded mode -- an earlier version of this comment (and
  * this file's own boot sequence) claimed it was, which the audit correctly
@@ -159,7 +159,7 @@ static SemaphoreHandle_t s_capture_mutex;
 static void capture_lock_v(void) { if (s_capture_mutex) xSemaphoreTake(s_capture_mutex, portMAX_DELAY); }
 static void capture_unlock_v(void) { if (s_capture_mutex) xSemaphoreGive(s_capture_mutex); }
 
-/* P0 correction (Codex read-only re-audit, "one P0 race remains"): a
+/* P0 correction (follow-up read-only audit, "one P0 race remains"): a
  * THIRD, separately-dedicated mutex, for exactly the same self-deadlock
  * reason as s_capture_mutex above -- mtk_op_begin_publish_guard's own
  * guarded region (mtek_wifi_logic.c/mtek_ble_logic.c's own STA_CONNECT/
@@ -296,7 +296,7 @@ static int freertos_async_runner(void (*fn)(void *arg), void *arg) {
  * external protocol behavior changes, only how early the chip can prove
  * it booted at all.
  *
- * P0 correction (RC12 hardware-compatibility round 2, Codex read-only gate
+ * P0 correction (RC12 hardware-compatibility round 2, read-only gate
  * item "verify every UART install/configuration/write return value and
  * prove console/driver ownership is not conflicting"): every call below is
  * now checked; a failure returns 0 and app_main enters the same
@@ -696,7 +696,7 @@ void app_main(void) {
     }
 #endif
 
-    /* P0 correction (RC12 hardware-compatibility round 2, Codex read-only
+    /* P0 correction (RC12 hardware-compatibility round 2, read-only
      * gate: "the actual UART command-processing loop is still created
      * only after the same unconditional Wi-Fi/NimBLE initialization span
      * ... RC12 can falsely announce readiness and then fail the mode
@@ -749,7 +749,7 @@ void app_main(void) {
      * uart_repl_task for the full rationale. mtk_transport_claim_reset
      * starts this boot session's cross-transport AUTO-selection race
      * (mtek_transport_select.h) with no winner yet. */
-    /* P0 correction (Codex read-only re-audit, "Round 8: final concurrency
+    /* P0 correction (follow-up read-only audit, "Round 8: final concurrency
      * and resource-failure closure", item 4; extended RC11 round 10 items
      * 1/2 to a SIXTH mandatory mutex; RC12 hardening round item 2 adds a
      * SEVENTH, s_transport_counters_mutex): every mandatory mutex is now

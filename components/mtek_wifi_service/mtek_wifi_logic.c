@@ -84,7 +84,7 @@ int mtek_wifi_radio_is_quarantined(void) {
 }
 static uint64_t now_ms(void) { return s_now_ms ? s_now_ms() : 0; }
 
-/* P0 correction (Codex read-only re-audit, "final P0 concurrency-closure
+/* P0 correction (follow-up read-only audit, "final P0 concurrency-closure
  * round", issue 3): shared WS (AP/STA scan) quiescence-and-fence helper,
  * used by BOTH mtek_wifi_cancel_active_for_peer_reset (a peer reset) and
  * handle_wifi_stop_all (an ordinary user-invoked STOP) -- signals
@@ -134,7 +134,7 @@ static void handle_ap_scan_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry_
     if (req.band == 1 /* BAND_5GHZ */) { respond_empty(ctx, MTK_STATUS_UNSUPPORTED); return; }
     if (mtk_arbiter_acquire(MTK_ARB_WS, 0) != MTK_ARB_GRANT_OK) { respond_empty(ctx, MTK_STATUS_BUSY); return; }
     int no_mem = 0;
-    /* Release-tooling-round P0 correction (Codex independent audit): the
+    /* Release-tooling-round P0 correction (independent audit): the
      * identity is copied out atomically at mint time -- no raw record
      * pointer is retained past this point; my_token/my_epoch below (used
      * throughout this function's own already-established token/epoch-only
@@ -161,7 +161,7 @@ static void handle_ap_scan_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry_
      * fix (RC9), extended here to AP scan. */
     int n = s_hal && s_hal->ap_scan ? s_hal->ap_scan(req.band, fixed_channel, 30000, hal_out, WIFI_MAX_AP) : -1;
 
-    /* P0 correction (Codex read-only re-audit, "final focused
+    /* P0 correction (follow-up read-only audit, "final focused
      * concurrency-correction round", issues 2 and 4): restore/release
      * below is now attempted UNCONDITIONALLY (mtek_wifi_restore_and_
      * release's own atomic ownership check decides whether the release
@@ -177,7 +177,7 @@ static void handle_ap_scan_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry_
      * real restore and release once the HAL call genuinely returns --
      * skipping it would permanently orphan the WS arbiter class.
      *
-     * P0 correction (Codex read-only re-audit, "final P0 concurrency-
+     * P0 correction (follow-up read-only audit, "final P0 concurrency-
      * closure round", issue 2, further corrected by "one P0 race
      * remains"): state publish/terminal transition/event emission remain
      * strictly gated on `won`, PLUS mtk_op_begin_publish_guard, held
@@ -313,7 +313,7 @@ static void handle_ap_scan_stop(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t
     if (mtk_decode(op->req_desc, &req, req_bytes, req_len, NULL) != MTK_CODEC_OK) {
         respond_empty(ctx, MTK_STATUS_PROTOCOL_ERROR); return;
     }
-    /* Release-tooling-round P0 correction (Codex independent audit): the
+    /* Release-tooling-round P0 correction (independent audit): the
      * outer existence check is now mtk_op_snapshot too (never a retained
      * mtk_op_find() pointer) -- my_token/my_epoch are simply the caller's
      * own request fields (already exactly what a successful find would
@@ -408,7 +408,7 @@ static void handle_sta_scan_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry
     if (req.channel < 1 || req.channel > 13) { respond_empty(ctx, MTK_STATUS_INVALID_ARGUMENT); return; }
     if (mtk_arbiter_acquire(MTK_ARB_WS, 0) != MTK_ARB_GRANT_OK) { respond_empty(ctx, MTK_STATUS_BUSY); return; }
     int no_mem = 0;
-    /* Release-tooling-round P0 correction (Codex independent audit): the
+    /* Release-tooling-round P0 correction (independent audit): the
      * identity is copied out atomically at mint time -- no raw record
      * pointer is retained past this point, including across the ACCEPTED
      * response and the (potentially long-running/deferred) sta_scan HAL
@@ -444,7 +444,7 @@ static void handle_sta_scan_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry
      * (cleanup) -> mtk_op_transition_by_token (truthful terminal write) is
      * the same fixed shape as this file's own handshake_finish/
      * deauth_finalize and mtek_capture_service.h's own capture_teardown. */
-    /* P0 correction (Codex read-only re-audit, "final focused
+    /* P0 correction (follow-up read-only audit, "final focused
      * concurrency-correction round", issues 2 and 4; "final P0
      * concurrency-closure round", issue 1, further corrected by "one P0
      * race remains" -- see handle_ap_scan_start's own identical doc
@@ -570,7 +570,7 @@ static void handle_sta_scan_stop(mtk_request_ctx_t *ctx, const mtk_opcode_entry_
                                   const uint8_t *req_bytes, size_t req_len) {
     mtk_sta_scan_stop_req_t req; memset(&req, 0, sizeof(req));
     if (mtk_decode(op->req_desc, &req, req_bytes, req_len, NULL) != MTK_CODEC_OK) { respond_empty(ctx, MTK_STATUS_PROTOCOL_ERROR); return; }
-    /* Release-tooling-round P0 correction (Codex independent audit): the
+    /* Release-tooling-round P0 correction (independent audit): the
      * outer existence check is now mtk_op_snapshot too (never a retained
      * mtk_op_find() pointer) -- my_token/my_epoch are simply the caller's
      * own request fields. Every read of the record's own state below goes
@@ -661,7 +661,7 @@ static void handle_sta_connect(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t 
     mtk_arbiter_grant_t g = mtk_arbiter_acquire(MTK_ARB_WMC, 0);
     if (g != MTK_ARB_GRANT_OK) { respond_empty(ctx, MTK_STATUS_BUSY); return; }
     int no_mem = 0;
-    /* Release-tooling-round P0 correction (Codex independent audit): the
+    /* Release-tooling-round P0 correction (independent audit): the
      * identity is copied out atomically at mint time -- no raw record
      * pointer is retained past this point, including across the ACCEPTED
      * response and the (potentially long, up to connect_timeout_ms) HAL
@@ -684,7 +684,7 @@ static void handle_sta_connect(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t 
                              to_hal_ip(req.ip_config.static_netmask), to_hal_ip(req.ip_config.static_gateway),
                              timeout, &cres);
     }
-    /* P0 correction (Codex read-only re-audit, "genuine peer-session
+    /* P0 correction (follow-up read-only audit, "genuine peer-session
      * ownership" -- "prevent late workers ... from releasing a newer
      * operation's radio lease"): mtk_arbiter_release(cls) alone only
      * checks the CLASS, never WHICH operation holds it -- an
@@ -694,7 +694,7 @@ static void handle_sta_connect(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t 
      * already reclaimed/reassigned MTK_ARB_WMC to that newer operation
      * while this worker was still blocked.
      *
-     * P0 correction (Codex read-only re-audit, "final P0 concurrency-
+     * P0 correction (follow-up read-only audit, "final P0 concurrency-
      * closure round", issue 1): the ownership check and the release now
      * happen atomically, in ONE arbiter lock acquisition
      * (mtk_arbiter_release_if_owner), instead of a separate `mtk_arbiter_
@@ -716,7 +716,7 @@ static void handle_sta_connect(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t 
      * transition -- never publish/emit on behalf of a token a concurrent
      * peer-session reset already invalidated.
      *
-     * P0 correction (Codex read-only re-audit, "final P0 concurrency-
+     * P0 correction (follow-up read-only audit, "final P0 concurrency-
      * closure round", issue 2, further corrected by "one P0 race
      * remains"): winning the transition alone only proves nobody else
      * finalized this token before this exact instant -- it says nothing
@@ -759,7 +759,7 @@ static void handle_sta_connect(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t 
 }
 
 static void handle_sta_disconnect(mtk_request_ctx_t *ctx) {
-    /* P0 correction (Codex read-only re-audit, "final P0 concurrency-
+    /* P0 correction (follow-up read-only audit, "final P0 concurrency-
      * closure round", issue 3): MTK_ARB_WMC is only ever held for the
      * duration of an in-progress connect ATTEMPT itself (handle_sta_
      * connect's own established design, above) -- by the time a session
@@ -888,7 +888,7 @@ static void handle_deauth_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t
     mtk_arbiter_grant_t g = mtk_arbiter_acquire(MTK_ARB_D, 0);
     if (g == MTK_ARB_GRANT_BUSY) { respond_empty(ctx, MTK_STATUS_BUSY); return; }
     int no_mem = 0;
-    /* Release-tooling-round P0 correction (Codex independent audit): the
+    /* Release-tooling-round P0 correction (independent audit): the
      * identity is copied out atomically at mint time -- no raw record
      * pointer is retained past this point; my_token/my_epoch below (this
      * function's own already-established token/epoch-only convention for
@@ -1002,7 +1002,7 @@ deauth_loop_done:
      * a real peer. */
     {
         uint8_t final_status;
-        /* P0 correction (Codex read-only re-audit, "next focused P0
+        /* P0 correction (follow-up read-only audit, "next focused P0
          * session-publication closure round"): deauth_finalize winning
          * only proves nobody else finalized this token BEFORE this exact
          * instant -- a peer-session reset can still land in the window
@@ -1111,7 +1111,7 @@ typedef struct {
      * a pointer across its own callback invocations. */
     uint32_t token;
     uint32_t boot_epoch;
-    /* P0 correction (Codex read-only re-audit, "next focused P0 session-
+    /* P0 correction (follow-up read-only audit, "next focused P0 session-
      * publication closure round", requirement 3 "store and validate the
      * originating session generation for every long-lived callback/
      * tick/session object"): the session_generation this operation was
@@ -1225,7 +1225,7 @@ static void handshake_finish(uint32_t token, uint32_t boot_epoch, mtk_op_state_t
      * hold a lock across an external sink call (this file's own
      * established rule, matching mtek_capture_service.h's own).
      *
-     * P0 correction (Codex read-only re-audit, "next focused P0 session-
+     * P0 correction (follow-up read-only audit, "next focused P0 session-
      * publication closure round"): captured HERE, BEFORE releasing
      * MTK_ARB_H below (mtek_wifi_restore_and_release) -- not after, as
      * the previous ordering did. Once that release genuinely happens, a
@@ -1276,7 +1276,7 @@ static void handshake_finish(uint32_t token, uint32_t boot_epoch, mtk_op_state_t
 
 static void hs_frame_cb(void *user, const uint8_t *frame, uint16_t len, int8_t rssi, uint8_t channel) {
     (void)rssi; (void)channel;
-    /* P0 correction (Codex read-only re-audit, "Round 8: final concurrency
+    /* P0 correction (follow-up read-only audit, "Round 8: final concurrency
      * and resource-failure closure", item 3 "close promiscuous-callback
      * session ABA"): `user` is now an IMMUTABLE per-registration identity
      * -- the operation token, captured ONCE at handle_handshake_start's
@@ -1319,7 +1319,7 @@ static void hs_frame_cb(void *user, const uint8_t *frame, uint16_t len, int8_t r
     int m = classify_eapol(frame, len);
     if (m == 0) return;
     wifi_lock();
-    /* P0 correction (Codex read-only re-audit, "next focused P0 session-
+    /* P0 correction (follow-up read-only audit, "next focused P0 session-
      * publication closure round", requirement 4 "an old callback must
      * never modify a newly initialized session's state"): the checks
      * above ran UNLOCKED, before this call did any real work -- s_hs
@@ -1371,7 +1371,7 @@ static void handle_handshake_start(mtk_request_ctx_t *ctx, const mtk_opcode_entr
 
     /* D->H guarded transition (002-resource-arbiter.md Sec 3.1). */
     if (mtk_arbiter_active_class() == MTK_ARB_D) {
-        /* Release-tooling-round P0 correction (Codex independent audit,
+        /* Release-tooling-round P0 correction (independent audit,
          * "operation-table pointer has a find/unlock/use ABA race"): never
          * retain a raw mtk_op_find() pointer across the transition call
          * below -- re-snapshot after transitioning to observe the state it
@@ -1395,7 +1395,7 @@ static void handle_handshake_start(mtk_request_ctx_t *ctx, const mtk_opcode_entr
     }
     if (mtk_arbiter_acquire(MTK_ARB_H, 0) != MTK_ARB_GRANT_OK) { respond_empty(ctx, MTK_STATUS_BUSY); return; }
     int no_mem = 0;
-    /* Release-tooling-round P0 correction (Codex independent audit): the
+    /* Release-tooling-round P0 correction (independent audit): the
      * identity is copied out atomically at mint time -- no raw record
      * pointer is retained past this point, including across the ACCEPTED
      * response and the promisc_start call below (hs_frame_cb can start
@@ -1429,7 +1429,7 @@ static void handle_handshake_start(mtk_request_ctx_t *ctx, const mtk_opcode_entr
      * the exact same hazard this file's own handle_deauth_start doc
      * comment already identified and fixed for its background send loop. */
     s_hs.token = id.token; s_hs.sink = ctx->sink; s_hs.boot_epoch = id.boot_epoch;
-    /* P0 correction (Codex read-only re-audit, "next focused P0 session-
+    /* P0 correction (follow-up read-only audit, "next focused P0 session-
      * publication closure round", requirement 3): the originating
      * session generation, stored once here so hs_frame_cb/handshake_
      * finish -- both of which run long after this call returns, from
@@ -1560,7 +1560,7 @@ static void handle_wifi_stop_all(mtk_request_ctx_t *ctx) {
         active == MTK_ARB_SAP || active == MTK_ARB_RAW) {
         uint32_t tok = mtk_arbiter_active_token();
 
-        /* P0 correction (Codex read-only re-audit, "final P0
+        /* P0 correction (follow-up read-only audit, "final P0
          * concurrency-closure round", issue 3 "Correct ordinary STOP
          * paths as well as peer-reset paths ... WIFI_STOP_ALL ... must
          * not release, restore, or reuse radio ownership while a
@@ -1586,7 +1586,7 @@ static void handle_wifi_stop_all(mtk_request_ctx_t *ctx) {
         } else if (active == MTK_ARB_WS) {
             wifi_quiesce_and_fence_ws(tok, ctx->boot_epoch);
         } else {
-            /* Release-tooling-round P0 correction (Codex independent audit):
+            /* Release-tooling-round P0 correction (independent audit):
              * token-based snapshot/transition, never a retained mtk_op_find()
              * pointer -- see handle_handshake_start's D->H transition above
              * for the identical pattern and rationale. */
@@ -1637,7 +1637,7 @@ static void handle_wifi_stop_all(mtk_request_ctx_t *ctx) {
     respond(ctx, MTK_STATUS_OK, &r, &mtk_wifi_stop_all_resp_t_desc);
 }
 
-/* Release-tooling-round P0 correction (Codex independent audit, "peer
+/* Release-tooling-round P0 correction (independent audit, "peer
  * session invalidation"): see mtek_wifi_service.h's own doc comment on
  * this function's declaration for the full rationale. Reuses each
  * opcode's own already-established finalize helper (deauth_finalize,
@@ -1650,7 +1650,7 @@ static void handle_wifi_stop_all(mtk_request_ctx_t *ctx) {
 mtk_op_id_t mtek_wifi_cancel_active_for_peer_reset(void) {
     mtk_op_id_t id = {0, 0};
 
-    /* P0 correction (Codex read-only re-audit, "genuine peer-session
+    /* P0 correction (follow-up read-only audit, "genuine peer-session
      * ownership" -- "Stop ... Wi-Fi scans/connections"): an ALREADY-
      * connected STA session is a "Wi-Fi connection" the peer session
      * leaves behind even though its own arbiter lease (MTK_ARB_WMC) was
@@ -1687,7 +1687,7 @@ mtk_op_id_t mtek_wifi_cancel_active_for_peer_reset(void) {
              * real HAL-level connection it still manages to form, on its
              * own.
              *
-             * P0 correction (Codex read-only re-audit, "final focused
+             * P0 correction (follow-up read-only audit, "final focused
              * concurrency-correction round", issue 2): this deliberately
              * does NOT release MTK_ARB_WMC, even on winning the
              * transition above. The old connect() call this token belongs
@@ -1729,7 +1729,7 @@ mtk_op_id_t mtek_wifi_cancel_active_for_peer_reset(void) {
              * never orphan the arbiter or permit unsafe overlapping radio
              * work.
              *
-             * P0 correction (Codex read-only re-audit, "final focused
+             * P0 correction (follow-up read-only audit, "final focused
              * concurrency-correction round", issue 4): if the bounded
              * wait expires, the worker's own blocking ap_scan()/sta_scan()
              * HAL call may still genuinely be running -- but the TOKEN
@@ -1748,7 +1748,7 @@ mtk_op_id_t mtek_wifi_cancel_active_for_peer_reset(void) {
              * STILL performing the real restore/release once it observes
              * (via arbiter token ownership) that it is safe to do so.
              *
-             * P0 correction (Codex read-only re-audit, "final P0
+             * P0 correction (follow-up read-only audit, "final P0
              * concurrency-closure round", issue 3): this logic is now the
              * single shared wifi_quiesce_and_fence_ws helper, also used
              * by handle_wifi_stop_all's own WS branch, so the two can
