@@ -601,6 +601,114 @@ def main():
             failures.append("PACKAGING_MANIFEST.md leaked an absolute filesystem path from the "
                              "source-VCS-identity fields")
 
+        # ---- build/source-root binding (verify_build_source_root) and the
+        # three end-to-end fail-closed/no-partial-output invariants in
+        # package_release.py's own main(): dirty source, unusable/malformed
+        # Git metadata, and an unrelated project root labeling someone
+        # else's build. All three are exercised against the REAL CLI
+        # entry point (subprocess, not a reimplementation of main()'s own
+        # decision), and each must leave the requested --out path exactly
+        # as it was found: absent if it never existed, or with a
+        # pre-existing sentinel file untouched if it did. ----
+        unrelated_repo = os.path.join(tmp, "unrelated_repo")
+        os.makedirs(unrelated_repo)
+        subprocess.run(["git", "-C", unrelated_repo, "init", "-q"], env=git_env)
+        with open(os.path.join(unrelated_repo, "g.txt"), "w") as f:
+            f.write("v1\n")
+        subprocess.run(["git", "-C", unrelated_repo, "add", "g.txt"], env=git_env)
+        subprocess.run(["git", "-C", unrelated_repo, "commit", "-q", "-m", "initial"], env=git_env)
+
+        fake_build_dir = os.path.join(tmp, "fake_build_dir")
+        os.makedirs(fake_build_dir)
+        with open(os.path.join(fake_build_dir, "project_description.json"), "w") as f:
+            json.dump({"project_path": vcs_repo, "git_revision": "v6.0.1", "target": "esp32c6"}, f)
+        with open(os.path.join(fake_build_dir, "CMakeCache.txt"), "w") as f:
+            f.write(f"CMAKE_HOME_DIRECTORY:INTERNAL={vcs_repo}\n")
+
+        # direct function-level checks (the exact function main() calls)
+        ok, err = pr.verify_build_source_root(fake_build_dir, vcs_repo)
+        if not ok:
+            failures.append(f"verify_build_source_root rejected a genuinely matching build/source "
+                             f"root pair: {err}")
+        ok2, err2 = pr.verify_build_source_root(fake_build_dir, unrelated_repo)
+        if ok2:
+            failures.append("verify_build_source_root accepted a build directory paired with an "
+                             "unrelated, unconnected project root")
+
+        def run_packaging_cli(project_root, out_dir, build_dir=fake_build_dir):
+            return subprocess.run(
+                [sys.executable, pr.__file__, "--build-dir", os.path.relpath(build_dir, project_root),
+                 "--project-root", project_root, "--out", out_dir],
+                capture_output=True, text=True, env=git_env)
+
+        def assert_output_absent_or_untouched(case_name, out_dir, sentinel_path, proc):
+            if proc.returncode == 0:
+                failures.append(f"{case_name}: packaging CLI exited 0 (expected a non-zero rejection)")
+            if os.path.isdir(out_dir):
+                if os.path.isfile(sentinel_path):
+                    with open(sentinel_path) as f:
+                        if f.read() != "sentinel\n":
+                            failures.append(f"{case_name}: pre-existing sentinel file was modified")
+                else:
+                    failures.append(f"{case_name}: pre-existing sentinel file was removed")
+                unexpected = set(os.listdir(out_dir)) - {"sentinel.txt"}
+                if unexpected:
+                    failures.append(f"{case_name}: packaging wrote unexpected files into --out "
+                                     f"despite rejecting the package: {sorted(unexpected)}")
+            # if out_dir does not exist at all, that's also an acceptable
+            # "untouched" outcome for a case where --out never pre-existed.
+
+        # Case: build/source-root mismatch (unrelated clean repo)
+        out_mismatch = os.path.join(tmp, "out_root_mismatch")
+        os.makedirs(out_mismatch)
+        with open(os.path.join(out_mismatch, "sentinel.txt"), "w") as f:
+            f.write("sentinel\n")
+        proc = run_packaging_cli(unrelated_repo, out_mismatch)
+        assert_output_absent_or_untouched("build-root mismatch", out_mismatch,
+                                           os.path.join(out_mismatch, "sentinel.txt"), proc)
+        if "binding" not in (proc.stdout + proc.stderr).lower():
+            failures.append(f"build-root mismatch: rejection message did not mention binding "
+                             f"verification (stdout/stderr: {(proc.stdout + proc.stderr)[:400]!r})")
+
+        # Case: dirty source tree
+        with open(os.path.join(vcs_repo, "f.txt"), "a") as f:
+            f.write("dirty again\n")
+        out_dirty = os.path.join(tmp, "out_dirty")
+        os.makedirs(out_dirty)
+        with open(os.path.join(out_dirty, "sentinel.txt"), "w") as f:
+            f.write("sentinel\n")
+        proc = run_packaging_cli(vcs_repo, out_dirty)
+        assert_output_absent_or_untouched("dirty source", out_dirty,
+                                           os.path.join(out_dirty, "sentinel.txt"), proc)
+        subprocess.run(["git", "-C", vcs_repo, "checkout", "-q", "--", "f.txt"], env=git_env)
+
+        # Case: unusable/malformed Git metadata (.git marker present but
+        # not a real repository -- `git rev-parse HEAD` must fail against
+        # it, driving the vcs_error hard-fail path, not a silent "no VCS"
+        # fallback).
+        broken_git_repo = os.path.join(tmp, "broken_git_repo")
+        os.makedirs(os.path.join(broken_git_repo, ".git"))  # present but empty/invalid
+        broken_check = subprocess.run(["git", "-C", broken_git_repo, "rev-parse", "HEAD"],
+                                       capture_output=True, text=True)
+        if broken_check.returncode == 0:
+            failures.append("test setup invalid: an empty .git directory was accepted by "
+                             "`git rev-parse HEAD` -- cannot exercise the malformed-Git-metadata path")
+        else:
+            broken_identity = pr.gather_build_identity(tmp, broken_git_repo)
+            if not broken_identity.get("vcs_error"):
+                failures.append(f"gather_build_identity did not report vcs_error for a broken .git "
+                                 f"directory ({broken_identity})")
+            out_broken = os.path.join(tmp, "out_broken_git")
+            os.makedirs(out_broken)
+            with open(os.path.join(out_broken, "sentinel.txt"), "w") as f:
+                f.write("sentinel\n")
+            proc = run_packaging_cli(broken_git_repo, out_broken)
+            assert_output_absent_or_untouched("malformed Git metadata", out_broken,
+                                               os.path.join(out_broken, "sentinel.txt"), proc)
+            if "unusable git metadata" not in (proc.stdout + proc.stderr).lower():
+                failures.append(f"malformed Git metadata: rejection message did not mention it "
+                                 f"(stdout/stderr: {(proc.stdout + proc.stderr)[:400]!r})")
+
         if failures:
             print("FAILED:")
             for f in failures:

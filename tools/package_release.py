@@ -30,8 +30,10 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 
 
 def sh(cmd, **kw):
@@ -465,6 +467,67 @@ def gather_build_identity(build_dir, project_root):
     return identity
 
 
+def verify_build_source_root(build_dir, project_root):
+    """Hard-verifies that build_dir was actually configured FROM
+    project_root, rather than trusting --project-root and --build-dir as
+    two independent, unrelated caller-supplied paths. Without this, a
+    caller could point --build-dir at a real build made from one source
+    tree and --project-root at an unrelated, clean Git repository, and the
+    resulting manifest would falsely bind the binary to the clean repo's
+    commit -- gather_build_identity's source_commit is only meaningful if
+    the build actually came from that same source.
+
+    Reads BOTH available pieces of build-recorded source-root evidence --
+    project_description.json's own "project_path" and CMakeCache.txt's own
+    "CMAKE_HOME_DIRECTORY" -- and requires them to agree with each other
+    AND with project_root (after os.path.realpath normalization, so a
+    caller-supplied relative path or a symlinked tree still compares
+    correctly). Missing, unparseable, or disagreeing metadata is a hard
+    failure, never a silent pass -- there is no partial-credit outcome
+    here, matching validate_merged_image's own "every check is a HARD
+    failure" design.
+
+    Returns (ok: bool, error: str or None). Never returns an absolute path
+    in the error string -- callers must not put this function's `project_root`
+    or the paths it reads into a written manifest verbatim."""
+    if not project_root:
+        return False, "no --project-root given"
+    project_root_norm = os.path.realpath(project_root)
+
+    proj_desc_path = os.path.join(build_dir, "project_description.json")
+    if not os.path.isfile(proj_desc_path):
+        return False, "project_description.json not found in --build-dir; cannot verify build/source-root binding"
+    try:
+        with open(proj_desc_path) as f:
+            proj_desc = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        return False, f"project_description.json in --build-dir is unreadable/malformed ({e.__class__.__name__})"
+    pd_project_path = proj_desc.get("project_path")
+    if not pd_project_path or not isinstance(pd_project_path, str):
+        return False, "project_description.json has no usable project_path field"
+    pd_norm = os.path.realpath(pd_project_path)
+
+    cache_path = os.path.join(build_dir, "CMakeCache.txt")
+    if not os.path.isfile(cache_path):
+        return False, "CMakeCache.txt not found in --build-dir; cannot verify build/source-root binding"
+    with open(cache_path) as f:
+        cache_text = f.read()
+    m = re.search(r"^CMAKE_HOME_DIRECTORY:INTERNAL=(.*)$", cache_text, re.MULTILINE)
+    if not m or not m.group(1).strip():
+        return False, "CMakeCache.txt has no usable CMAKE_HOME_DIRECTORY entry"
+    cache_norm = os.path.realpath(m.group(1).strip())
+
+    if pd_norm != cache_norm:
+        return False, ("project_description.json's project_path and CMakeCache.txt's "
+                        "CMAKE_HOME_DIRECTORY disagree on the build's own source root -- "
+                        "refusing to trust either")
+    if pd_norm != project_root_norm:
+        return False, ("--build-dir was configured from a different source root than "
+                        "--project-root; a package must not be labeled with an unrelated "
+                        "repository's commit")
+    return True, None
+
+
 def write_release_notes(out_dir, image_map, identity, hardware_tested):
     """Writes PACKAGING_MANIFEST.md -- a mechanically-generated record of
     every field this batch's own requirement #11 asks for (ESP-IDF
@@ -580,9 +643,76 @@ def main():
 
     root = os.path.abspath(args.project_root)
     build_dir = os.path.join(root, args.build_dir)
-    out_dir = os.path.abspath(args.out)
-    os.makedirs(out_dir, exist_ok=True)
+    requested_out_dir = os.path.abspath(args.out)
 
+    # ---- Every source/VCS/build-root binding check runs BEFORE this
+    # function creates or writes anything into --out (a correction: this
+    # previously ran after merging/writing had already begun, which could
+    # leave a partial package, or a mixture of freshly-written files and
+    # stale MtkCore.md5/manifest files from an earlier run, behind on
+    # rejection). A caller only ever observes requested_out_dir either
+    # fully populated (every check passed) or completely untouched (any
+    # check failed) -- see the staging-directory move at the very end of
+    # this function. ----
+    identity = gather_build_identity(build_dir, root)
+
+    if identity.get("vcs_error"):
+        # A .git marker exists but its state could not be trusted (`git`
+        # missing/timed out, rev-parse failed, or output that isn't a
+        # well-formed 40-hex-char commit hash). Correction: this used to
+        # collapse into vcs="none" and package anyway as an honest-looking
+        # "no VCS" build -- indistinguishable from a genuinely VCS-less
+        # source tree. Fail closed instead; honest "no VCS" reporting is
+        # preserved for a source root that genuinely has no .git marker.
+        print("PACKAGING FAILED (unusable Git metadata):")
+        print(f"  {identity['vcs_error']}")
+        print("  A .git marker is present under --project-root but its state could not be "
+              "trusted; refusing to silently fall back to a 'no VCS' identity.")
+        sys.exit(1)
+
+    if identity.get("vcs") == "git" and identity.get("source_dirty"):
+        print("PACKAGING FAILED (dirty source tree):")
+        print(f"  --project-root resolves to a Git worktree at commit "
+              f"{identity.get('source_commit')} with uncommitted changes.")
+        print("  A release package must bind to a single reviewable commit. "
+              "Commit or stash the changes, then re-run packaging.")
+        sys.exit(1)
+
+    root_ok, root_err = verify_build_source_root(build_dir, root)
+    if not root_ok:
+        print("PACKAGING FAILED (build/source-root binding could not be verified):")
+        print(f"  {root_err}")
+        sys.exit(1)
+
+    # ---- Every write from here on lands in a private staging directory
+    # first; requested_out_dir is created and populated only at the very
+    # end, after every remaining validation and the MD5 sidecar itself
+    # have succeeded. ----
+    staging_dir = tempfile.mkdtemp(prefix="mtek_package_staging_")
+    try:
+        out_dir = staging_dir
+        _package_into(root, build_dir, out_dir, identity, args.hardware_tested)
+        os.makedirs(requested_out_dir, exist_ok=True)
+        for name in os.listdir(staging_dir):
+            dest = os.path.join(requested_out_dir, name)
+            if os.path.exists(dest):
+                if os.path.isdir(dest):
+                    shutil.rmtree(dest)
+                else:
+                    os.remove(dest)
+            shutil.move(os.path.join(staging_dir, name), dest)
+    finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+    print(f"Package written to: {requested_out_dir}")
+    return requested_out_dir
+
+
+def _package_into(root, build_dir, out_dir, identity, hardware_tested):
+    """Does the actual merge/validate/write work into out_dir (a private
+    staging directory that main() moves into the caller's requested --out
+    only on total success -- see main()'s own doc comment). Every
+    PACKAGING FAILED path below still exits the whole process; main()'s
+    `finally` cleans up the staging directory regardless."""
     flasher_args_path = os.path.join(build_dir, "flasher_args.json")
     with open(flasher_args_path) as f:
         flasher_args = json.load(f)
@@ -735,16 +865,10 @@ def main():
         json.dump(image_map, f, indent=2)
         f.write("\n")
 
-    # ---- release metadata (requirement #11) ----
-    identity = gather_build_identity(build_dir, root)
-    if identity.get("vcs") == "git" and identity.get("source_dirty"):
-        print("PACKAGING FAILED (dirty source tree):")
-        print(f"  --project-root resolves to a Git worktree at commit "
-              f"{identity.get('source_commit')} with uncommitted changes.")
-        print("  A release package must bind to a single reviewable commit. "
-              "Commit or stash the changes, then re-run packaging.")
-        sys.exit(1)
-    write_release_notes(out_dir, image_map, identity, args.hardware_tested)
+    # ---- release metadata (requirement #11). identity/dirty/build-root
+    # checks already ran in main() before out_dir (the staging directory)
+    # was even created -- identity is reused here, not recomputed. ----
+    write_release_notes(out_dir, image_map, identity, hardware_tested)
 
     # ---- MD5 sidecar LAST, only now that everything above has passed and
     # been written (requirement #5/#6). ----
@@ -758,7 +882,10 @@ def main():
             print("  - " + e)
         sys.exit(1)
 
-    print(f"OK: {merged_bin} ({size} bytes)")
+    # Deliberately prints the basename, not the staging path -- main()
+    # prints the final "OK" line naming the real requested --out location
+    # once the move below has actually happened.
+    print(f"OK: {os.path.basename(merged_bin)} ({size} bytes)")
     print(f"MD5: {md5_hex_val}")
     print(f"SHA-256: {sha256_hex_val}")
     print(f"Application segment MD5: {app_md5_hex_val}")
