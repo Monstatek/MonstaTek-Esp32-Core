@@ -1,7 +1,9 @@
 # Engineering validation boundary
 
 This file records validation scope only; licensing and attribution decisions are
-handled separately from the engineering source set.
+handled separately from the engineering source set. See
+`docs/THIRD_PARTY_NOTICES.md` for community-reference and dependency
+attribution.
 
 Portable behavior is covered by the host suite. Target builds verify ESP-IDF
 integration, image generation, static resource use, and configured adapters.

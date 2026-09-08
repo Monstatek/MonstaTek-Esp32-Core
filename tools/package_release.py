@@ -12,8 +12,11 @@ partitions.csv, and a machine-readable merged-image map -- none of them
 containing an absolute personal filesystem path.
 
 This tool only reads build output already produced by `idf.py build` and
-the installed esptool.py; it performs no network access, no git operation,
-and never copies anything to the Desktop.
+the installed esptool.py, plus (read-only, local) `git rev-parse`/`git
+status` against --project-root when it is a real Git worktree, so the
+packaging manifest can truthfully bind a package to its exact source
+commit instead of guessing. It performs no network access and never
+copies anything to the Desktop.
 
 The validation logic (`validate_merged_image`) is a plain, importable
 function so a standalone negative-test suite (tools/validate_release_
@@ -367,26 +370,86 @@ def validate_map_against_bin(map_obj, merged_bytes, app_offset, chip=None,
     return errors
 
 
-def gather_build_identity(build_dir):
-    """Reads ESP-IDF version, target, and this project's own build-
-    candidate identity (MTK_BUILD_ID/MTK_BUILD_EPOCH_S) from build output
-    already on disk -- never invents/derives a value this build did not
-    actually record, and never copies an absolute filesystem path (only
-    the specific safe fields below are read out of project_description.json,
-    which also carries several absolute-path fields this function
-    deliberately does not touch)."""
+_COMMIT_HASH_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+def detect_source_vcs_identity(project_root):
+    """Detects whether project_root is a real Git worktree and, if so, its
+    exact commit and dirty status -- never invents a commit this tree does
+    not actually have, and never silently reports a fixed/hardcoded value
+    regardless of the real source. Returns a dict with:
+      vcs: "git" | "none"
+      commit: 40-char lowercase hex commit hash, or None
+      dirty: True/False, or None when vcs == "none"
+      error: a short reason string when git output could not be trusted
+
+    A no-VCS source tree (e.g. an exported clean-room checkout with no
+    `.git`) is a legitimate, honestly-reportable state, not an error --
+    this function distinguishes "genuinely no VCS" from "VCS present but
+    its output was unusable/untrustworthy", since only the second is an
+    error worth surfacing to the packager."""
+    git_dir = os.path.join(project_root, ".git")
+    if not os.path.isdir(git_dir) and not os.path.isfile(git_dir):
+        return {"vcs": "none", "commit": None, "dirty": None, "error": None}
+
+    try:
+        commit_proc = subprocess.run(
+            ["git", "-C", project_root, "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return {"vcs": "none", "commit": None, "dirty": None,
+                "error": f"git executable unavailable or timed out ({e.__class__.__name__})"}
+
+    if commit_proc.returncode != 0:
+        return {"vcs": "none", "commit": None, "dirty": None,
+                "error": "`git rev-parse HEAD` failed inside a .git-bearing directory"}
+
+    commit = commit_proc.stdout.strip()
+    if not _COMMIT_HASH_RE.match(commit):
+        # Defensive: reject anything that isn't exactly a 40-hex-char SHA-1,
+        # rather than trusting arbitrary/forged git output verbatim.
+        return {"vcs": "none", "commit": None, "dirty": None,
+                "error": "git reported a value that is not a well-formed 40-hex-char commit hash"}
+
+    status_proc = subprocess.run(
+        ["git", "-C", project_root, "status", "--porcelain"],
+        capture_output=True, text=True, timeout=10,
+    )
+    if status_proc.returncode != 0:
+        return {"vcs": "none", "commit": None, "dirty": None,
+                "error": "`git status --porcelain` failed against a resolvable HEAD"}
+
+    dirty = bool(status_proc.stdout.strip())
+    return {"vcs": "git", "commit": commit, "dirty": dirty, "error": None}
+
+
+def gather_build_identity(build_dir, project_root):
+    """Reads ESP-IDF version, target, this project's own build-candidate
+    identity (MTK_BUILD_ID/MTK_BUILD_EPOCH_S), and the exact source VCS
+    identity from build output and the source tree already on disk --
+    never invents/derives a value this build did not actually record, and
+    never copies an absolute filesystem path (only the specific safe
+    fields below are read out of project_description.json, which also
+    carries several absolute-path fields this function deliberately does
+    not touch; the VCS commit hash and dirty boolean carry no path
+    information either)."""
+    vcs = detect_source_vcs_identity(project_root)
     identity = {
         "esp_idf_version": None,
         "target_chip": None,
         "build_candidate_id": None,
         "build_epoch_s": None,
-        "build_dirty": 0,  # no VCS in this clean-room tree (docs/DECISION_LOG.md's own binding constraint) -- the only honest, disclosed answer
+        "vcs": vcs["vcs"],
+        "source_commit": vcs["commit"],
+        "source_dirty": vcs["dirty"],
+        "vcs_error": vcs["error"],
     }
     proj_desc_path = os.path.join(build_dir, "project_description.json")
     if os.path.isfile(proj_desc_path):
         with open(proj_desc_path) as f:
             proj_desc = json.load(f)
-        identity["esp_idf_version"] = proj_desc.get("git_revision")  # ESP-IDF's own git revision, e.g. "v6.0.1" -- not this project's (no VCS here)
+        identity["esp_idf_version"] = proj_desc.get("git_revision")  # ESP-IDF's own git revision, e.g. "v6.0.1" -- unrelated to this project's own source_commit above
         identity["target_chip"] = proj_desc.get("target")
 
     cache_path = os.path.join(build_dir, "CMakeCache.txt")
@@ -428,19 +491,32 @@ def write_release_notes(out_dir, image_map, identity, hardware_tested):
     lines.append(f"- Build candidate ID: `{identity.get('build_candidate_id') or '(unknown)'}`")
     lines.append(f"- Build epoch (Unix seconds UTC, SOURCE_DATE_EPOCH-style, fixed per candidate): "
                   f"`{identity.get('build_epoch_s') or '(unknown)'}`")
-    # RC11 release-finalization correction (independent audit):
-    # "Change no-VCS build provenance from dirty=0 to an explicit state...
-    # Do not imply a clean git tree." The firmware's own wire GET_VERSION
-    # response still carries a fixed uint8_t build_dirty field (0, matched
-    # exactly by this generated text below) -- that wire value/interface
-    # is unchanged by this correction (a real behavior/interface freeze,
-    # not this batch's to touch); only THIS prose description of it is
-    # rewritten so a reader never mistakes "0" for "a clean git tree
-    # exists" when there is no git tree here at all to be clean or dirty.
-    lines.append(f"- Build commit: `UNAVAILABLE (pre-repository clean-room workspace)`")
-    lines.append(f"- Dirty status: `NOT_APPLICABLE` (no VCS in this clean-room tree -- the firmware's own "
-                  f"wire build_dirty field is fixed at 0 for this same reason, which must never be read as "
-                  f"a claim of a clean git tree)")
+    # RC11 release-finalization correction (independent audit): "Change
+    # no-VCS build provenance from dirty=0 to an explicit state... Do not
+    # imply a clean git tree." The firmware's own wire GET_VERSION response
+    # still carries a fixed uint8_t build_dirty field (0) -- that wire
+    # value/interface is unrelated to source_commit/source_dirty below,
+    # which describe the SOURCE tree package_release.py was pointed at, not
+    # the firmware's own wire field. A later correction found this
+    # manifest hardcoded "no VCS" regardless of the real --project-root,
+    # which is honest only for a genuinely VCS-less clean-room export and
+    # false for a real Git worktree/clone -- gather_build_identity now
+    # detects the real state instead of assuming one.
+    if identity.get("vcs") == "git":
+        lines.append(f"- Build commit: `{identity.get('source_commit')}`")
+        dirty = identity.get("source_dirty")
+        if dirty:
+            lines.append(f"- Dirty status: `DIRTY` (uncommitted changes were present in the source tree "
+                          f"at packaging time -- this package is not bound to a single reviewable commit)")
+        else:
+            lines.append(f"- Dirty status: `CLEAN` (source tree matched `{identity.get('source_commit')}` "
+                          f"exactly, no uncommitted changes)")
+    else:
+        reason = identity.get("vcs_error") or "no .git directory found under --project-root"
+        lines.append(f"- Build commit: `UNAVAILABLE (no VCS detected: {reason})`")
+        lines.append(f"- Dirty status: `NOT_APPLICABLE` (no VCS in this source tree -- the firmware's own "
+                      f"wire build_dirty field is fixed at 0 for a different reason and must never be read "
+                      f"as a claim about this source tree's git state)")
     lines.append(f"- ESP-IDF version: `{identity.get('esp_idf_version') or '(unknown)'}`")
     lines.append(f"- Target chip: `{identity.get('target_chip') or '(unknown)'}`")
     lines.append("")
@@ -660,7 +736,14 @@ def main():
         f.write("\n")
 
     # ---- release metadata (requirement #11) ----
-    identity = gather_build_identity(build_dir)
+    identity = gather_build_identity(build_dir, root)
+    if identity.get("vcs") == "git" and identity.get("source_dirty"):
+        print("PACKAGING FAILED (dirty source tree):")
+        print(f"  --project-root resolves to a Git worktree at commit "
+              f"{identity.get('source_commit')} with uncommitted changes.")
+        print("  A release package must bind to a single reviewable commit. "
+              "Commit or stash the changes, then re-run packaging.")
+        sys.exit(1)
     write_release_notes(out_dir, image_map, identity, args.hardware_tested)
 
     # ---- MD5 sidecar LAST, only now that everything above has passed and

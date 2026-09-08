@@ -34,6 +34,9 @@ drawn from) is kept inline, at the point of use, in:
 - `main/mtek_spi_runtime.c` -- the physical `spi_slave`/GPIO wiring facts
   (pins, mode, HANDSHAKE timing, DATAREADY default).
 
+See `docs/THIRD_PARTY_NOTICES.md` for the community reference project
+consulted to establish these facts and its license status.
+
 This ledger intentionally does not duplicate that per-opcode detail (it
 would drift out of sync with the code); it is the *pointer* to where
 compatibility-module evidence lives, and the statement of the boundary

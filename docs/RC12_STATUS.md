@@ -17,13 +17,15 @@ Superseded on 2026-09-08: the prior reviewed build (`build_rc12_astra_closure`,
 SHA-256 `6c7a172619c2eaf66fbf8b60264c827f5d38afd33c13801487b9aa8b28209edb`) was a
 correct build of an earlier, incompletely-synced state of this repository. The
 2026-09-08 review transferred accumulated RC12 hardening/blocker/closure-round
-source changes that had not previously reached this repository, removed
-development-assistant tool attribution from comments and documentation while
-preserving the underlying technical rationale, and corrected two source
-comments found to verbatim-match community reference code (see
-`docs/COMPATIBILITY_LEDGER.md`). No List A behavior, protocol value,
-identifier, or opcode changed. The size is unchanged; the hash differs because
-the source differs.
+source changes that had not previously reached this repository and rewrote
+prose throughout comments and documentation to describe engineering
+rationale without naming development tooling. A follow-up correction pass
+the same day found and rewrote a second, previously-missed instance of two
+source comments that verbatim-matched community reference code, and added
+`docs/THIRD_PARTY_NOTICES.md` disclosing that reference project and its
+license status. See `docs/DECISION_LOG.md` for the itemized history. No
+List A behavior, protocol value, identifier, or opcode changed. The size is
+unchanged; the hash differs because the source differs.
 
 ## Evidence reviewed
 

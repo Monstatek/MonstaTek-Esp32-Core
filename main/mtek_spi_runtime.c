@@ -13,11 +13,12 @@
  *  - Confirmed production pins: SCLK=GPIO7, MOSI=GPIO12, MISO=GPIO13,
  *    CS=GPIO15, HANDSHAKE=GPIO14 (same doc, cross-confirmed against
  *    HARDWARE_EVIDENCE.md's independent production-board pin table).
- *  - HANDSHAKE timing: driven HIGH in the SPI slave's post_setup_cb
- *    ("armed & safe to clock") and LOW in post_trans_cb ("transfer done;
- *    re-arm before next") -- exact confirmed ESP-side semantic, mirrored
- *    here via spi_slave_interface_config_t's own callback hooks (same
- *    doc Sec 1.2).
+ *  - HANDSHAKE timing: driven HIGH in the SPI slave's post_setup_cb once
+ *    the transaction is armed and the peer may begin clocking it, and LOW
+ *    in post_trans_cb once the transfer has completed and the line is
+ *    ready to be re-armed for the next transaction -- confirmed ESP-side
+ *    behavior, mirrored here via spi_slave_interface_config_t's own
+ *    callback hooks (same doc Sec 1.2).
  *  - DATAREADY (GPIO6, HARDWARE_EVIDENCE.md/001-profile-bootstrap-
  *    feasibility.md Sec 1.1) is profile-specific, per-profile confirmed
  *    behavior: for Bedge/C3, the pinned reference build leaves this

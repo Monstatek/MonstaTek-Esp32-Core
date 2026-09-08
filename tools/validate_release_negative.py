@@ -511,6 +511,96 @@ def main():
                 print("NOTE: real release/MtkCore.bin + MtkCore.md5 not present yet -- "
                       "skipping the real-pair cross-check (expected before packaging).")
 
+        # ---- package_release.py's own source-VCS-identity detection
+        # (gather_build_identity/detect_source_vcs_identity): a correction
+        # found this manifest field previously hardcoded "no VCS" regardless
+        # of the real --project-root, which is false whenever packaging
+        # actually runs against a real Git worktree/clone. These checks
+        # exercise the real function against a real, disposable git repo
+        # (not a second reimplementation of it). ----
+        vcs_repo = os.path.join(tmp, "vcs_test_repo")
+        os.makedirs(vcs_repo)
+        git_env = dict(os.environ)
+        git_env.update({
+            "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "test@example.invalid",
+            "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "test@example.invalid",
+        })
+
+        def git(*cmd_args):
+            return subprocess.run(["git", "-C", vcs_repo] + list(cmd_args),
+                                   capture_output=True, text=True, env=git_env)
+
+        git("init", "-q")
+        with open(os.path.join(vcs_repo, "f.txt"), "w") as f:
+            f.write("v1\n")
+        git("add", "f.txt")
+        git("commit", "-q", "-m", "initial")
+        real_commit = git("rev-parse", "HEAD").stdout.strip()
+
+        # exact clean commit recorded
+        identity = pr.gather_build_identity(tmp, vcs_repo)
+        if identity.get("vcs") != "git" or identity.get("source_commit") != real_commit:
+            failures.append(f"a real clean git worktree was not reported as vcs=git with the exact "
+                             f"commit ({identity})")
+        if identity.get("source_dirty") is not False:
+            failures.append(f"a genuinely clean git worktree was not reported as source_dirty=False "
+                             f"({identity})")
+
+        # dirty source clearly recorded (release policy: package_release.py's
+        # own main() refuses to package when this is True -- see the
+        # "PACKAGING FAILED (dirty source tree)" branch)
+        with open(os.path.join(vcs_repo, "f.txt"), "a") as f:
+            f.write("uncommitted change\n")
+        dirty_identity = pr.gather_build_identity(tmp, vcs_repo)
+        if dirty_identity.get("vcs") != "git" or dirty_identity.get("source_dirty") is not True:
+            failures.append(f"an uncommitted working-tree change was not reported as source_dirty=True "
+                             f"({dirty_identity})")
+        if dirty_identity.get("source_commit") != real_commit:
+            failures.append("a dirty working tree changed the reported commit hash, but only the "
+                             "index/worktree changed, not HEAD")
+        git("checkout", "-q", "--", "f.txt")  # restore clean for the determinism check below
+
+        # no-VCS source represented honestly
+        novcs_dir = os.path.join(tmp, "no_vcs_dir")
+        os.makedirs(novcs_dir)
+        novcs_identity = pr.gather_build_identity(tmp, novcs_dir)
+        if novcs_identity.get("vcs") != "none" or novcs_identity.get("source_commit") is not None \
+                or novcs_identity.get("source_dirty") is not None:
+            failures.append(f"a directory with no .git was not honestly reported as vcs=none/"
+                             f"commit=None/dirty=None ({novcs_identity})")
+
+        # malformed/forged metadata rejected: the same 40-hex-char guard
+        # gather_build_identity relies on must reject anything else, rather
+        # than trusting arbitrary git output verbatim.
+        for bad in ("", "not-a-commit", "a" * 39, "a" * 41, "g" * 40, real_commit.upper()):
+            if pr._COMMIT_HASH_RE.match(bad):
+                failures.append(f"the commit-hash validator accepted a malformed/forged value: {bad!r}")
+
+        # generated manifest remains deterministic: same clean commit twice
+        # in a row must produce byte-identical PACKAGING_MANIFEST.md text.
+        fake_image_map = {"merged_binary": "MtkCore.bin", "merged_binary_size": 1,
+                           "flash_offset": "0x000000", "partition_table_offset": "0x008000",
+                           "application_offset": "0x010000",
+                           "md5_uppercase_hex": "0" * 32, "sha256_uppercase_hex": "0" * 64,
+                           "app_size_bytes": 1, "app_md5_uppercase_hex": "0" * 32,
+                           "app_sha256_uppercase_hex": "0" * 64}
+
+        det_identity = pr.gather_build_identity(tmp, vcs_repo)
+        out1 = os.path.join(tmp, "manifest_det_1")
+        out2 = os.path.join(tmp, "manifest_det_2")
+        os.makedirs(out1)
+        os.makedirs(out2)
+        pr.write_release_notes(out1, fake_image_map, det_identity, False)
+        pr.write_release_notes(out2, fake_image_map, det_identity, False)
+        text1 = open(os.path.join(out1, "PACKAGING_MANIFEST.md")).read()
+        text2 = open(os.path.join(out2, "PACKAGING_MANIFEST.md")).read()
+        if text1 != text2:
+            failures.append("PACKAGING_MANIFEST.md was not deterministic across two runs against the "
+                             "identical clean commit")
+        if vcs_repo.replace(os.sep, "/") in text1 or tmp.replace(os.sep, "/") in text1:
+            failures.append("PACKAGING_MANIFEST.md leaked an absolute filesystem path from the "
+                             "source-VCS-identity fields")
+
         if failures:
             print("FAILED:")
             for f in failures:
