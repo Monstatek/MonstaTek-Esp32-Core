@@ -709,6 +709,103 @@ def main():
                 failures.append(f"malformed Git metadata: rejection message did not mention it "
                                  f"(stdout/stderr: {(proc.stdout + proc.stderr)[:400]!r})")
 
+        # ---- atomic, fail-closed --out publish (main()'s single
+        # os.replace, replacing the prior per-entry shutil.move loop). A
+        # source-level check always runs (no toolchain needed); the
+        # end-to-end file/directory/symlink refusal and stale-extras
+        # checks additionally need a REAL build directory (flasher_args.json
+        # + real ESP images) to reach the actual publish step, so they run
+        # only when one can be found -- consistent with this file's own
+        # existing esptool_available() gating convention. ----
+        pr_source = open(pr.__file__).read()
+        if "shutil.move(os.path.join(staging_dir" in pr_source:
+            failures.append("package_release.py's main() still contains a per-entry "
+                             "shutil.move finalization loop; expected a single os.replace")
+        if pr_source.count("os.replace(staging_dir, requested_out_dir)") != 1:
+            failures.append("package_release.py's main() does not install the staged package "
+                             "via exactly one os.replace(staging_dir, requested_out_dir) call")
+        if "os.path.lexists(requested_out_dir)" not in pr_source:
+            failures.append("package_release.py's main() does not guard --out with "
+                             "os.path.lexists (required to refuse a symlink without following it)")
+
+        real_build_dir = os.environ.get("MTK_TEST_REAL_BUILD_DIR")
+        if not real_build_dir:
+            for candidate in ("build_verify_clean", "build"):
+                p = os.path.join(args.root or ".", candidate)
+                if os.path.isfile(os.path.join(p, "flasher_args.json")):
+                    real_build_dir = p
+                    break
+
+        if esptool_available() and real_build_dir and os.path.isfile(os.path.join(real_build_dir, "flasher_args.json")):
+            real_root = args.root or "."
+
+            # a fresh path: exactly the expected file set, no stale extras
+            out_fresh = os.path.join(tmp, "out_fresh_valid")
+            proc = run_packaging_cli(real_root, out_fresh, build_dir=real_build_dir)
+            if proc.returncode != 0:
+                failures.append(f"a valid invocation to a brand-new --out path failed unexpectedly: "
+                                 f"{(proc.stdout + proc.stderr)[-800:]!r}")
+            elif not os.path.isdir(out_fresh):
+                failures.append("a valid invocation to a brand-new --out path did not create it")
+            else:
+                got = set(os.listdir(out_fresh))
+                expected = {"MtkCore.bin", "MtkCore.md5", "merged_image_map.json",
+                            "PACKAGING_MANIFEST.md", "partitions.csv"}
+                if got != expected:
+                    failures.append(f"a valid invocation produced an unexpected file set: got {sorted(got)}, "
+                                     f"expected {sorted(expected)}")
+
+            # pre-existing FILE at --out: refused, file content untouched
+            out_file = os.path.join(tmp, "out_is_a_file")
+            with open(out_file, "w") as f:
+                f.write("pre-existing file, not a package\n")
+            proc = run_packaging_cli(real_root, out_file, build_dir=real_build_dir)
+            if proc.returncode == 0:
+                failures.append("a valid invocation was accepted when --out was a pre-existing FILE")
+            if not os.path.isfile(out_file) or open(out_file).read() != "pre-existing file, not a package\n":
+                failures.append("--out being a pre-existing file was modified despite rejection")
+
+            # pre-existing NON-EMPTY DIRECTORY at --out: refused, untouched
+            out_nonempty = os.path.join(tmp, "out_is_nonempty_dir")
+            os.makedirs(out_nonempty)
+            with open(os.path.join(out_nonempty, "keep.txt"), "w") as f:
+                f.write("must survive\n")
+            proc = run_packaging_cli(real_root, out_nonempty, build_dir=real_build_dir)
+            if proc.returncode == 0:
+                failures.append("a valid invocation was accepted when --out was a pre-existing "
+                                 "non-empty directory")
+            if sorted(os.listdir(out_nonempty)) != ["keep.txt"] or \
+                    open(os.path.join(out_nonempty, "keep.txt")).read() != "must survive\n":
+                failures.append("--out being a pre-existing non-empty directory was modified "
+                                 "despite rejection")
+
+            # pre-existing SYMLINK at --out: refused, neither the symlink
+            # nor its target's contents touched, and the target is never
+            # deleted or followed-into.
+            symlink_target = os.path.join(tmp, "symlink_target_dir")
+            os.makedirs(symlink_target)
+            with open(os.path.join(symlink_target, "must_not_change.txt"), "w") as f:
+                f.write("target content\n")
+            out_symlink = os.path.join(tmp, "out_is_a_symlink")
+            os.symlink(symlink_target, out_symlink)
+            proc = run_packaging_cli(real_root, out_symlink, build_dir=real_build_dir)
+            if proc.returncode == 0:
+                failures.append("a valid invocation was accepted when --out was a pre-existing symlink")
+            if not os.path.islink(out_symlink) or os.readlink(out_symlink) != symlink_target:
+                failures.append("--out being a pre-existing symlink was deleted or repointed "
+                                 "despite rejection")
+            if sorted(os.listdir(symlink_target)) != ["must_not_change.txt"] or \
+                    open(os.path.join(symlink_target, "must_not_change.txt")).read() != "target content\n":
+                failures.append("the symlink target directory's contents were modified despite "
+                                 "packaging being rejected (the symlink must never be followed into)")
+        else:
+            print("NOTE: no real build directory with flasher_args.json found (and/or esptool "
+                  "unavailable) -- skipping the real end-to-end --out file/directory/symlink "
+                  "refusal and fresh-path file-set tests (expected when this script runs via the "
+                  "plain host_tests Python3 with no prior idf.py build present; set "
+                  "MTK_TEST_REAL_BUILD_DIR to a real build directory, or run from an ESP-IDF-"
+                  "sourced environment with build_verify_clean/ or build/ present, to exercise them).")
+
         if failures:
             print("FAILED:")
             for f in failures:

@@ -635,7 +635,9 @@ def parse_partitions_csv(path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--build-dir", default="build")
-    ap.add_argument("--out", default="release", help="Output/staging directory")
+    ap.add_argument("--out", default="release",
+                     help="Output directory for the finished package. Must not already exist "
+                          "(file, directory, or symlink) -- always use a fresh path.")
     ap.add_argument("--project-root", default=".")
     ap.add_argument("--hardware-tested", action="store_true",
                      help="Only pass this if this exact candidate has genuinely been hardware-validated.")
@@ -684,35 +686,63 @@ def main():
         print(f"  {root_err}")
         sys.exit(1)
 
-    # ---- Every write from here on lands in a private staging directory
-    # first; requested_out_dir is created and populated only at the very
-    # end, after every remaining validation and the MD5 sidecar itself
-    # have succeeded. ----
-    staging_dir = tempfile.mkdtemp(prefix="mtek_package_staging_")
+    # ---- Preflight: --out must not already exist -- as a file, a
+    # directory (empty or not), or a symlink (dangling or not). A release
+    # package always goes to a fresh path; this tool never merges into or
+    # overwrites an existing one, and never follows or deletes an existing
+    # symlink at that path. os.path.lexists (not os.path.exists) is
+    # required here specifically because it does NOT follow symlinks --
+    # exists() would silently treat a dangling symlink as "absent" and let
+    # the publish step below write through it. ----
+    if os.path.lexists(requested_out_dir):
+        print("PACKAGING FAILED (--out already exists):")
+        print(f"  A release package must be written to a new path; this tool never merges "
+              f"into, overwrites, or follows/replaces an existing file, directory, or symlink "
+              f"at --out. Choose a fresh output path.")
+        sys.exit(1)
+
+    # ---- Every write from here on lands in a private staging directory,
+    # created as a SIBLING of requested_out_dir under its own parent (never
+    # under a different filesystem, e.g. system /tmp) so the final publish
+    # below is one same-filesystem rename, not a per-file copy loop that
+    # could be interrupted partway through. requested_out_dir itself is
+    # created only by that single rename, once every validation and the
+    # MD5 sidecar itself have already succeeded -- there is no window where
+    # a caller can observe it partially populated. ----
+    out_parent = os.path.dirname(requested_out_dir) or "."
+    os.makedirs(out_parent, exist_ok=True)
+    staging_dir = tempfile.mkdtemp(prefix=".mtek_package_staging_", dir=out_parent)
+    published = False
     try:
-        out_dir = staging_dir
-        _package_into(root, build_dir, out_dir, identity, args.hardware_tested)
-        os.makedirs(requested_out_dir, exist_ok=True)
-        for name in os.listdir(staging_dir):
-            dest = os.path.join(requested_out_dir, name)
-            if os.path.exists(dest):
-                if os.path.isdir(dest):
-                    shutil.rmtree(dest)
-                else:
-                    os.remove(dest)
-            shutil.move(os.path.join(staging_dir, name), dest)
+        _package_into(root, build_dir, staging_dir, identity, args.hardware_tested)
+        # Re-check immediately before publish: the (possibly slow) work
+        # above gives a window for something else to have created
+        # requested_out_dir concurrently. Still fail closed rather than
+        # silently overwrite it -- this tool makes no atomicity claim
+        # about the check-then-rename pair as a whole, only that it never
+        # itself overwrites/merges into a path that existed at either
+        # check.
+        if os.path.lexists(requested_out_dir):
+            print("PACKAGING FAILED (--out was created concurrently during packaging):")
+            print("  Refusing to publish over it. No package was installed at --out.")
+            sys.exit(1)
+        os.replace(staging_dir, requested_out_dir)  # one rename; atomic on the same filesystem
+        published = True
     finally:
-        shutil.rmtree(staging_dir, ignore_errors=True)
+        if not published:
+            shutil.rmtree(staging_dir, ignore_errors=True)
     print(f"Package written to: {requested_out_dir}")
     return requested_out_dir
 
 
 def _package_into(root, build_dir, out_dir, identity, hardware_tested):
     """Does the actual merge/validate/write work into out_dir (a private
-    staging directory that main() moves into the caller's requested --out
-    only on total success -- see main()'s own doc comment). Every
-    PACKAGING FAILED path below still exits the whole process; main()'s
-    `finally` cleans up the staging directory regardless."""
+    staging directory that main() installs at the caller's requested --out
+    with a single rename/replace only on total success -- see main()'s own
+    doc comment; this function has no knowledge of the final --out path
+    and never touches it). Every PACKAGING FAILED path below still exits
+    the whole process; main()'s `finally` cleans up the staging directory
+    regardless."""
     flasher_args_path = os.path.join(build_dir, "flasher_args.json")
     with open(flasher_args_path) as f:
         flasher_args = json.load(f)
