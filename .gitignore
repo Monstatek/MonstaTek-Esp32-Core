@@ -50,9 +50,7 @@ sdkconfig.*.old
 /schematics/
 /bom/
 
-# Local assistant/editor state and caches
-.claude/
-.codex/
+# Local editor state and caches
 .idea/
 .vscode/
 .DS_Store
