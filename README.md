@@ -21,3 +21,7 @@ Repository structure:
 Generated source needed by the build belongs in the selected source set. Build outputs, reference material, staging packages, and raw local logs do not.
 
 An application-only binary is not an M1 updater package. Follow the [release-package contract](docs/RELEASE_PACKAGE.md) when preparing any hardware-validation artifact.
+
+## License
+
+GPL-3.0-only. See [LICENSE](LICENSE).
