@@ -17,7 +17,6 @@ extern "C" {
  * than running with a partially-initialized, effectively-unlocked HAL. */
 int mtek_ble_hal_esp32_init(void);
 const mtk_ble_hal_t *mtek_ble_hal_esp32_get(void);
-int mtek_ble_hal_esp32_is_synced(void);
 
 #ifdef __cplusplus
 }

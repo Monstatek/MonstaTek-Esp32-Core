@@ -1,13 +1,13 @@
-/* Clean-room implementation from MonstaTek contract. Bedge/C3 REQUEST
- * frame dispatch: translates a parsed Bedge wire request into a canonical
- * router call and formats the canonical response back into a Bedge
+/* Clean-room implementation from MonstaTek contract. Mtek Compatibility/C3 REQUEST
+ * frame dispatch: translates a parsed Mtek Compatibility wire request into a canonical
+ * router call and formats the canonical response back into a Mtek Compatibility
  * RESP/NAK/FRAG frame sequence -- never calling a legacy handler and
  * reparsing its output (002-adapter-translation-matrix.md Sec 1.4).
  *
- * Coverage: schemas.json's capability_state.bedge_c3 marks exactly 44
+ * Coverage: schemas.json's capability_state.compat_c3 marks exactly 44
  * canonical opcodes SUPPORTED for this profile (mtk_opcode_table,
  * queried programmatically -- not the 59 opcodes that merely carry an
- * adapter_map.bedge_c3 wire-number reference, which also includes 15
+ * adapter_map.compat_c3 wire-number reference, which also includes 15
  * opcodes the accepted contract itself marks DISABLED/UNSUPPORTED for
  * this profile: WIFI_MODE_GET/SET, GET_QUEUE_WATERMARKS, and the
  * 12-opcode BLE compatibility family). Every one of the 44 SUPPORTED
@@ -15,14 +15,14 @@
  * none is ever answered with a hand-rolled UNSUPPORTED NAK at this
  * layer, since that would mischaracterize an opcode the accepted
  * contract itself says this profile supports. Where an opcode's exact
- * Bedge-side response wire byte layout is not a confirmed fact, the real
+ * Mtek Compatibility-side response wire byte layout is not a confirmed fact, the real
  * canonical operation still executes (real side effects/state), and the
- * Bedge RESP carries a bare status only (RESP=[] on success, NAK=[status]
+ * Mtek Compatibility RESP carries a bare status only (RESP=[] on success, NAK=[status]
  * on failure) -- this is not an improvisation:
- * 002-adapter-translation-matrix.md Sec 1.1 documents that most Bedge
+ * 002-adapter-translation-matrix.md Sec 1.1 documents that most Mtek Compatibility
  * START handlers "return an ordinary RESP(OK) immediately ... real work
  * continuing as a background task", i.e. bare-status-only responses are
- * Bedge's own native convention for exactly this situation, not a gap
+ * Mtek Compatibility's own native convention for exactly this situation, not a gap
  * being papered over. Opcodes with an exact confirmed response shape get
  * full translation instead: CAPTURE_START/POLL_READ, WIFI_MAC_GET,
  * SOFTAP_STA_LIST, CAPTIVE_PORTAL_GET_DIAGNOSTICS, PING (real byte-for-
@@ -37,50 +37,62 @@
  * supplied in 002-wifi-service.md Sec 2.5/5 and the confirmed
  * `ble_conn_connect(payload, payload[6], 8000)` call site -- see their
  * own handler doc comments). Semantic host tests
- * (test_bedge_coverage.c) prove real request decode, real canonical side
- * effects, and exact Bedge response bytes for each of these, not merely
+ * (test_compat_coverage.c) prove real request decode, real canonical side
+ * effects, and exact Mtek Compatibility response bytes for each of these, not merely
  * that the router was reached.
  *
  * The 15 non-SUPPORTED opcodes are routed through the SAME
  * mtk_router_dispatch call with an empty/inert request: the router's own
  * capability-state gate (already tested by every other adapter) rejects
  * them with the correct wire status before any payload is decoded, so no
- * Bedge-side request-shape fact is needed for them at all -- this is not
+ * Mtek Compatibility-side request-shape fact is needed for them at all -- this is not
  * a guess, it is the same capability gate every other adapter goes
  * through.
  */
-#include "mtek_bedge_dispatch.h"
-#include "mtek_bedge_frame.h"
+#include "mtek_compat_dispatch.h"
+#include "mtek_compat_frame.h"
 #include "mtek_router.h"
+#include "mtek_async_sink.h"
 #include "mtek_schema_structs.h"
 #include "mtek_schema_message_descs.h"
 #include "mtek_codec_api.h"
 #include <string.h>
 
 /* RC12 blocker round, item 2: which deferred continuation is owed (see
- * mtk_bedge_dispatch_ctx_t.pending_continuation). */
-#define MTK_BEDGE_CONT_AP_SCAN  1  /* harvest AP result_generation, then build the network list */
-#define MTK_BEDGE_CONT_STA_SCAN 2  /* harvest STA result_generation into dctx, bare-status reply */
-#define MTK_BEDGE_CONT_GATT     3  /* harvest GATT connection_token into dctx, bare-status reply */
+ * mtk_compat_dispatch_ctx_t.pending_continuation). */
+#define MTK_COMPAT_CONT_AP_SCAN  1  /* harvest AP result_generation, then build the network list */
+#define MTK_COMPAT_CONT_STA_SCAN 2  /* harvest STA result_generation into dctx, bare-status reply */
+#define MTK_COMPAT_CONT_GATT     3  /* harvest GATT connection_token into dctx, bare-status reply */
 
-static void cap_resp(void *user, uint32_t correlation, uint8_t status, const void *body, const mtk_struct_desc_t *desc) {
+static mtk_emit_result_t cap_resp(void *user, uint32_t correlation, uint8_t status, const void *body, const mtk_struct_desc_t *desc) {
     (void)correlation;
-    bedge_capture_t *c = (bedge_capture_t *)user;
+    compat_capture_t *c = (compat_capture_t *)user;
     c->status = status;
     c->body_len = 0;
-    if (body && desc) mtk_encode(desc, body, c->body, sizeof(c->body), &c->body_len);
+    if (body && desc && mtk_encode(desc, body, c->body, sizeof(c->body), &c->body_len) != MTK_CODEC_OK) {
+        c->status = MTK_STATUS_INTERNAL_ERROR;
+        c->body_len = 0;
+        return MTK_EMIT_ENCODING_FAILED;
+    }
+    return MTK_EMIT_OK;
 }
-static void cap_resp_raw(void *user, uint32_t correlation, uint8_t status, const uint8_t *body, size_t len) {
+static mtk_emit_result_t cap_resp_raw(void *user, uint32_t correlation, uint8_t status, const uint8_t *body, size_t len) {
     (void)correlation;
-    bedge_capture_t *c = (bedge_capture_t *)user;
+    compat_capture_t *c = (compat_capture_t *)user;
     c->status = status;
-    c->body_len = len > sizeof(c->body) ? sizeof(c->body) : len;
+    c->body_len = 0;
+    if (len > sizeof(c->body)) {
+        c->status = MTK_STATUS_OVERFLOW;
+        return MTK_EMIT_CAPACITY_FAILED;
+    }
+    c->body_len = len;
     if (body) memcpy(c->body, body, c->body_len);
+    return MTK_EMIT_OK;
 }
-static void cap_event(void *user, uint32_t correlation_or_zero, const char *name, const void *body, const mtk_struct_desc_t *desc) {
+static mtk_emit_result_t cap_event(void *user, uint32_t correlation_or_zero, const char *name, const void *body, const mtk_struct_desc_t *desc) {
     (void)correlation_or_zero; (void)desc;
-    bedge_capture_t *c = (bedge_capture_t *)user;
-    if (!name || !body) return;
+    compat_capture_t *c = (compat_capture_t *)user;
+    if (!name || !body) return MTK_EMIT_DROPPED;
     if (strcmp(name, "AP_SCAN_COMPLETE") == 0) {
         const mtk_ap_scan_complete_ev_t *ev = (const mtk_ap_scan_complete_ev_t *)body;
         c->got_scan_generation = 1;
@@ -92,20 +104,22 @@ static void cap_event(void *user, uint32_t correlation_or_zero, const char *name
     } else if (strcmp(name, "GATT_CONNECT_COMPLETE") == 0) {
         const mtk_gatt_connect_complete_ev_t *ev = (const mtk_gatt_connect_complete_ev_t *)body;
         if (ev->status == MTK_STATUS_OK) { c->got_connection_token = 1; c->connection_token = ev->connection_token; }
-    }
+    } else return MTK_EMIT_DROPPED;
     /* Other terminal/lifecycle events carry no data this adapter layer's
      * bare-status responses need; the canonical operation's real
      * completion state remains fully tracked server-side via its
      * operation_token for a later STOP/STATUS query. */
+    return MTK_EMIT_OK;
 }
-static void cap_stream(void *user, uint32_t t, uint32_t s, const uint8_t *c, size_t l) { (void)user; (void)t; (void)s; (void)c; (void)l; }
+static mtk_emit_result_t cap_stream(void *user, uint32_t t, uint32_t s, const uint8_t *c, size_t l) { (void)user; (void)t; (void)s; (void)c; (void)l; return MTK_EMIT_DROPPED; }
 
-static mtk_request_ctx_t make_ctx(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_t *cap) {
+static mtk_request_ctx_t make_ctx(mtk_compat_dispatch_ctx_t *dctx, compat_capture_t *cap) {
     mtk_request_ctx_t ctx;
-    ctx.profile = MTK_PROFILE_BEDGE_C3_SPI;
+    ctx.profile = MTK_PROFILE_COMPAT_C3_SPI;
+    ctx.dispatch_mode = MTK_DISPATCH_INLINE;
     ctx.correlation = dctx->next_correlation++;
     ctx.boot_epoch = dctx->boot_epoch;
-    ctx.session_generation = 0; /* Bedge/C3 has no peer-reboot concept of its own (mtek_core.h's own doc comment) -- never fenced */
+    ctx.session_generation = 0; /* Mtek Compatibility/C3 has no peer-reboot concept of its own (mtek_core.h's own doc comment) -- never fenced */
     ctx.authorization_level = 0;
     ctx.sink.user = cap;
     ctx.sink.emit_response = cap_resp;
@@ -120,35 +134,10 @@ static mtk_request_ctx_t make_ctx(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_
  * CONTRACT). `user` is the persistent, adapter-owned dctx->event_queue
  * itself -- never a stack-local object -- so it is safe for a worker
  * task to call these well after the dispatching function has returned. */
-static void qcap_resp(void *user, uint32_t correlation, uint8_t status, const void *body, const mtk_struct_desc_t *desc) {
-    mtk_async_frame_t f; memset(&f, 0, sizeof(f));
-    f.kind = MTK_ASYNC_FRAME_RESPONSE;
-    f.correlation = correlation;
-    f.seq_or_status = status;
-    if (body && desc) mtk_encode(desc, body, f.body, sizeof(f.body), &f.body_len);
-    mtk_async_queue_push((mtk_async_queue_t *)user, &f);
-}
-static void qcap_resp_raw(void *user, uint32_t correlation, uint8_t status, const uint8_t *body, size_t len) {
-    mtk_async_frame_t f; memset(&f, 0, sizeof(f));
-    f.kind = MTK_ASYNC_FRAME_RESPONSE;
-    f.correlation = correlation;
-    f.seq_or_status = status;
-    f.body_len = len > sizeof(f.body) ? sizeof(f.body) : len;
-    if (body) memcpy(f.body, body, f.body_len);
-    mtk_async_queue_push((mtk_async_queue_t *)user, &f);
-}
-static void qcap_event(void *user, uint32_t correlation_or_zero, const char *name, const void *body, const mtk_struct_desc_t *desc) {
-    mtk_async_frame_t f; memset(&f, 0, sizeof(f));
-    f.kind = MTK_ASYNC_FRAME_EVENT;
-    f.correlation = correlation_or_zero;
-    if (name) { size_t n = strlen(name); if (n >= sizeof(f.event_name)) n = sizeof(f.event_name) - 1; memcpy(f.event_name, name, n); }
-    if (body && desc) mtk_encode(desc, body, f.body, sizeof(f.body), &f.body_len);
-    mtk_async_queue_push((mtk_async_queue_t *)user, &f);
-}
 /* Pops frames until a RESPONSE-kind frame is found (returned in *out) or
- * the queue is drained empty. Bedge's own wire model has no confirmed
+ * the queue is drained empty. Mtek Compatibility's own wire model has no confirmed
  * mechanism to relay a canonical EVENT (e.g. a terminal *_STOPPED
- * notification) as an unsolicited Bedge cell (see the dispatch layer's
+ * notification) as an unsolicited Mtek Compatibility cell (see the dispatch layer's
  * own file-header doc on this disclosed gap) -- an EVENT/STREAM frame
  * encountered here is therefore intentionally discarded, never
  * misread as if it were the accept reply to an unrelated request. */
@@ -160,15 +149,6 @@ static int pop_response_frame(mtk_async_queue_t *q, mtk_async_frame_t *out) {
     return 0;
 }
 
-static void qcap_stream(void *user, uint32_t session_token, uint32_t seq, const uint8_t *chunk, size_t len) {
-    mtk_async_frame_t f; memset(&f, 0, sizeof(f));
-    f.kind = MTK_ASYNC_FRAME_STREAM;
-    f.correlation = session_token;
-    f.seq_or_status = seq;
-    f.body_len = len > sizeof(f.body) ? sizeof(f.body) : len;
-    if (chunk) memcpy(f.body, chunk, f.body_len);
-    mtk_async_queue_push((mtk_async_queue_t *)user, &f);
-}
 
 /* Dispatches an ACCEPTED_ASYNC start opcode through the queue-backed
  * sink and immediately checks whether the (possibly-deferred) handler
@@ -182,26 +162,27 @@ static void qcap_stream(void *user, uint32_t session_token, uint32_t seq, const 
  *    background task that has not reached its own emit_response call
  *    yet): mark `cap->deferred` so the caller emits IDLE for this
  *    transaction; the real response will be drained by
- *    mtek_bedge_dispatch_poll_outbound on a later poll, once the worker
+ *    mtek_compat_dispatch_poll_outbound on a later poll, once the worker
  *    task's call lands in the still-live dctx->event_queue. */
-static void dispatch_start_track_token_async(mtk_bedge_dispatch_ctx_t *dctx, uint16_t service_id, uint16_t opcode,
-                                              const uint8_t *req, size_t req_len, uint32_t *token_field, bedge_capture_t *cap) {
+static void dispatch_start_track_token_async(mtk_compat_dispatch_ctx_t *dctx, uint16_t service_id, uint16_t opcode,
+                                              const uint8_t *req, size_t req_len, uint32_t *token_field, compat_capture_t *cap) {
     dctx->last_dispatched_service_id = service_id;
     dctx->last_dispatched_opcode = opcode;
     mtk_request_ctx_t ctx;
-    ctx.profile = MTK_PROFILE_BEDGE_C3_SPI;
+    ctx.profile = MTK_PROFILE_COMPAT_C3_SPI;
+    ctx.dispatch_mode = MTK_DISPATCH_DEFER_ALLOWED;
     ctx.correlation = dctx->next_correlation++;
     ctx.boot_epoch = dctx->boot_epoch;
-    ctx.session_generation = 0; /* Bedge/C3 has no peer-reboot concept of its own (mtek_core.h's own doc comment) -- never fenced */
+    ctx.session_generation = 0; /* Mtek Compatibility/C3 has no peer-reboot concept of its own (mtek_core.h's own doc comment) -- never fenced */
     ctx.authorization_level = 0;
     ctx.sink.user = &dctx->event_queue;
-    ctx.sink.emit_response = qcap_resp;
-    ctx.sink.emit_response_raw = qcap_resp_raw;
-    ctx.sink.emit_event = qcap_event;
-    ctx.sink.emit_stream = qcap_stream;
+    ctx.sink.emit_response = mtk_async_sink_resp;
+    ctx.sink.emit_response_raw = mtk_async_sink_resp_raw;
+    ctx.sink.emit_event = mtk_async_sink_event;
+    ctx.sink.emit_stream = mtk_async_sink_stream;
     /* Drain any frame left over from a previously-completed operation
      * (e.g. an unrelayed terminal EVENT this dispatch layer intentionally
-     * does not translate onto the Bedge wire -- see pop_response_frame)
+     * does not translate onto the Mtek Compatibility wire -- see pop_response_frame)
      * before dispatching a new one, so it is never misread as this
      * request's own accept reply. */
     mtk_async_queue_reset(&dctx->event_queue);
@@ -227,7 +208,7 @@ static void dispatch_start_track_token_async(mtk_bedge_dispatch_ctx_t *dctx, uin
 }
 
 /* Same async-safe deferral contract as dispatch_start_track_token_async,
- * but for opcodes whose Bedge translation also needs a *second* fact --
+ * but for opcodes whose Mtek Compatibility translation also needs a *second* fact --
  * a specific terminal event's field (AP/STA scan `result_generation`,
  * GATT `connection_token`) -- rather than just the bare accept status.
  *
@@ -245,27 +226,28 @@ static void dispatch_start_track_token_async(mtk_bedge_dispatch_ctx_t *dctx, uin
  *     builds its real reply from cap->got_*.
  *   - otherwise AT MOST ONE half arrived (response-but-no-event,
  *     event-but-no-response, or neither): arm the continuation and let
- *     mtek_bedge_dispatch_poll_outbound await the rest across polls,
+ *     mtek_compat_dispatch_poll_outbound await the rest across polls,
  *     carrying forward whichever half we already captured. It never
  *     fabricates success and never drops the later-arriving event -- the
  *     defect the pre-correction "arm only when no response" logic caused. */
-static void dispatch_async_with_event(mtk_bedge_dispatch_ctx_t *dctx, uint16_t service_id, uint16_t opcode,
-                                       const uint8_t *req, size_t req_len, bedge_capture_t *cap,
-                                       const char *event_name, void (*extract)(bedge_capture_t *cap, const mtk_async_frame_t *ev),
+static void dispatch_async_with_event(mtk_compat_dispatch_ctx_t *dctx, uint16_t service_id, uint16_t opcode,
+                                       const uint8_t *req, size_t req_len, compat_capture_t *cap,
+                                       const char *event_name, void (*extract)(compat_capture_t *cap, const mtk_async_frame_t *ev),
                                        uint8_t continuation_kind) {
     dctx->last_dispatched_service_id = service_id;
     dctx->last_dispatched_opcode = opcode;
     mtk_request_ctx_t ctx;
-    ctx.profile = MTK_PROFILE_BEDGE_C3_SPI;
+    ctx.profile = MTK_PROFILE_COMPAT_C3_SPI;
+    ctx.dispatch_mode = MTK_DISPATCH_DEFER_ALLOWED;
     ctx.correlation = dctx->next_correlation++;
     ctx.boot_epoch = dctx->boot_epoch;
-    ctx.session_generation = 0; /* Bedge/C3 has no peer-reboot concept of its own (mtek_core.h's own doc comment) -- never fenced */
+    ctx.session_generation = 0; /* Mtek Compatibility/C3 has no peer-reboot concept of its own (mtek_core.h's own doc comment) -- never fenced */
     ctx.authorization_level = 0;
     ctx.sink.user = &dctx->event_queue;
-    ctx.sink.emit_response = qcap_resp;
-    ctx.sink.emit_response_raw = qcap_resp_raw;
-    ctx.sink.emit_event = qcap_event;
-    ctx.sink.emit_stream = qcap_stream;
+    ctx.sink.emit_response = mtk_async_sink_resp;
+    ctx.sink.emit_response_raw = mtk_async_sink_resp_raw;
+    ctx.sink.emit_event = mtk_async_sink_event;
+    ctx.sink.emit_stream = mtk_async_sink_stream;
     mtk_async_queue_reset(&dctx->event_queue);
     mtk_router_dispatch(&ctx, service_id, opcode, req, req_len);
 
@@ -331,7 +313,7 @@ static void dispatch_async_with_event(mtk_bedge_dispatch_ctx_t *dctx, uint16_t s
         /* Carry the already-decoded terminal event into the continuation's
          * own fields so poll_outbound need never re-see it. */
         dctx->pending_event_status = cap->event_status;
-        if (continuation_kind == MTK_BEDGE_CONT_GATT) {
+        if (continuation_kind == MTK_COMPAT_CONT_GATT) {
             dctx->pending_event_ok = cap->got_connection_token;
             dctx->pending_event_conn_token = cap->connection_token;
         } else { /* AP or STA scan */
@@ -341,19 +323,19 @@ static void dispatch_async_with_event(mtk_bedge_dispatch_ctx_t *dctx, uint16_t s
     }
 }
 
-static void extract_ap_scan_generation(bedge_capture_t *cap, const mtk_async_frame_t *ev) {
+static void extract_ap_scan_generation(compat_capture_t *cap, const mtk_async_frame_t *ev) {
     mtk_ap_scan_complete_ev_t e; memset(&e, 0, sizeof(e));
     mtk_decode(&mtk_ap_scan_complete_ev_t_desc, &e, ev->body, ev->body_len, NULL);
     cap->got_scan_generation = 1; cap->scan_generation = e.result_generation;
     cap->event_status = MTK_STATUS_OK; /* AP_SCAN_COMPLETE is the success terminal (carries a generation) */
 }
-static void extract_sta_scan_generation(bedge_capture_t *cap, const mtk_async_frame_t *ev) {
+static void extract_sta_scan_generation(compat_capture_t *cap, const mtk_async_frame_t *ev) {
     mtk_sta_scan_complete_ev_t e; memset(&e, 0, sizeof(e));
     mtk_decode(&mtk_sta_scan_complete_ev_t_desc, &e, ev->body, ev->body_len, NULL);
     cap->got_scan_generation = 1; cap->scan_generation = e.result_generation;
     cap->event_status = MTK_STATUS_OK; /* STA_SCAN_COMPLETE is the success terminal (carries a generation) */
 }
-static void extract_gatt_connection_token(bedge_capture_t *cap, const mtk_async_frame_t *ev) {
+static void extract_gatt_connection_token(compat_capture_t *cap, const mtk_async_frame_t *ev) {
     mtk_gatt_connect_complete_ev_t e; memset(&e, 0, sizeof(e));
     mtk_decode(&mtk_gatt_connect_complete_ev_t_desc, &e, ev->body, ev->body_len, NULL);
     /* RC12 RC12 closure item 2: retain the real terminal status (OK on a
@@ -366,25 +348,25 @@ static void extract_gatt_connection_token(bedge_capture_t *cap, const mtk_async_
 static uint16_t rd_u16(const uint8_t *p) { return (uint16_t)(p[0] | (p[1] << 8)); }
 static void wr_u32(uint8_t *p, uint32_t v) { p[0]=(uint8_t)v; p[1]=(uint8_t)(v>>8); p[2]=(uint8_t)(v>>16); p[3]=(uint8_t)(v>>24); }
 
-static uint8_t bedge_status_from_canonical(uint8_t status) {
+static uint8_t compat_status_from_canonical(uint8_t status) {
     switch (status) {
-        case MTK_STATUS_OK: case MTK_STATUS_ACCEPTED: return MTK_BEDGE_STATUS_OK;
-        case MTK_STATUS_INVALID_ARGUMENT: return MTK_BEDGE_STATUS_ERR_INVALID_ARGS;
-        case MTK_STATUS_BUSY: return MTK_BEDGE_STATUS_ERR_BUSY;
-        case MTK_STATUS_TIMEOUT: return MTK_BEDGE_STATUS_ERR_TIMEOUT;
-        case MTK_STATUS_NO_MEMORY: return MTK_BEDGE_STATUS_ERR_NO_MEM;
-        case MTK_STATUS_UNSUPPORTED: return MTK_BEDGE_STATUS_ERR_UNSUPPORTED;
-        case MTK_STATUS_NOT_FOUND: return MTK_BEDGE_STATUS_ERR_INVALID_ARGS;
-        case MTK_STATUS_NOT_READY: return MTK_BEDGE_STATUS_ERR_NOT_RUNNING;
-        default: return MTK_BEDGE_STATUS_ERR_UNKNOWN;
+        case MTK_STATUS_OK: case MTK_STATUS_ACCEPTED: return MTK_COMPAT_STATUS_OK;
+        case MTK_STATUS_INVALID_ARGUMENT: return MTK_COMPAT_STATUS_ERR_INVALID_ARGS;
+        case MTK_STATUS_BUSY: return MTK_COMPAT_STATUS_ERR_BUSY;
+        case MTK_STATUS_TIMEOUT: return MTK_COMPAT_STATUS_ERR_TIMEOUT;
+        case MTK_STATUS_NO_MEMORY: return MTK_COMPAT_STATUS_ERR_NO_MEM;
+        case MTK_STATUS_UNSUPPORTED: return MTK_COMPAT_STATUS_ERR_UNSUPPORTED;
+        case MTK_STATUS_NOT_FOUND: return MTK_COMPAT_STATUS_ERR_INVALID_ARGS;
+        case MTK_STATUS_NOT_READY: return MTK_COMPAT_STATUS_ERR_NOT_RUNNING;
+        default: return MTK_COMPAT_STATUS_ERR_UNKNOWN;
     }
 }
 
 /* Every dispatch path that actually reaches the canonical router runs
  * through this one choke point, which records (service_id, opcode) for
- * host-test coverage instrumentation (see mtk_bedge_dispatch_ctx_t's own
+ * host-test coverage instrumentation (see mtk_compat_dispatch_ctx_t's own
  * doc comment) before handing off. */
-static void router_call(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_t *cap, uint16_t service_id, uint16_t opcode,
+static void router_call(mtk_compat_dispatch_ctx_t *dctx, compat_capture_t *cap, uint16_t service_id, uint16_t opcode,
                          const uint8_t *req, size_t req_len) {
     dctx->last_dispatched_service_id = service_id;
     dctx->last_dispatched_opcode = opcode;
@@ -395,16 +377,16 @@ static void router_call(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_t *cap, ui
 /* Class 4: empty request through the router; the capability gate alone
  * decides the outcome (used for the 15 non-SUPPORTED opcodes: the whole
  * DISABLED BLE-compat family, WIFI_MODE_GET/SET, and GET_QUEUE_WATERMARKS
- * which schemas.json itself marks bedge_c3=UNSUPPORTED despite Bedge's
+ * which schemas.json itself marks compat_c3=UNSUPPORTED despite Mtek Compatibility's
  * own M1ESP_SYS_GET_HEAP opcode existing on the wire). */
-static void dispatch_empty(mtk_bedge_dispatch_ctx_t *dctx, uint16_t service_id, uint16_t opcode, bedge_capture_t *cap) {
+static void dispatch_empty(mtk_compat_dispatch_ctx_t *dctx, uint16_t service_id, uint16_t opcode, compat_capture_t *cap) {
     router_call(dctx, cap, service_id, opcode, NULL, 0);
 }
 
 /* Class 2 default: dispatch with an already-encoded request, keep only
- * the status for the Bedge response (bare RESP/NAK, no structured data). */
-static void dispatch_bare(mtk_bedge_dispatch_ctx_t *dctx, uint16_t service_id, uint16_t opcode,
-                           const uint8_t *req, size_t req_len, bedge_capture_t *cap) {
+ * the status for the Mtek Compatibility response (bare RESP/NAK, no structured data). */
+static void dispatch_bare(mtk_compat_dispatch_ctx_t *dctx, uint16_t service_id, uint16_t opcode,
+                           const uint8_t *req, size_t req_len, compat_capture_t *cap) {
     router_call(dctx, cap, service_id, opcode, req, req_len);
     cap->body_len = 0; /* discard any structured response body -- bare status only */
 }
@@ -417,12 +399,12 @@ static void dispatch_bare(mtk_bedge_dispatch_ctx_t *dctx, uint16_t service_id, u
  * operation_token) is always 0 for these single-field structs. */
 typedef struct { uint32_t operation_token; } token_only_req_t;
 
-static void generic_token_op(mtk_bedge_dispatch_ctx_t *dctx, uint32_t *token_field, uint8_t clear_on_call,
-                              uint16_t service_id, uint16_t opcode, bedge_capture_t *cap) {
+static void generic_token_op(mtk_compat_dispatch_ctx_t *dctx, uint32_t *token_field, uint8_t clear_on_call,
+                              uint16_t service_id, uint16_t opcode, compat_capture_t *cap) {
     if (!*token_field) {
         dctx->last_dispatched_service_id = service_id;
         dctx->last_dispatched_opcode = opcode;
-        cap->status = MTK_STATUS_NOT_READY; /* -> ERR_NOT_RUNNING on the wire, see bedge_status_from_canonical */
+        cap->status = MTK_STATUS_NOT_READY; /* -> ERR_NOT_RUNNING on the wire, see compat_status_from_canonical */
         cap->body_len = 0;
         return;
     }
@@ -441,27 +423,27 @@ static void generic_token_op(mtk_bedge_dispatch_ctx_t *dctx, uint32_t *token_fie
 /* PING, 0x0001: confirmed exact -- source-confirmed
  * `case M1_RPC_SYS_PING: send_resp(hdr->msg_id, payload, payload_len);`
  * (001-command-behavior-matrix.md/002-system-service.md Sec "Factory-
- * UART adapter mapping" table): Bedge does not interpret the cookie at
+ * UART adapter mapping" table): Mtek Compatibility does not interpret the cookie at
  * all, it is a pure byte-for-byte echo of whatever length the requester
  * sent -- not fixed at 4 bytes despite the header's `u8[4]` shorthand.
  * The real canonical PING is still dispatched underneath (side-effect-
  * free, nonce=0) so this opcode is genuinely exercised through the
- * router, but the Bedge RESP itself is the confirmed real behavior: the
+ * router, but the Mtek Compatibility RESP itself is the confirmed real behavior: the
  * raw echoed payload, not the canonical nonce round trip. */
-static void handle_ping(mtk_bedge_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, bedge_capture_t *cap) {
+static void handle_ping(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, compat_capture_t *cap) {
     mtk_ping_req_t req = {0};
     const mtk_opcode_entry_t *op = mtk_opcode_find(0x0000, 0x0001);
     uint8_t buf[4]; size_t blen = 0;
     mtk_encode(op->req_desc, &req, buf, sizeof(buf), &blen);
     dispatch_bare(dctx, 0x0000, 0x0001, buf, blen, cap);
-    uint16_t echo_len = len > BEDGE_CAP_BODY_MAX ? BEDGE_CAP_BODY_MAX : len;
+    uint16_t echo_len = len > COMPAT_CAP_BODY_MAX ? COMPAT_CAP_BODY_MAX : len;
     if (echo_len && payload) memcpy(cap->body, payload, echo_len);
     cap->body_len = echo_len;
     cap->status = MTK_STATUS_OK;
 }
 
-/* GET_STATUS, Bedge 0x0002 (M1ESP_SYS_GET_STATUS, distinct from
- * GET_FW_VERSION 0x0003 below -- these are two separate Bedge wire
+/* GET_STATUS, Mtek Compatibility 0x0002 (M1ESP_SYS_GET_STATUS, distinct from
+ * GET_FW_VERSION 0x0003 below -- these are two separate Mtek Compatibility wire
  * opcodes, not one shared call): confirmed exact response shape
  * `m1esp_devstatus_t {proto_ver: u8, cap_bitmap: bytes[8], fw_name:
  * bytes[32] null-terminated}` (002-service-registry.md Sec 9,
@@ -478,10 +460,10 @@ static void handle_ping(mtk_bedge_dispatch_ctx_t *dctx, const uint8_t *payload, 
  * still dispatched for real underneath (side-effect-free) so it is
  * genuinely exercised, even though its data isn't the source of
  * cap_bitmap here. */
-static void handle_get_status(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_t *cap) {
+static void handle_get_status(mtk_compat_dispatch_ctx_t *dctx, compat_capture_t *cap) {
     /* RC8 independent audit P0-1: dctx->scratch_cap, not a stack-local --
-     * see mtk_bedge_dispatch_ctx_t's own doc comment. */
-    bedge_capture_t *caps_cap = &dctx->scratch_cap; memset(caps_cap, 0, sizeof(*caps_cap));
+     * see mtk_compat_dispatch_ctx_t's own doc comment. */
+    compat_capture_t *caps_cap = &dctx->scratch_cap; memset(caps_cap, 0, sizeof(*caps_cap));
     mtk_get_capabilities_req_t caps_req = {0}; caps_req.start_index = 0; caps_req.max_items = 32;
     const mtk_opcode_entry_t *caps_op = mtk_opcode_find(0x0000, 0x0004);
     uint8_t caps_buf[8]; size_t caps_blen = 0;
@@ -502,15 +484,15 @@ static void handle_get_status(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_t *c
     cap->body_len = sizeof(out);
 }
 
-/* GET_FW_VERSION, Bedge 0x0003 (M1ESP_SYS_GET_FW_VERSION): confirmed
+/* GET_FW_VERSION, Mtek Compatibility 0x0003 (M1ESP_SYS_GET_FW_VERSION): confirmed
  * exact response shape `m1esp_fw_version_t {major, minor, patch: u8,
  * git_hash: bytes[16] null-terminated}` -- maps directly onto canonical
  * GET_VERSION's `product_version`/`build_id`. Together with GET_STATUS
- * above, these are the two separate Bedge RPCs canonical GET_VERSION's
- * own note ("0x0002+0x0003 ... merged") describes: a Bedge peer issues
+ * above, these are the two separate Mtek Compatibility RPCs canonical GET_VERSION's
+ * own note ("0x0002+0x0003 ... merged") describes: a Mtek Compatibility peer issues
  * each independently; this dispatch layer answers each with its own
  * real slice of one real canonical GET_VERSION call. */
-static void handle_get_fw_version(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_t *cap) {
+static void handle_get_fw_version(mtk_compat_dispatch_ctx_t *dctx, compat_capture_t *cap) {
     const mtk_opcode_entry_t *ver_op = mtk_opcode_find(0x0000, 0x0002);
     router_call(dctx, cap, 0x0000, 0x0002, NULL, 0);
     if (cap->status != MTK_STATUS_OK) { cap->body_len = 0; return; }
@@ -524,11 +506,11 @@ static void handle_get_fw_version(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_
     cap->body_len = sizeof(out);
 }
 
-/* RESET_INTENT, 0x0005: Bedge's header says "no resp" but the pinned
+/* RESET_INTENT, 0x0005: Mtek Compatibility's header says "no resp" but the pinned
  * dispatch code sends RESP(OK) then resets after 50ms (source-proven,
  * not the stale header comment) -- delay_ms is hardcoded to the
- * confirmed 50ms; Bedge's own wire request carries no payload. */
-static void handle_reset(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_t *cap) {
+ * confirmed 50ms; Mtek Compatibility's own wire request carries no payload. */
+static void handle_reset(mtk_compat_dispatch_ctx_t *dctx, compat_capture_t *cap) {
     mtk_reset_intent_req_t req = {0}; req.delay_ms = 50;
     const mtk_opcode_entry_t *op = mtk_opcode_find(0x0000, 0x0006);
     uint8_t buf[8]; size_t blen = 0;
@@ -536,16 +518,16 @@ static void handle_reset(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_t *cap) {
     dispatch_bare(dctx, 0x0000, 0x0006, buf, blen, cap);
 }
 
-/* TIME_SYNC_START, 0x0009: Bedge's own request is confirmed empty ("REQ
+/* TIME_SYNC_START, 0x0009: Mtek Compatibility's own request is confirmed empty ("REQ
  * none" -- station must already be connected). The canonical request
  * still needs a value for its own (superset) fields: server="" selects
  * the configured/default pool per the confirmed field semantics, and
  * timeout_ms=15000 is the documented default a caller who omits it
- * sends. Bedge's own synchronous m1_rpc_time_t reply is not translated
+ * sends. Mtek Compatibility's own synchronous m1_rpc_time_t reply is not translated
  * (this canonical opcode is ACCEPTED_ASYNC; the real result arrives via
  * a later TIME_SYNC_RESULT event this dispatch layer does not currently
  * relay) -- bare status only, dispatched for real. */
-static void handle_time_sync_start(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_t *cap) {
+static void handle_time_sync_start(mtk_compat_dispatch_ctx_t *dctx, compat_capture_t *cap) {
     mtk_time_sync_start_req_t req; memset(&req, 0, sizeof(req));
     req.server.len = 0;
     req.timeout_ms = 15000;
@@ -555,19 +537,19 @@ static void handle_time_sync_start(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture
     dispatch_start_track_token_async(dctx, 0x0000, 0x0008, buf, blen, NULL, cap);
 }
 
-/* AP_SCAN_START + AP_SCAN_RESULTS_PAGE, Bedge 0x0103 (M1ESP_WIFI_SCAN,
- * one shared RPC per the confirmed facts): REQ `u8 band` (Bedge's own
+/* AP_SCAN_START + AP_SCAN_RESULTS_PAGE, Mtek Compatibility 0x0103 (M1ESP_WIFI_SCAN,
+ * one shared RPC per the confirmed facts): REQ `u8 band` (Mtek Compatibility's own
  * handle_wifi_scan does not read it -- confirmed header-vs-
  * implementation divergence -- always dispatched as band=ALL/hop) ->
  * RESP `u16 count` + per-AP `m1esp_scan_entry_t {bssid[6], rssi:i8,
  * channel:u8, authmode:u8, ssid_len:u8}` + ssid bytes (exact, confirmed,
- * 002-wifi-service.md Sec 5 adapter mapping table). Since Bedge's one
+ * 002-wifi-service.md Sec 5 adapter mapping table). Since Mtek Compatibility's one
  * RPC both triggers the scan AND returns the full result list
  * synchronously, this dispatches the real canonical AP_SCAN_START
  * (synchronous-complete in this session's dispatch model), captures the
  * real result_generation from the AP_SCAN_COMPLETE terminal event, then
  * dispatches a real canonical AP_SCAN_RESULTS_PAGE to fetch up to 50
- * records and translates them into Bedge's confirmed wire shape. */
+ * records and translates them into Mtek Compatibility's confirmed wire shape. */
 /* RC12 blocker round, item 2: build the confirmed Community AP-scan list
  * response ([count:u16] + per-AP [bssid:6][rssi:i8][channel:u8][authmode:u8]
  * [ssid_len:u8][ssid:N]) into cap->body, by issuing the canonical
@@ -576,15 +558,15 @@ static void handle_time_sync_start(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture
  * the bytes are IDENTICAL whichever path produced them. On a page failure
  * (e.g. a stale/invalid generation) it emits an empty (count=0) list with
  * status OK, exactly as the pre-existing synchronous path did. */
-static void build_ap_scan_list_response(mtk_bedge_dispatch_ctx_t *dctx, uint32_t generation, bedge_capture_t *cap) {
+static void build_ap_scan_list_response(mtk_compat_dispatch_ctx_t *dctx, uint32_t generation, compat_capture_t *cap) {
     const mtk_opcode_entry_t *page_op = mtk_opcode_find(0x0001, 0x0003);
     mtk_ap_scan_results_page_req_t page_req = {0};
     page_req.result_generation = generation; page_req.start_index = 0; page_req.max_items = 50;
     uint8_t page_buf[16]; size_t page_blen = 0;
     mtk_encode(page_op->req_desc, &page_req, page_buf, sizeof(page_buf), &page_blen);
     /* RC8 independent audit P0-1: dctx->scratch_cap/dctx->ap_scan_page,
-     * not stack-locals -- see mtk_bedge_dispatch_ctx_t's own doc comment. */
-    bedge_capture_t *page_cap = &dctx->scratch_cap; memset(page_cap, 0, sizeof(*page_cap));
+     * not stack-locals -- see mtk_compat_dispatch_ctx_t's own doc comment. */
+    compat_capture_t *page_cap = &dctx->scratch_cap; memset(page_cap, 0, sizeof(*page_cap));
     router_call(dctx, page_cap, 0x0001, 0x0003, page_buf, page_blen);
     if (page_cap->status != MTK_STATUS_OK) {
         cap->body[0] = 0; cap->body[1] = 0; cap->body_len = 2; cap->status = MTK_STATUS_OK; return;
@@ -594,7 +576,7 @@ static void build_ap_scan_list_response(mtk_bedge_dispatch_ctx_t *dctx, uint32_t
 
     uint16_t off = 2;
     uint16_t count = 0;
-    for (uint32_t i = 0; i < page->items.count && off + 10 + 32 <= BEDGE_CAP_BODY_MAX; i++) {
+    for (uint32_t i = 0; i < page->items.count && off + 10 + 32 <= COMPAT_CAP_BODY_MAX; i++) {
         const mtk_aprecord_t *r = &page->items.items[i];
         memcpy(cap->body + off, r->bssid.b, 6); off += 6;
         cap->body[off++] = (uint8_t)r->rssi;
@@ -610,13 +592,13 @@ static void build_ap_scan_list_response(mtk_bedge_dispatch_ctx_t *dctx, uint32_t
     cap->status = MTK_STATUS_OK;
 }
 
-static void handle_ap_scan_start(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_t *cap) {
+static void handle_ap_scan_start(mtk_compat_dispatch_ctx_t *dctx, compat_capture_t *cap) {
     mtk_ap_scan_start_req_t req = {0}; req.band = 2; req.channel_plan.mode = 1; req.channel_plan.band = 2;
     const mtk_opcode_entry_t *op = mtk_opcode_find(0x0001, 0x0001);
     uint8_t buf[16]; size_t blen = 0;
     mtk_encode(op->req_desc, &req, buf, sizeof(buf), &blen);
-    dispatch_async_with_event(dctx, 0x0001, 0x0001, buf, blen, cap, "AP_SCAN_COMPLETE", extract_ap_scan_generation, MTK_BEDGE_CONT_AP_SCAN);
-    /* Deferred: the continuation in mtek_bedge_dispatch_poll_outbound will
+    dispatch_async_with_event(dctx, 0x0001, 0x0001, buf, blen, cap, "AP_SCAN_COMPLETE", extract_ap_scan_generation, MTK_COMPAT_CONT_AP_SCAN);
+    /* Deferred: the continuation in mtek_compat_dispatch_poll_outbound will
      * harvest the generation from the terminal event and build the list. */
     if (cap->deferred) { cap->body_len = 0; return; }
     if (!cap->got_scan_generation) { cap->body_len = 0; return; }
@@ -626,9 +608,9 @@ static void handle_ap_scan_start(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_t
 
 /* STA_SCAN_START, 0x030E: [bssid:6][channel:1][dur:1] (dur in whole
  * seconds -- wifi_sta_scan_start's confirmed uint16_t-seconds signature,
- * with Bedge's own main.c passing only a single wire byte, so 0..255s is
- * the Bedge-representable range; duration_ms/1000 clamped into it). */
-static void handle_sta_scan_start(mtk_bedge_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, bedge_capture_t *cap) {
+ * with Mtek Compatibility's own main.c passing only a single wire byte, so 0..255s is
+ * the Mtek Compatibility-representable range; duration_ms/1000 clamped into it). */
+static void handle_sta_scan_start(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, compat_capture_t *cap) {
     if (len < 8) { cap->status = MTK_STATUS_INVALID_ARGUMENT; cap->body_len = 0; return; }
     mtk_sta_scan_start_req_t req; memset(&req, 0, sizeof(req));
     memcpy(req.target_bssid.b, payload, 6);
@@ -637,7 +619,7 @@ static void handle_sta_scan_start(mtk_bedge_dispatch_ctx_t *dctx, const uint8_t 
     const mtk_opcode_entry_t *op = mtk_opcode_find(0x0001, 0x0006);
     uint8_t buf[32]; size_t blen = 0;
     mtk_encode(op->req_desc, &req, buf, sizeof(buf), &blen);
-    dispatch_async_with_event(dctx, 0x0001, 0x0006, buf, blen, cap, "STA_SCAN_COMPLETE", extract_sta_scan_generation, MTK_BEDGE_CONT_STA_SCAN);
+    dispatch_async_with_event(dctx, 0x0001, 0x0006, buf, blen, cap, "STA_SCAN_COMPLETE", extract_sta_scan_generation, MTK_COMPAT_CONT_STA_SCAN);
     /* Deferred: the continuation harvests the generation (for a later
      * STA_SCAN_RESULTS_PAGE query) and delivers the bare-status reply. */
     if (cap->deferred) return;
@@ -645,16 +627,16 @@ static void handle_sta_scan_start(mtk_bedge_dispatch_ctx_t *dctx, const uint8_t 
     cap->body_len = 0;
 }
 
-/* STA_SCAN_RESULTS_PAGE, 0x030F: a genuinely separate Bedge wire opcode
+/* STA_SCAN_RESULTS_PAGE, 0x030F: a genuinely separate Mtek Compatibility wire opcode
  * (unlike AP's merged design), but with the same confirmed exact
  * response shape as the rest of the STA_SCAN_* family (002-wifi-
  * service.md Sec 5): `[count:2]` + per-station `[mac:6][rssi:i8]`. The
  * request is safely constructible from the most recent STA_SCAN_START
  * dispatched through this same layer (start_index=0/max_items=32 --
- * Bedge's own request shape for this specific paging opcode is not
+ * Mtek Compatibility's own request shape for this specific paging opcode is not
  * separately confirmed, but a paged read has no side effect from those
  * defaults). */
-static void handle_sta_scan_results_page(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_t *cap) {
+static void handle_sta_scan_results_page(mtk_compat_dispatch_ctx_t *dctx, compat_capture_t *cap) {
     if (!dctx->sta_scan_has_generation) {
         dctx->last_dispatched_service_id = 0x0001; dctx->last_dispatched_opcode = 0x0008;
         cap->status = MTK_STATUS_NOT_READY; cap->body_len = 0; return;
@@ -674,7 +656,7 @@ static void handle_sta_scan_results_page(mtk_bedge_dispatch_ctx_t *dctx, bedge_c
      * is free to be overwritten from scratch with no aliasing hazard. */
     uint16_t off = 2;
     uint16_t count = 0;
-    for (uint32_t i = 0; i < page.items.count && off + 7 <= BEDGE_CAP_BODY_MAX; i++) {
+    for (uint32_t i = 0; i < page.items.count && off + 7 <= COMPAT_CAP_BODY_MAX; i++) {
         memcpy(cap->body + off, page.items.items[i].mac.b, 6); off += 6;
         cap->body[off++] = (uint8_t)page.items.items[i].rssi;
         count++;
@@ -685,9 +667,9 @@ static void handle_sta_scan_results_page(mtk_bedge_dispatch_ctx_t *dctx, bedge_c
 
 /* STA_CONNECT, 0x0104: [ssid_len:1][ssid][pwd_len:1][pwd] (exact,
  * confirmed). Bare response (class 2): the real outcome is available via
- * a later canonical STA_STATUS poll, matching Bedge's own confirmed
+ * a later canonical STA_STATUS poll, matching Mtek Compatibility's own confirmed
  * "RESP(OK) means association attempt started" behavior. */
-static void handle_wifi_connect(mtk_bedge_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, bedge_capture_t *cap) {
+static void handle_wifi_connect(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, compat_capture_t *cap) {
     if (len < 1) { cap->status = MTK_STATUS_INVALID_ARGUMENT; cap->body_len = 0; return; }
     uint8_t ssid_len = payload[0];
     if ((uint16_t)(1 + ssid_len + 1) > len) { cap->status = MTK_STATUS_INVALID_ARGUMENT; cap->body_len = 0; return; }
@@ -704,7 +686,7 @@ static void handle_wifi_connect(mtk_bedge_dispatch_ctx_t *dctx, const uint8_t *p
     dispatch_start_track_token_async(dctx, 0x0001, 0x000A, buf, blen, NULL, cap);
 }
 
-static void handle_sta_disconnect(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_t *cap) {
+static void handle_sta_disconnect(mtk_compat_dispatch_ctx_t *dctx, compat_capture_t *cap) {
     dispatch_bare(dctx, 0x0001, 0x000B, NULL, 0, cap);
 }
 
@@ -713,19 +695,19 @@ static void handle_sta_disconnect(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_
  * canonical-core-contract.md's ipv4 type note) is not enough on its own
  * to safely translate the remaining field order/widths without
  * guessing -- bare status only. */
-static void handle_sta_status(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_t *cap) {
+static void handle_sta_status(mtk_compat_dispatch_ctx_t *dctx, compat_capture_t *cap) {
     dispatch_bare(dctx, 0x0001, 0x000C, NULL, 0, cap);
 }
 
-/* BEACON_START, 0x0304: Bedge's own wire SSID-list packing (vs. its
+/* BEACON_START, 0x0304: Mtek Compatibility's own wire SSID-list packing (vs. its
  * in-memory transport struct, which main.c parses up to 32 entries into)
- * is not a confirmed byte encoding. Sending zero SSIDs (Bedge's own
+ * is not a confirmed byte encoding. Sending zero SSIDs (Mtek Compatibility's own
  * confirmed wildcard/broadcast semantic, per PROBE_FLOOD_START's
  * sibling note) is the one safe, non-guessed request this layer can
  * construct without inventing an array packing -- dispatched for real,
- * bare status. A caller wanting specific SSIDs via Bedge is the
+ * bare status. A caller wanting specific SSIDs via Mtek Compatibility is the
  * documented open item (docs/PROVENANCE.md). */
-static void handle_beacon_start(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_t *cap) {
+static void handle_beacon_start(mtk_compat_dispatch_ctx_t *dctx, compat_capture_t *cap) {
     mtk_beacon_start_req_t req; memset(&req, 0, sizeof(req));
     const mtk_opcode_entry_t *op = mtk_opcode_find(0x0001, 0x000D);
     uint8_t buf[8]; size_t blen = 0;
@@ -737,10 +719,10 @@ static void handle_beacon_start(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_t 
  * count:u16, interval_ms:u16} (exact, confirmed). One AP BSSID + one
  * station MAC per RPC expresses canonical SELECTED (station != broadcast)
  * or BROADCAST (station == FF:FF:FF:FF:FF:FF); ALL_SCANNED is not
- * expressible in one Bedge RPC (a genuine per-profile field-
+ * expressible in one Mtek Compatibility RPC (a genuine per-profile field-
  * expressibility limit, not a missing capability). Bare response (class
  * 2); operation_token is tracked for DEAUTH_STOP/STATUS. */
-static void handle_deauth_start(mtk_bedge_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, bedge_capture_t *cap) {
+static void handle_deauth_start(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, compat_capture_t *cap) {
     if (len < 6 + 1 + 6 + 2 + 2) { cap->status = MTK_STATUS_INVALID_ARGUMENT; cap->body_len = 0; return; }
     mtk_deauth_start_req_t req; memset(&req, 0, sizeof(req));
     memcpy(req.ap_bssid.b, payload, 6);
@@ -760,14 +742,14 @@ static void handle_deauth_start(mtk_bedge_dispatch_ctx_t *dctx, const uint8_t *p
      * dispatch_start_track_token every other START opcode still uses),
      * proving out the router's async runner mechanism end-to-end for the
      * highest-priority opcode first. See dispatch_start_track_token_async
-     * and test_bedge_async_deauth.c. */
+     * and test_compat_async_deauth.c. */
     dispatch_start_track_token_async(dctx, 0x0001, 0x0010, buf, blen, &dctx->deauth_token, cap);
 }
 
 /* HANDSHAKE_START, 0x0310: [bssid:6][channel:1][deauth_count:2] (exact,
  * confirmed). Bare response (class 2); operation_token tracked for
  * HANDSHAKE_STOP/STATUS. */
-static void handle_hs_start(mtk_bedge_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, bedge_capture_t *cap) {
+static void handle_hs_start(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, compat_capture_t *cap) {
     if (len < 9) { cap->status = MTK_STATUS_INVALID_ARGUMENT; cap->body_len = 0; return; }
     mtk_handshake_start_req_t req; memset(&req, 0, sizeof(req));
     memcpy(req.target_bssid.b, payload, 6);
@@ -782,9 +764,9 @@ static void handle_hs_start(mtk_bedge_dispatch_ctx_t *dctx, const uint8_t *paylo
 /* HANDSHAKE_STATUS, 0x0311 (M1ESP_OFF_HS_STATUS): confirmed exact
  * field-for-field match with canonical (002-wifi-service.md Sec 5 "exact
  * field-for-field match", Sec 2.5's `{state, total_len}` response) --
- * Bedge's own request carries no operation_token (single-outstanding-
+ * Mtek Compatibility's own request carries no operation_token (single-outstanding-
  * session model); response is `[state:1][total_len:4 LE]`. */
-static void handle_hs_status(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_t *cap) {
+static void handle_hs_status(mtk_compat_dispatch_ctx_t *dctx, compat_capture_t *cap) {
     if (!dctx->handshake_token) {
         dctx->last_dispatched_service_id = 0x0001; dctx->last_dispatched_opcode = 0x0014;
         cap->status = MTK_STATUS_NOT_READY; cap->body_len = 0; return;
@@ -804,14 +786,14 @@ static void handle_hs_status(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_t *ca
 
 /* HANDSHAKE_READ, 0x0312 (M1ESP_OFF_HS_GET): confirmed exact
  * field-for-field match with canonical (002-wifi-service.md Sec 5):
- * request `{offset:u32, max_len:u16}` (Bedge's single-outstanding-
+ * request `{offset:u32, max_len:u16}` (Mtek Compatibility's single-outstanding-
  * session model needs no operation_token on the wire), response
  * `{data:bytes(max=512), total_len:u32}`, translated as
  * `[total_len:4][data_len:2][data:N]` matching this same dispatch
- * layer's own established Bedge "read captured bytes" convention
+ * layer's own established Mtek Compatibility "read captured bytes" convention
  * (MONITOR_READ, confirmed exact) for a redundant-but-consistent
  * length-prefixed shape. */
-static void handle_hs_read(mtk_bedge_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, bedge_capture_t *cap) {
+static void handle_hs_read(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, compat_capture_t *cap) {
     if (!dctx->handshake_token) {
         dctx->last_dispatched_service_id = 0x0001; dctx->last_dispatched_opcode = 0x0015;
         cap->status = MTK_STATUS_NOT_READY; cap->body_len = 0; return;
@@ -840,7 +822,7 @@ static void handle_hs_read(mtk_bedge_dispatch_ctx_t *dctx, const uint8_t *payloa
 /* HANDSHAKE_STOP, 0x0313 (M1ESP_OFF_HS_STOP): confirmed exact
  * field-for-field match; response is `{final_state, final_status}`
  * (canonical common STOP shape), translated as the two raw bytes. */
-static void handle_hs_stop(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_t *cap) {
+static void handle_hs_stop(mtk_compat_dispatch_ctx_t *dctx, compat_capture_t *cap) {
     if (!dctx->handshake_token) {
         dctx->last_dispatched_service_id = 0x0001; dctx->last_dispatched_opcode = 0x0016;
         cap->status = MTK_STATUS_NOT_READY; cap->body_len = 0; return;
@@ -859,16 +841,16 @@ static void handle_hs_stop(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_t *cap)
 }
 
 /* SOFTAP_START, 0x0200: config = {ssid, psk, channel}; psk empty=open,
- * non-empty=WPA2-PSK is Bedge's own confirmed implicit-auth rule. ssid/
- * psk ARE taken from the incoming Bedge payload using the confirmed
+ * non-empty=WPA2-PSK is Mtek Compatibility's own confirmed implicit-auth rule. ssid/
+ * psk ARE taken from the incoming Mtek Compatibility payload using the confirmed
  * WIFI_CONNECT-identical [len][data] pattern (SoftApConfig's own ssid/
- * psk fields use that exact canonical encoding). The exact byte Bedge
+ * psk fields use that exact canonical encoding). The exact byte Mtek Compatibility
  * expects for channel selection within its own config struct is not
  * independently confirmed, so channel=0 (an always-valid "auto"
  * sentinel used elsewhere in this codebase) is sent rather than parsing
- * a Bedge-specific channel byte out of the incoming payload. Bare
+ * a Mtek Compatibility-specific channel byte out of the incoming payload. Bare
  * response (class 2); token tracked. */
-static void handle_softap_start(mtk_bedge_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, bedge_capture_t *cap) {
+static void handle_softap_start(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, compat_capture_t *cap) {
     if (len < 1) { cap->status = MTK_STATUS_INVALID_ARGUMENT; cap->body_len = 0; return; }
     uint8_t ssid_len = payload[0];
     if ((uint16_t)(1 + ssid_len + 1) > len) { cap->status = MTK_STATUS_INVALID_ARGUMENT; cap->body_len = 0; return; }
@@ -884,10 +866,10 @@ static void handle_softap_start(mtk_bedge_dispatch_ctx_t *dctx, const uint8_t *p
     dispatch_start_track_token_async(dctx, 0x0001, 0x0019, buf, blen, &dctx->softap_token, cap);
 }
 
-/* SOFTAP_STA_LIST, 0x0202: response corrected to Bedge's actual wire
+/* SOFTAP_STA_LIST, 0x0202: response corrected to Mtek Compatibility's actual wire
  * shape (handle_softap_sta_list: resp[0]=station_count,
  * resp[1]=internet_shared) -- exact, confirmed. Full translation. */
-static void handle_softap_sta_list(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_t *cap) {
+static void handle_softap_sta_list(mtk_compat_dispatch_ctx_t *dctx, compat_capture_t *cap) {
     const mtk_opcode_entry_t *op = mtk_opcode_find(0x0001, 0x001B);
     router_call(dctx, cap, 0x0001, 0x001B, NULL, 0);
     if (cap->status != MTK_STATUS_OK) { cap->body_len = 0; return; }
@@ -902,9 +884,9 @@ static void handle_softap_sta_list(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture
 /* PROBE_FLOOD_START, 0x0306: confirmed exact request wire shape
  * (002-wifi-service.md Sec 2.8.2, source-confirmed handle_probe_start):
  * `[channel:1][count:1]` then `count` x `[len:1][ssid]`; `count=0` is
- * Bedge's own confirmed wildcard/broadcast-probes meaning. Bare response
+ * Mtek Compatibility's own confirmed wildcard/broadcast-probes meaning. Bare response
  * (class 2); token tracked. */
-static void handle_probe_flood_start(mtk_bedge_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, bedge_capture_t *cap) {
+static void handle_probe_flood_start(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, compat_capture_t *cap) {
     if (len < 2) { cap->status = MTK_STATUS_INVALID_ARGUMENT; cap->body_len = 0; return; }
     mtk_probe_flood_start_req_t req; memset(&req, 0, sizeof(req));
     req.channel = payload[0];
@@ -926,20 +908,20 @@ static void handle_probe_flood_start(mtk_bedge_dispatch_ctx_t *dctx, const uint8
     dispatch_start_track_token_async(dctx, 0x0001, 0x001C, buf, blen, &dctx->probe_token, cap);
 }
 
-/* KARMA_START, 0x0309: request matches Bedge's own confirmed [channel:1]
+/* KARMA_START, 0x0309: request matches Mtek Compatibility's own confirmed [channel:1]
  * exactly. Bare response (class 2); token tracked. */
-static void handle_karma_start(mtk_bedge_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, bedge_capture_t *cap) {
+static void handle_karma_start(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, compat_capture_t *cap) {
     if (len < 1) { cap->status = MTK_STATUS_INVALID_ARGUMENT; cap->body_len = 0; return; }
     uint8_t buf[1] = { payload[0] };
     dispatch_start_track_token_async(dctx, 0x0001, 0x001F, buf, 1, &dctx->karma_token, cap);
 }
 
 /* RAW_TX_SEND, 0x030C: [channel:1][frame:N>=10] -- a direct structural
- * inference (not a free guess) from Bedge's own confirmed `if (len < 11)`
+ * inference (not a free guess) from Mtek Compatibility's own confirmed `if (len < 11)`
  * minimum-length check on the total request buffer: a 1-byte channel
  * prefix plus a >=10-byte frame gives exactly that 11-byte floor. One-
  * shot, no operation token (confirmed). Bare response. */
-static void handle_raw_tx(mtk_bedge_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, bedge_capture_t *cap) {
+static void handle_raw_tx(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, compat_capture_t *cap) {
     if (len < 11) { cap->status = MTK_STATUS_INVALID_ARGUMENT; cap->body_len = 0; return; }
     mtk_raw_tx_send_req_t req; memset(&req, 0, sizeof(req));
     req.channel = payload[0];
@@ -960,7 +942,7 @@ static void handle_raw_tx(mtk_bedge_dispatch_ctx_t *dctx, const uint8_t *payload
  * FIRST, then ssid_len+ssid, then the title occupying whatever bytes
  * remain (no separate title-length prefix), truncated to the confirmed
  * 95-byte portal_title bound. Bare response (class 2); token tracked. */
-static void handle_captive_portal_start(mtk_bedge_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, bedge_capture_t *cap) {
+static void handle_captive_portal_start(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, compat_capture_t *cap) {
     if (len < 2) { cap->status = MTK_STATUS_INVALID_ARGUMENT; cap->body_len = 0; return; }
     uint8_t channel = payload[0];
     uint8_t ssid_len = payload[1];
@@ -979,11 +961,11 @@ static void handle_captive_portal_start(mtk_bedge_dispatch_ctx_t *dctx, const ui
 }
 
 /* CAPTIVE_PORTAL_GET_CREDENTIALS, 0x0318: request is {max_count:u8}; the
- * per-credential list wire encoding within Bedge's own confirmed static
+ * per-credential list wire encoding within Mtek Compatibility's own confirmed static
  * wifi_attack_credential_t creds[32] array bound is not confirmed byte-
  * for-byte, so the response is bare status only -- dispatched for real
  * (max_count=32, the confirmed bound). */
-static void handle_captive_get_credentials(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_t *cap) {
+static void handle_captive_get_credentials(mtk_compat_dispatch_ctx_t *dctx, compat_capture_t *cap) {
     mtk_captive_portal_get_credentials_req_t req = {0}; req.max_count = 32;
     const mtk_opcode_entry_t *op = mtk_opcode_find(0x0001, 0x0024);
     uint8_t buf[4]; size_t blen = 0;
@@ -996,7 +978,7 @@ static void handle_captive_get_credentials(mtk_bedge_dispatch_ctx_t *dctx, bedge
  * (handle_captive_diag additionally appends `char lastpost[96]` the
  * header comment omits): [dns_q:4][http_hits:4][clients:1][lastpost:96].
  * Full translation, dispatched for real. */
-static void handle_captive_get_diagnostics(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_t *cap) {
+static void handle_captive_get_diagnostics(mtk_compat_dispatch_ctx_t *dctx, compat_capture_t *cap) {
     const mtk_opcode_entry_t *op = mtk_opcode_find(0x0001, 0x0025);
     router_call(dctx, cap, 0x0001, 0x0025, NULL, 0);
     if (cap->status != MTK_STATUS_OK) { cap->body_len = 0; return; }
@@ -1014,7 +996,7 @@ static void handle_captive_get_diagnostics(mtk_bedge_dispatch_ctx_t *dctx, bedge
 
 /* WIFI_MAC_GET, 0x0102: header-evidenced exact shape REQ u8
  * iface(0=sta,1=ap) -> RESP mac6. Full translation. */
-static void handle_wifi_mac_get(mtk_bedge_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, bedge_capture_t *cap) {
+static void handle_wifi_mac_get(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, compat_capture_t *cap) {
     if (len < 1 || payload[0] > 1) { cap->status = MTK_STATUS_INVALID_ARGUMENT; cap->body_len = 0; return; }
     mtk_wifi_mac_get_req_t req = {0}; req.iface = payload[0];
     const mtk_opcode_entry_t *op = mtk_opcode_find(0x0001, 0x0029);
@@ -1030,7 +1012,7 @@ static void handle_wifi_mac_get(mtk_bedge_dispatch_ctx_t *dctx, const uint8_t *p
 
 /* ---- BLE (only the 4 SUPPORTED, non-compat-family opcodes) ----------- */
 
-/* BLE_SCAN_START/RESULTS_PAGE/ADV_START/STOP: no Bedge BLE wire byte
+/* BLE_SCAN_START/RESULTS_PAGE/ADV_START/STOP: no Mtek Compatibility BLE wire byte
  * layout at all is confirmed in the accepted contract package for these
  * four opcodes -- unlike Wi-Fi/system/capture, no header struct or
  * source excerpt for M1ESP_BLE_SCAN_START/RESULTS/ADV_START/STOP request
@@ -1040,7 +1022,7 @@ static void handle_wifi_mac_get(mtk_bedge_dispatch_ctx_t *dctx, const uint8_t *p
  * parameters) so the real canonical operation still runs -- bare status,
  * since no confirmed byte layout exists to translate a response into
  * either direction. */
-static void handle_ble_scan_start(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_t *cap) {
+static void handle_ble_scan_start(mtk_compat_dispatch_ctx_t *dctx, compat_capture_t *cap) {
     mtk_ble_scan_start_req_t req; memset(&req, 0, sizeof(req));
     req.mode = 0; req.duration_ms = 10000;
     const mtk_opcode_entry_t *op = mtk_opcode_find(0x0002, 0x0001);
@@ -1048,7 +1030,7 @@ static void handle_ble_scan_start(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_
     mtk_encode(op->req_desc, &req, buf, sizeof(buf), &blen);
     dispatch_start_track_token_async(dctx, 0x0002, 0x0001, buf, blen, NULL, cap);
 }
-static void handle_ble_scan_results_page(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_t *cap) {
+static void handle_ble_scan_results_page(mtk_compat_dispatch_ctx_t *dctx, compat_capture_t *cap) {
     mtk_ble_scan_results_page_req_t req; memset(&req, 0, sizeof(req));
     req.max_items = 32;
     const mtk_opcode_entry_t *op = mtk_opcode_find(0x0002, 0x0004);
@@ -1056,7 +1038,7 @@ static void handle_ble_scan_results_page(mtk_bedge_dispatch_ctx_t *dctx, bedge_c
     mtk_encode(op->req_desc, &req, buf, sizeof(buf), &blen);
     dispatch_bare(dctx, 0x0002, 0x0004, buf, blen, cap);
 }
-static void handle_ble_adv_start(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_t *cap) {
+static void handle_ble_adv_start(mtk_compat_dispatch_ctx_t *dctx, compat_capture_t *cap) {
     mtk_ble_adv_start_req_t req; memset(&req, 0, sizeof(req));
     const mtk_opcode_entry_t *op = mtk_opcode_find(0x0002, 0x0006);
     uint8_t buf[64]; size_t blen = 0;
@@ -1071,14 +1053,14 @@ static void handle_ble_adv_start(mtk_bedge_dispatch_ctx_t *dctx, bedge_capture_t
  * `ble_conn_connect(payload, payload[6], 8000)`: `payload[0..5]` is the
  * 6-byte address, `payload[6]` is the addr_type byte, matching
  * canonical `BleAddress {addr: mac6, addr_type: u8}` field-for-field
- * (002-ble-gatt-service.md Sec 1). Bedge's BLE_CONNECT supplies only the
+ * (002-ble-gatt-service.md Sec 1). Mtek Compatibility's BLE_CONNECT supplies only the
  * GAP connection lifecycle (confirmed: no follow-on discovery/read/
- * write/subscribe call anywhere in Bedge's own dispatch table) -- this
+ * write/subscribe call anywhere in Mtek Compatibility's own dispatch table) -- this
  * dispatch layer matches that scope exactly: it mints a real canonical
  * GATT connection and tracks its connection_token for GATT_DISCONNECT,
- * nothing more. Bare response (class 2): no confirmed Bedge RESP data
+ * nothing more. Bare response (class 2): no confirmed Mtek Compatibility RESP data
  * shape beyond the GAP-lifecycle scope itself. */
-static void handle_gatt_connect(mtk_bedge_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, bedge_capture_t *cap) {
+static void handle_gatt_connect(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, compat_capture_t *cap) {
     if (len < 7) { cap->status = MTK_STATUS_INVALID_ARGUMENT; cap->body_len = 0; return; }
     mtk_gatt_connect_req_t req; memset(&req, 0, sizeof(req));
     memcpy(req.target.addr.b, payload, 6);
@@ -1086,7 +1068,7 @@ static void handle_gatt_connect(mtk_bedge_dispatch_ctx_t *dctx, const uint8_t *p
     const mtk_opcode_entry_t *op = mtk_opcode_find(0x0003, 0x0001);
     uint8_t buf[8]; size_t blen = 0;
     mtk_encode(op->req_desc, &req, buf, sizeof(buf), &blen);
-    dispatch_async_with_event(dctx, 0x0003, 0x0001, buf, blen, cap, "GATT_CONNECT_COMPLETE", extract_gatt_connection_token, MTK_BEDGE_CONT_GATT);
+    dispatch_async_with_event(dctx, 0x0003, 0x0001, buf, blen, cap, "GATT_CONNECT_COMPLETE", extract_gatt_connection_token, MTK_COMPAT_CONT_GATT);
     /* Deferred: the continuation harvests the connection_token (for a later
      * GATT_DISCONNECT) and delivers the bare-status reply. */
     if (cap->deferred) return;
@@ -1107,7 +1089,7 @@ static void handle_gatt_connect(mtk_bedge_dispatch_ctx_t *dctx, const uint8_t *p
         dctx->gatt_conn_token = cap->connection_token;
         cap->status = MTK_STATUS_OK;
     } else if (cap->status == MTK_STATUS_ACCEPTED || cap->status == MTK_STATUS_OK) {
-        cap->status = cap->event_status; /* terminal failure -> NAK via bedge_status_from_canonical */
+        cap->status = cap->event_status; /* terminal failure -> NAK via compat_status_from_canonical */
     } /* else: acceptance-level rejection already carries its own NAK status */
     cap->body_len = 0;
 }
@@ -1118,24 +1100,24 @@ static uint8_t is_ok_ish(uint8_t status) {
     return status == MTK_STATUS_OK || status == MTK_STATUS_ACCEPTED;
 }
 
-static void stage_and_emit(mtk_bedge_dispatch_ctx_t *dctx, uint16_t msg_id, bedge_capture_t *cap,
-                            mtk_bedge_header_t *resp_hdr, uint8_t *resp_payload, uint16_t *resp_payload_len) {
-    uint8_t final_type = is_ok_ish(cap->status) ? MTK_BEDGE_MSG_RESP : MTK_BEDGE_MSG_NAK;
+static void stage_and_emit(mtk_compat_dispatch_ctx_t *dctx, uint16_t msg_id, compat_capture_t *cap,
+                            mtk_compat_header_t *resp_hdr, uint8_t *resp_payload, uint16_t *resp_payload_len) {
+    uint8_t final_type = is_ok_ish(cap->status) ? MTK_COMPAT_MSG_RESP : MTK_COMPAT_MSG_NAK;
     const uint8_t *body; size_t body_len;
     uint8_t nak_byte;
-    if (final_type == MTK_BEDGE_MSG_RESP) {
+    if (final_type == MTK_COMPAT_MSG_RESP) {
         body = cap->body; body_len = cap->body_len;
     } else {
-        nak_byte = bedge_status_from_canonical(cap->status);
+        nak_byte = compat_status_from_canonical(cap->status);
         body = &nak_byte; body_len = 1;
     }
-    if (body_len > BEDGE_CAP_BODY_MAX) body_len = BEDGE_CAP_BODY_MAX; /* reassembly ceiling, never exceeded in practice */
+    if (body_len > COMPAT_CAP_BODY_MAX) body_len = COMPAT_CAP_BODY_MAX; /* reassembly ceiling, never exceeded in practice */
 
-    resp_hdr->magic = MTK_BEDGE_MAGIC;
-    resp_hdr->version = MTK_BEDGE_VERSION;
+    resp_hdr->magic = MTK_COMPAT_MAGIC;
+    resp_hdr->version = MTK_COMPAT_VERSION;
     resp_hdr->msg_id = msg_id;
 
-    if (body_len <= MTK_BEDGE_SINGLE_CELL_PAYLOAD_MAX) {
+    if (body_len <= MTK_COMPAT_SINGLE_CELL_PAYLOAD_MAX) {
         resp_hdr->msg_type = final_type;
         memcpy(resp_payload, body, body_len);
         resp_hdr->payload_len = (uint16_t)body_len;
@@ -1145,7 +1127,7 @@ static void stage_and_emit(mtk_bedge_dispatch_ctx_t *dctx, uint16_t msg_id, bedg
     }
 
     /* Fragmented outbound response: stage the remainder, emit the first
-     * FRAG cell now. Mirrors mtk_bedge_reassembly_feed's own inbound
+     * FRAG cell now. Mirrors mtk_compat_reassembly_feed's own inbound
      * convention exactly (FRAG* then one terminal RESP/NAK cell, same
      * msg_id throughout). */
     dctx->outbound.active = 1;
@@ -1154,23 +1136,23 @@ static void stage_and_emit(mtk_bedge_dispatch_ctx_t *dctx, uint16_t msg_id, bedg
     dctx->outbound.total_len = (uint16_t)body_len;
     dctx->outbound.sent_offset = 0;
     memcpy(dctx->outbound.data, body, body_len);
-    mtek_bedge_dispatch_poll_outbound(dctx, resp_hdr, resp_payload, resp_payload_len);
+    mtek_compat_dispatch_poll_outbound(dctx, resp_hdr, resp_payload, resp_payload_len);
 }
 
 /* RC12 blocker round, item 2: emit a well-formed IDLE cell (the peer keeps
  * polling; the owed deferred reply is not ready yet). */
-static void emit_idle(mtk_bedge_header_t *resp_hdr, uint8_t *resp_payload, uint16_t *resp_payload_len) {
+static void emit_idle(mtk_compat_header_t *resp_hdr, uint8_t *resp_payload, uint16_t *resp_payload_len) {
     (void)resp_payload;
-    resp_hdr->magic = MTK_BEDGE_MAGIC;
-    resp_hdr->version = MTK_BEDGE_VERSION;
-    resp_hdr->msg_type = MTK_BEDGE_MSG_IDLE;
+    resp_hdr->magic = MTK_COMPAT_MAGIC;
+    resp_hdr->version = MTK_COMPAT_VERSION;
+    resp_hdr->msg_type = MTK_COMPAT_MSG_IDLE;
     resp_hdr->msg_id = 0;
     resp_hdr->payload_len = 0;
     *resp_payload_len = 0;
 }
 
-void mtek_bedge_dispatch_poll_outbound(mtk_bedge_dispatch_ctx_t *dctx,
-                                        mtk_bedge_header_t *resp_hdr, uint8_t *resp_payload, uint16_t *resp_payload_len) {
+void mtek_compat_dispatch_poll_outbound(mtk_compat_dispatch_ctx_t *dctx,
+                                        mtk_compat_header_t *resp_hdr, uint8_t *resp_payload, uint16_t *resp_payload_len) {
     /* RC12 blocker round, item 2 "real deferred Community execution": for a
      * deferred AP_SCAN/STA_SCAN/GATT_CONNECT, consume the ACCEPTED response
      * AND its terminal event internally across polls, harvest the needed
@@ -1178,7 +1160,7 @@ void mtek_bedge_dispatch_poll_outbound(mtk_bedge_dispatch_ctx_t *dctx,
      * the confirmed Community response (AP: the network list via
      * AP_SCAN_RESULTS_PAGE; STA/GATT: bare status, field stored in dctx for
      * a later query). Until BOTH have arrived (or the accept itself failed)
-     * the peer receives IDLE. No new Bedge wire event or opcode. */
+     * the peer receives IDLE. No new Mtek Compatibility wire event or opcode. */
     if (dctx->pending_start_msg_id != 0 && dctx->pending_continuation != 0) {
         mtk_async_frame_t f;
         while (mtk_async_queue_pop(&dctx->event_queue, &f)) {
@@ -1188,15 +1170,15 @@ void mtek_bedge_dispatch_poll_outbound(mtk_bedge_dispatch_ctx_t *dctx,
             } else if (f.kind == MTK_ASYNC_FRAME_EVENT && !dctx->pending_have_event &&
                        strcmp(f.event_name, dctx->pending_event_name) == 0) {
                 dctx->pending_have_event = 1;
-                if (dctx->pending_continuation == MTK_BEDGE_CONT_AP_SCAN) {
+                if (dctx->pending_continuation == MTK_COMPAT_CONT_AP_SCAN) {
                     mtk_ap_scan_complete_ev_t e; memset(&e, 0, sizeof(e));
                     mtk_decode(&mtk_ap_scan_complete_ev_t_desc, &e, f.body, f.body_len, NULL);
                     dctx->pending_event_generation = e.result_generation; dctx->pending_event_ok = 1;
-                } else if (dctx->pending_continuation == MTK_BEDGE_CONT_STA_SCAN) {
+                } else if (dctx->pending_continuation == MTK_COMPAT_CONT_STA_SCAN) {
                     mtk_sta_scan_complete_ev_t e; memset(&e, 0, sizeof(e));
                     mtk_decode(&mtk_sta_scan_complete_ev_t_desc, &e, f.body, f.body_len, NULL);
                     dctx->pending_event_generation = e.result_generation; dctx->pending_event_ok = 1;
-                } else { /* MTK_BEDGE_CONT_GATT */
+                } else { /* MTK_COMPAT_CONT_GATT */
                     mtk_gatt_connect_complete_ev_t e; memset(&e, 0, sizeof(e));
                     mtk_decode(&mtk_gatt_connect_complete_ev_t_desc, &e, f.body, f.body_len, NULL);
                     dctx->pending_event_ok = (e.status == MTK_STATUS_OK);
@@ -1205,7 +1187,7 @@ void mtek_bedge_dispatch_poll_outbound(mtk_bedge_dispatch_ctx_t *dctx,
                 }
             }
             /* Any other frame (a progress event, a stream chunk) is not
-             * relayable on the Bedge wire -- discarded, exactly as the
+             * relayable on the Mtek Compatibility wire -- discarded, exactly as the
              * pre-existing pop_response_frame already discarded EVENT/STREAM. */
         }
 
@@ -1224,18 +1206,18 @@ void mtek_bedge_dispatch_poll_outbound(mtk_bedge_dispatch_ctx_t *dctx,
         dctx->pending_start_msg_id = 0;
         dctx->pending_continuation = 0;
 
-        bedge_capture_t *cap = &dctx->async_complete_cap; memset(cap, 0, sizeof(*cap));
+        compat_capture_t *cap = &dctx->async_complete_cap; memset(cap, 0, sizeof(*cap));
         if (accept_failed) {
             /* The accept itself was rejected (BUSY/NO_MEMORY/etc.) -- no
              * terminal event will ever come; relay that status (NAK). */
             cap->status = accept_status; cap->body_len = 0;
-        } else if (kind == MTK_BEDGE_CONT_AP_SCAN) {
+        } else if (kind == MTK_COMPAT_CONT_AP_SCAN) {
             if (dctx->pending_event_ok) { dctx->ap_scan_generation = dctx->pending_event_generation; dctx->ap_scan_has_generation = 1; }
             build_ap_scan_list_response(dctx, dctx->pending_event_generation, cap);
-        } else if (kind == MTK_BEDGE_CONT_STA_SCAN) {
+        } else if (kind == MTK_COMPAT_CONT_STA_SCAN) {
             if (dctx->pending_event_ok) { dctx->sta_scan_generation = dctx->pending_event_generation; dctx->sta_scan_has_generation = 1; }
             cap->status = MTK_STATUS_OK; cap->body_len = 0;
-        } else { /* MTK_BEDGE_CONT_GATT */
+        } else { /* MTK_COMPAT_CONT_GATT */
             /* RC12 RC12 closure item 2: honest terminal-failure semantics,
              * equivalent to handle_gatt_connect's synchronous tail. A real
              * connection -> store the token and a bare RESP OK; a terminal
@@ -1263,9 +1245,9 @@ void mtek_bedge_dispatch_poll_outbound(mtk_bedge_dispatch_ctx_t *dctx,
             uint16_t msg_id = dctx->pending_start_msg_id;
             dctx->pending_start_msg_id = 0;
             /* RC8 independent audit P0-1: dctx->async_complete_cap, not a
-             * stack-local -- see mtk_bedge_dispatch_ctx_t's own doc
+             * stack-local -- see mtk_compat_dispatch_ctx_t's own doc
              * comment. Distinct storage from dctx->cap (used by
-             * mtek_bedge_dispatch_request's own switch): this function and
+             * mtek_compat_dispatch_request's own switch): this function and
              * that one are never both mid-use of their own capture at
              * once (this branch only ever runs on a poll reached either
              * as its own top-level call, with dispatch_request not on the
@@ -1273,7 +1255,7 @@ void mtek_bedge_dispatch_poll_outbound(mtk_bedge_dispatch_ctx_t *dctx,
              * dispatch_request call that took the FRAG-continuation path
              * instead of this one -- pending_start_msg_id is still 0 in
              * that case, so this branch is never even entered then). */
-            bedge_capture_t *cap = &dctx->async_complete_cap; memset(cap, 0, sizeof(*cap));
+            compat_capture_t *cap = &dctx->async_complete_cap; memset(cap, 0, sizeof(*cap));
             cap->status = (uint8_t)f.seq_or_status;
             if (dctx->pending_token_field && cap->status == MTK_STATUS_ACCEPTED) {
                 const mtk_opcode_entry_t *op = mtk_opcode_find(dctx->pending_service_id, dctx->pending_opcode);
@@ -1295,19 +1277,19 @@ void mtek_bedge_dispatch_poll_outbound(mtk_bedge_dispatch_ctx_t *dctx,
             return;
         }
     }
-    resp_hdr->magic = MTK_BEDGE_MAGIC;
-    resp_hdr->version = MTK_BEDGE_VERSION;
+    resp_hdr->magic = MTK_COMPAT_MAGIC;
+    resp_hdr->version = MTK_COMPAT_VERSION;
     if (!dctx->outbound.active) {
-        resp_hdr->msg_type = MTK_BEDGE_MSG_IDLE;
+        resp_hdr->msg_type = MTK_COMPAT_MSG_IDLE;
         resp_hdr->msg_id = 0;
         resp_hdr->payload_len = 0;
         *resp_payload_len = 0;
         return;
     }
     uint16_t remaining = (uint16_t)(dctx->outbound.total_len - dctx->outbound.sent_offset);
-    uint16_t chunk = remaining > MTK_BEDGE_SINGLE_CELL_PAYLOAD_MAX ? MTK_BEDGE_SINGLE_CELL_PAYLOAD_MAX : remaining;
+    uint16_t chunk = remaining > MTK_COMPAT_SINGLE_CELL_PAYLOAD_MAX ? MTK_COMPAT_SINGLE_CELL_PAYLOAD_MAX : remaining;
     int is_last = (chunk == remaining);
-    resp_hdr->msg_type = is_last ? dctx->outbound.final_msg_type : MTK_BEDGE_MSG_FRAG;
+    resp_hdr->msg_type = is_last ? dctx->outbound.final_msg_type : MTK_COMPAT_MSG_FRAG;
     resp_hdr->msg_id = dctx->outbound.msg_id;
     memcpy(resp_payload, dctx->outbound.data + dctx->outbound.sent_offset, chunk);
     resp_hdr->payload_len = chunk;
@@ -1316,17 +1298,17 @@ void mtek_bedge_dispatch_poll_outbound(mtk_bedge_dispatch_ctx_t *dctx,
     if (is_last) dctx->outbound.active = 0;
 }
 
-void mtek_bedge_dispatch_init(mtk_bedge_dispatch_ctx_t *dctx, uint32_t boot_epoch) {
+void mtek_compat_dispatch_init(mtk_compat_dispatch_ctx_t *dctx, uint32_t boot_epoch) {
     memset(dctx, 0, sizeof(*dctx));
     dctx->boot_epoch = boot_epoch;
     dctx->next_correlation = 1;
     mtk_async_queue_init(&dctx->event_queue);
 }
 
-void mtek_bedge_dispatch_request(mtk_bedge_dispatch_ctx_t *dctx, const mtk_bedge_header_t *hdr, const uint8_t *payload,
-                                  mtk_bedge_header_t *resp_hdr, uint8_t *resp_payload, uint16_t *resp_payload_len) {
+void mtek_compat_dispatch_request(mtk_compat_dispatch_ctx_t *dctx, const mtk_compat_header_t *hdr, const uint8_t *payload,
+                                  mtk_compat_header_t *resp_hdr, uint8_t *resp_payload, uint16_t *resp_payload_len) {
     /* RC8 independent audit P0-1 "Eliminate target stack overflow paths":
-     * dctx->cap, not a stack-local -- see mtk_bedge_dispatch_ctx_t's own
+     * dctx->cap, not a stack-local -- see mtk_compat_dispatch_ctx_t's own
      * doc comment for the full before/after accounting. The whole switch
      * below (every case, and every handler/generic_token_op/dispatch_empty
      * call it makes) still reads as plain cap/&cap throughout, unchanged
@@ -1342,14 +1324,14 @@ void mtek_bedge_dispatch_request(mtk_bedge_dispatch_ctx_t *dctx, const mtk_bedge
     dctx->last_dispatched_opcode = 0xFFFF;
 
     switch (hdr->msg_id) {
-        /* ---- 44 bedge_c3-SUPPORTED canonical opcodes: every one reaches
+        /* ---- 44 compat_c3-SUPPORTED canonical opcodes: every one reaches
          * the router for real (see file header for the class-1/2 split) */
         case 0x0001: handle_ping(dctx, payload, len, &cap); break;                /* PING */
         case 0x0002: handle_get_status(dctx, &cap); break;                        /* GET_STATUS */
         case 0x0003: handle_get_fw_version(dctx, &cap); break;                    /* GET_FW_VERSION (both merge into canonical GET_VERSION) */
         case 0x0005: handle_reset(dctx, &cap); break;                             /* RESET_INTENT */
         case 0x0009: handle_time_sync_start(dctx, &cap); break;                   /* TIME_SYNC_START */
-        case 0x0103: handle_ap_scan_start(dctx, &cap); break;                     /* AP_SCAN_START + AP_SCAN_RESULTS_PAGE (shared Bedge RPC) */
+        case 0x0103: handle_ap_scan_start(dctx, &cap); break;                     /* AP_SCAN_START + AP_SCAN_RESULTS_PAGE (shared Mtek Compatibility RPC) */
         case 0x030E: handle_sta_scan_start(dctx, payload, len, &cap); break;      /* STA_SCAN_START */
         case 0x030F: handle_sta_scan_results_page(dctx, &cap); break;             /* STA_SCAN_RESULTS_PAGE */
         case 0x0104: handle_wifi_connect(dctx, payload, len, &cap); break;        /* STA_CONNECT */
@@ -1385,7 +1367,7 @@ void mtek_bedge_dispatch_request(mtk_bedge_dispatch_ctx_t *dctx, const mtk_bedge
         case 0x040A: generic_token_op(dctx, &dctx->gatt_conn_token, 1, 0x0003, 0x0002, &cap); break; /* GATT_DISCONNECT */
         case 0x0300: { /* CAPTURE_START, 0x0300: [channel:1 (0=hop)][band:1], exact, confirmed.
                          * Response is the raw 4-byte LE esp_err_t (not the bare-status
-                         * convention -- confirmed, distinct Bedge wire shape). */
+                         * convention -- confirmed, distinct Mtek Compatibility wire shape). */
             if (len < 2) { cap.status = MTK_STATUS_INVALID_ARGUMENT; cap.body_len = 0; break; }
             mtk_capture_start_req_t req; memset(&req, 0, sizeof(req));
             req.mode = 1; req.snap_len = 1000;
@@ -1406,8 +1388,8 @@ void mtek_bedge_dispatch_request(mtk_bedge_dispatch_ctx_t *dctx, const mtk_bedge
                         * single-field STOP shape (mtk_capture_stop_req_t carries an
                         * extra `reason` byte), so generic_token_op's layout
                         * assumption does not apply here; reason=0 is the safe
-                        * documented default (no Bedge-side reason code exists to
-                        * translate -- Bedge's own MONITOR_STOP request is empty). */
+                        * documented default (no Mtek Compatibility-side reason code exists to
+                        * translate -- Mtek Compatibility's own MONITOR_STOP request is empty). */
             if (!dctx->capture_token) { cap.status = MTK_STATUS_NOT_READY; cap.body_len = 0; break; }
             mtk_capture_stop_req_t req = {0}; req.operation_token = dctx->capture_token; req.reason = 0;
             const mtk_opcode_entry_t *op = mtk_opcode_find(0x0004, 0x0002);
@@ -1449,12 +1431,12 @@ void mtek_bedge_dispatch_request(mtk_bedge_dispatch_ctx_t *dctx, const mtk_bedge
             break;
         }
 
-        /* ---- 15 non-SUPPORTED opcodes for bedge_c3: routed through the
+        /* ---- 15 non-SUPPORTED opcodes for compat_c3: routed through the
          * router's own capability gate, which rejects with UNSUPPORTED
          * before any payload decode -- no request-shape fact needed */
         case 0x0100: dispatch_empty(dctx, 0x0001, 0x0027, &cap); break; /* WIFI_MODE_GET (DISABLED) */
         case 0x0101: dispatch_empty(dctx, 0x0001, 0x0028, &cap); break; /* WIFI_MODE_SET (DISABLED) */
-        case 0x0004: dispatch_empty(dctx, 0x0005, 0x0003, &cap); break; /* GET_QUEUE_WATERMARKS (bedge_c3=UNSUPPORTED per schema despite Bedge's own GET_HEAP wire opcode) */
+        case 0x0004: dispatch_empty(dctx, 0x0005, 0x0003, &cap); break; /* GET_QUEUE_WATERMARKS (compat_c3=UNSUPPORTED per schema despite Mtek Compatibility's own GET_HEAP wire opcode) */
         case 0x0405: dispatch_empty(dctx, 0x0002, 0x000C, &cap); break; /* BLE_HID_INIT (DISABLED) */
         case 0x0406: dispatch_empty(dctx, 0x0002, 0x000D, &cap); break; /* BLE_HID_KEY (DISABLED) */
         case 0x0407: dispatch_empty(dctx, 0x0002, 0x000E, &cap); break; /* BLE_HID_STRING (DISABLED) */
@@ -1479,12 +1461,12 @@ void mtek_bedge_dispatch_request(mtk_bedge_dispatch_ctx_t *dctx, const mtk_bedge
          * background task with no synchronous response yet -- answer
          * this transaction with a well-formed IDLE (never silence, never
          * a fabricated response) and remember which REQUEST is still
-         * owed a reply once mtek_bedge_dispatch_poll_outbound drains the
+         * owed a reply once mtek_compat_dispatch_poll_outbound drains the
          * real one from dctx->event_queue on a later poll. */
         dctx->pending_start_msg_id = hdr->msg_id;
-        resp_hdr->magic = MTK_BEDGE_MAGIC;
-        resp_hdr->version = MTK_BEDGE_VERSION;
-        resp_hdr->msg_type = MTK_BEDGE_MSG_IDLE;
+        resp_hdr->magic = MTK_COMPAT_MAGIC;
+        resp_hdr->version = MTK_COMPAT_VERSION;
+        resp_hdr->msg_type = MTK_COMPAT_MSG_IDLE;
         resp_hdr->msg_id = 0;
         resp_hdr->payload_len = 0;
         *resp_payload_len = 0;

@@ -87,6 +87,12 @@ static void handle_get_limits(mtk_request_ctx_t *ctx) {
     r.max_reassembly_contexts = MTK_BUDGET_MAX_REASSEMBLY_CONTEXTS;
     r.max_control_payload = MTK_BUDGET_MAX_CONTROL_PAYLOAD_BYTES;
     r.max_operation_tokens = MTK_BUDGET_MAX_OPERATION_TOKENS;
+    /* Advertised as 0: there is no dedicated non-starvable terminal-event
+     * reserve. Terminal events (*_STOPPED / *_COMPLETE) share the ordinary
+     * best-effort priority queue with progress events, so delivery is not
+     * guaranteed under sustained progress-event backpressure. GET_LIMITS
+     * must report the reserve the firmware actually implements (0), not a
+     * capability it does not provide (see docs/RESOURCE_BUDGET.md). */
     r.max_terminal_event_reserve = MTK_BUDGET_TERMINAL_EVENT_RESERVE;
     r.max_progress_event_queue = MTK_BUDGET_MAX_PROGRESS_EVENT_QUEUE;
     r.max_cursors = MTK_BUDGET_MAX_ACTIVE_CURSORS;
@@ -99,7 +105,7 @@ extern const mtk_opcode_entry_t mtk_opcode_table[MTK_OPCODE_COUNT];
 
 /* RC8 independent audit P0-8 "Make capabilities truthful for the exact
  * build": the generated registry's own cap_native/cap_factory_uart/
- * cap_bedge_c3 fields declare several Wi-Fi opcode families as
+ * cap_compat_c3 fields declare several Wi-Fi opcode families as
  * MTK_CAP_SUPPORTED, but mtek_wifi_logic.c's own dispatch switch
  * unconditionally answers every one of them with MTK_STATUS_UNSUPPORTED
  * -- true today regardless of each family's own Kconfig module gate
@@ -144,7 +150,7 @@ static int opcode_is_unimplemented_optional_wifi_module(uint16_t service_id, uin
  * fixture.h), routed by mtek_system_dispatch to this SAME handler, so they
  * still exercise the real production async machinery. With the tests no
  * longer dependent on it, TIME_SYNC_START's generated capability_state is
- * now the truthful MTK_CAP_UNSUPPORTED for native and Bedge/C3
+ * now the truthful MTK_CAP_UNSUPPORTED for native and Mtek Compatibility/C3
  * (factory-UART was already MTK_CAP_UNAVAILABLE). Restore SUPPORTED only
  * when a real SNTP client exists. No cap_for OVERLAY is needed for this --
  * the generated registry field itself now carries the honest value, so
@@ -153,7 +159,7 @@ static mtk_capability_state_t cap_for(const mtk_opcode_entry_t *op, mtk_profile_
     if (opcode_is_unimplemented_optional_wifi_module(op->service_id, op->opcode)) return MTK_CAP_UNSUPPORTED;
     switch (profile) {
         case MTK_PROFILE_FACTORY_UART: return op->cap_factory_uart;
-        case MTK_PROFILE_BEDGE_C3_SPI: return op->cap_bedge_c3;
+        case MTK_PROFILE_COMPAT_C3_SPI: return op->cap_compat_c3;
         default: return op->cap_native;
     }
 }
@@ -344,6 +350,6 @@ static void mtek_system_dispatch(mtk_request_ctx_t *ctx, const mtk_opcode_entry_
     }
 }
 
-void mtek_system_service_register(void) {
-    mtk_router_register(0x0000, mtek_system_dispatch);
+mtk_register_result_t mtek_system_service_register(void) {
+    return mtk_router_register(0x0000, mtek_system_dispatch);
 }

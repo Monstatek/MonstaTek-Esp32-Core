@@ -50,6 +50,7 @@ typedef struct {
 } mtk_async_frame_t;
 
 typedef void (*mtk_async_lock_fn)(void *lock_ctx);
+typedef void (*mtk_async_notify_fn)(void *notify_ctx);
 
 /* RC7 independent audit P0 "Native scheduling can starve or drop control
  * and terminal traffic": responses, progress events, terminal events, and
@@ -75,10 +76,9 @@ typedef void (*mtk_async_lock_fn)(void *lock_ctx);
  * distinguishes RESPONSE/EVENT/STREAM (three tiers), not a further
  * "terminal vs. progress" sub-priority within EVENT specifically -- no
  * field on mtk_async_frame_t currently tags an event as terminal, and the
- * accepted contract's own "terminal event reserve" budget
- * (MTK_BUDGET_TERMINAL_EVENT_RESERVE, docs/RESOURCE_BUDGET.md) is a
- * canonical-core concept this transport-level queue does not itself
- * re-implement a second time -- see docs/PROVENANCE.md's own gap list. */
+ * schema's terminal-reserve budget is not implemented. The unused core
+ * reserve has been retired; terminal events retain this queue's existing
+ * best-effort delivery behavior, with no dedicated delivery guarantee. */
 typedef struct {
     uint8_t occupied;
     uint32_t seq; /* monotonic insertion order -- FIFO tie-break within the same priority tier */
@@ -92,6 +92,8 @@ typedef struct {
     unsigned dropped_count; /* sticky backpressure counter -- incremented whenever ANY frame (the incoming one, or a lower-priority victim it displaced) is dropped; never blocks, never silently loses count of how many */
     mtk_async_lock_fn lock, unlock;
     void *lock_ctx;
+    mtk_async_notify_fn notify;
+    void *notify_ctx;
 } mtk_async_queue_t;
 
 void mtk_async_queue_init(mtk_async_queue_t *q);
@@ -100,6 +102,11 @@ void mtk_async_queue_init(mtk_async_queue_t *q);
  * count call below. Must be called before the queue is shared across
  * more than one thread of control. */
 void mtk_async_queue_set_lock(mtk_async_queue_t *q, mtk_async_lock_fn lock, mtk_async_lock_fn unlock, void *lock_ctx);
+
+/* Optional task-context wakeup after a successful push, with the queue lock
+ * released. Configure before sharing the queue; callback/context must outlive
+ * its producers. The callback must not block or depend on delivery order. */
+void mtk_async_queue_set_notify(mtk_async_queue_t *q, mtk_async_notify_fn notify, void *notify_ctx);
 
 /* Enqueues `frame` (copied by value). Returns 1 on success, 0 if the
  * queue was already full -- the frame is dropped (not blocked on) and

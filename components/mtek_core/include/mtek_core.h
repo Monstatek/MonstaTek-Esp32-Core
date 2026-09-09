@@ -1,7 +1,7 @@
 /* Clean-room implementation from MonstaTek contract
  * (002-canonical-core-contract.md Sec 2-6). Transport-neutral canonical
  * request context, response/event sink, and operation-token lifecycle
- * every adapter (factory UART, native SPI v1, Bedge/C3 SPI) constructs a
+ * every adapter (factory UART, native SPI v1, Mtek Compatibility/C3 SPI) constructs a
  * request into and every service dispatches against -- independent of
  * which adapter originated the request. */
 #pragma once
@@ -18,31 +18,48 @@ extern "C" {
 typedef enum {
     MTK_PROFILE_FACTORY_UART = 1,
     MTK_PROFILE_NATIVE_SPI = 2,
-    MTK_PROFILE_BEDGE_C3_SPI = 3,
+    MTK_PROFILE_COMPAT_C3_SPI = 3,
     MTK_PROFILE_HOST_ADAPTER = 4,
 } mtk_profile_t;
 
 /* Sec 3: the service's only way to produce output. A service never writes
  * to a transport; it calls exactly one of these against the response_route
  * captured in the request context. */
+/* OK means accepted locally, not acknowledged by the peer. Responses must
+ * not be truncated. Events (including terminal events) remain best effort;
+ * streams may be truncated/dropped. Callbacks never retry or wait for space.
+ * Queue priority remains RESPONSE > EVENT > STREAM. */
+typedef enum {
+    MTK_EMIT_OK = 0,
+    MTK_EMIT_ENCODING_FAILED,
+    MTK_EMIT_CAPACITY_FAILED,
+    MTK_EMIT_TRUNCATED,
+    MTK_EMIT_DROPPED,
+} mtk_emit_result_t;
+
 typedef struct mtk_sink {
     void *user;
-    void (*emit_response)(void *user, uint32_t correlation, uint8_t status,
+    mtk_emit_result_t (*emit_response)(void *user, uint32_t correlation, uint8_t status,
                            const void *body, const mtk_struct_desc_t *body_desc);
     /* Escape hatch for the one opcode in this task (CAPTURE_POLL_READ,
      * 002-capture-diagnostics-service.md Sec 3.6) whose response is a true
      * tagged union where the EMPTY variant transmits zero body bytes --
      * not encodable by the generic struct-desc walker, which always walks
      * every field of a struct. `body` is already-encoded wire bytes. */
-    void (*emit_response_raw)(void *user, uint32_t correlation, uint8_t status,
+    mtk_emit_result_t (*emit_response_raw)(void *user, uint32_t correlation, uint8_t status,
                                const uint8_t *body, size_t body_len);
     /* correlation_or_zero: originating operation's token, or 0 for a
      * session-scoped event with no originating request (Sec 3.2). */
-    void (*emit_event)(void *user, uint32_t correlation_or_zero, const char *event_name,
+    mtk_emit_result_t (*emit_event)(void *user, uint32_t correlation_or_zero, const char *event_name,
                         const void *body, const mtk_struct_desc_t *body_desc);
-    void (*emit_stream)(void *user, uint32_t session_token, uint32_t sequence,
+    mtk_emit_result_t (*emit_stream)(void *user, uint32_t session_token, uint32_t sequence,
                          const uint8_t *chunk, size_t len);
 } mtk_sink_t;
+
+typedef enum {
+    MTK_DISPATCH_INLINE = 0,
+    MTK_DISPATCH_DEFER_ALLOWED,
+} mtk_dispatch_mode_t;
 
 /* Sec 2: canonical request context. An adapter that cannot populate every
  * required field rejects the request at the adapter boundary and never
@@ -55,7 +72,7 @@ typedef struct mtk_request_ctx {
     mtk_sink_t sink;
     /* P0 correction (follow-up read-only audit, "genuine peer-session
      * ownership"): 0 means "not session-scoped" (every adapter except
-     * native SPI -- Bedge/C3 and factory UART have no peer-reboot concept
+     * native SPI -- Mtek Compatibility/C3 and factory UART have no peer-reboot concept
      * of their own, matching mtk_core.h's own established boot_epoch doc
      * comment) -- never fenced. Native SPI stamps this with mtk_core_
      * session_generation() at the moment it actually dispatches a
@@ -71,6 +88,9 @@ typedef struct mtk_request_ctx {
      * brand-new operation indistinguishable from a legitimate request
      * from the NEW peer session. */
     uint32_t session_generation;
+    /* DEFER_ALLOWED requires sink.user and all callback state to outlive
+     * the entire async operation. Zero initialization selects inline. */
+    mtk_dispatch_mode_t dispatch_mode;
 } mtk_request_ctx_t;
 
 /* ---- Sec 4.2 ACCEPTED_ASYNC operation lifecycle ------------------------ */
@@ -315,37 +335,15 @@ void mtk_op_discard_unpublished(uint32_t token, uint32_t boot_epoch);
 /* Mints a new nonzero token and an ACCEPTED-state record, or NULL with
  * *out_no_memory=1 if the 8-token budget is exhausted and no terminal
  * record is available to evict (Sec 4.2.1). */
+#ifdef MTK_ENABLE_TEST_OPCODES
+/* Test-only raw table access. Production services use identities/snapshots. */
 mtk_operation_record_t *mtk_op_alloc(uint16_t service_id, uint16_t opcode, uint64_t now_ms, int *out_no_memory);
 mtk_operation_record_t *mtk_op_find(uint32_t token, uint32_t boot_epoch);
+#endif
 
-/* Release-tooling-round P0 correction (independent audit, "the same
- * slot-reuse/ABA hazard remains through every production mtk_op_alloc()
- * call site"): a caller that dereferences the raw pointer mtk_op_alloc
- * returns for anything beyond the SAME expression that read it risks the
- * identical hazard mtk_op_find's own doc comment describes -- once a
- * caller has emitted ACCEPTED (making the new token externally visible) or
- * handed control to a HAL call that can synchronously or asynchronously
- * invoke a callback capable of finalizing/transitioning this exact record
- * (e.g. a fake HAL that delivers frames synchronously inside its own
- * "start" call, or a real concurrent STOP dispatched on another worker),
- * that slot can legitimately be reused for a COMPLETELY different
- * operation by the time a later statement in the SAME function still
- * dereferences the original pointer.
- *
- * `mtk_op_id_t` is the immutable identity a caller actually needs for the
- * operation's entire remaining lifetime: copied out atomically, under the
- * SAME lock acquisition that minted the record, before the pointer is ever
- * exposed. A caller mints with `mtk_op_alloc_id` instead of `mtk_op_alloc`,
- * keeps ONLY the returned `mtk_op_id_t` value (never a pointer) past the
- * initial allocation, and does everything else -- the initial RUNNING
- * transition, ACCEPTED response, later STOP/status/finalization -- via the
- * existing token/epoch-scoped snapshot/transition/finalization APIs below.
- * `token == 0` signals allocation failure (mirroring `mtk_op_alloc`
- * returning NULL); `*out_no_memory` is set exactly as `mtk_op_alloc` sets
- * it. `mtk_op_alloc` itself is unchanged and remains a valid, directly-
- * tested primitive (host tests exercise it against the table's own
- * internals directly) -- only production SERVICE code must prefer this
- * identity-returning wrapper over exposing a table pointer to itself. */
+/* Immutable operation identity, copied while the allocation lock is held.
+ * Services retain this value, never a pointer into the reusable record table.
+ * token == 0 signals allocation failure; out_no_memory is optional. */
 typedef struct {
     uint32_t token;      /* 0 = allocation failed */
     uint32_t boot_epoch;
@@ -366,7 +364,9 @@ mtk_op_id_t mtk_op_alloc_id(uint16_t service_id, uint16_t opcode, uint64_t now_m
  * completion, must linearize on the SAME atomic decision, not each make
  * their own separately-timed check against a value that can change
  * between their check and their own subsequent unconditional cleanup). */
+#ifdef MTK_ENABLE_TEST_OPCODES
 int mtk_op_transition(mtk_operation_record_t *rec, mtk_op_state_t new_state, uint8_t status, uint64_t now_ms);
+#endif
 /* Sweeps 60s-expired terminal records back to FREE (Sec 4.2.1). */
 void mtk_op_gc(uint64_t now_ms);
 
@@ -500,57 +500,9 @@ int mtk_op_evict_all_terminal(void);
 
 #define MTK_OP_RETENTION_MS MTK_BUDGET_OPERATION_RECORD_RETENTION_MS
 
-/* ---- Terminal-event reserve (002-canonical-core-contract.md Sec 6
- * "Terminal-event reserve"): "8 dedicated slots, one guaranteed per
- * accepted operation token, independent of the progress-event queue...
- * admission rule: minting an operation token simultaneously reserves its
- * terminal-event slot; the reserve can never be exhausted by progress-
- * event traffic because progress events use a separate queue and the
- * terminal reserve is never used for anything but that operation's own
- * single terminal event." RC7 independent audit item 3 "non-starvable
- * terminal reserve": mtk_async_queue_t (the shared, per-adapter PROGRESS-
- * event queue) intentionally never implements this -- see its own doc
- * comment's disclosed gap. This is the real, separate reserve that closes
- * it: indexed 1:1 with the operation-record table itself (both are
- * MTK_BUDGET_MAX_OPERATION_TOKENS==MTK_BUDGET_TERMINAL_EVENT_RESERVE==8
- * slots), so "admission itself proves capacity" is structurally true --
- * mtk_op_alloc's own slot selection IS this reserve's own admission. */
-#define MTK_TERMINAL_EVENT_NAME_MAX 24
-#define MTK_TERMINAL_EVENT_BODY_MAX 128
-
-/* Stages operation `token`'s own one-shot terminal event (e.g.
- * DEAUTH_STOPPED, HANDSHAKE_STOPPED, CAPTURE_STOPPED, AP_SCAN_COMPLETE)
- * into its dedicated reserve slot -- called by a service's STOP/natural-
- * completion path INSTEAD OF ctx->sink.emit_event for exactly that one
- * terminal notice, so it can never be dropped or coalesced by unrelated
- * progress-event backpressure on the shared adapter queue. `body`/`desc`
- * are encoded immediately (this call does not retain the desc pointer).
- * Returns 1 on success, 0 if `token`/`boot_epoch` does not currently
- * match a live record (already evicted, or the epoch changed -- an
- * operation that no longer exists cannot stage a terminal event; the
- * caller's own mtk_op_transition* already gates this same lifecycle, so
- * this should not normally fail in a correct caller) or the encoded body
- * exceeds MTK_TERMINAL_EVENT_BODY_MAX (no _STOPPED/_COMPLETE event this
- * tree defines is anywhere near that size -- a generous ceiling, not a
- * tight one). Staging twice for the same token overwrites rather than
- * appends: by construction (mtk_op_transition's single-winner semantics)
- * an operation has exactly one terminal event, so a second call only
- * happens from a caller bug, and overwriting keeps that bug's blast
- * radius local rather than silently queuing a second one. */
-int mtk_op_stage_terminal_event(uint32_t token, uint32_t boot_epoch, const char *event_name,
-                                 const void *body, const mtk_struct_desc_t *desc);
-
-/* Pops (clears) and returns the oldest still-pending staged terminal
- * event across every reserve slot, if any -- an adapter's own poll loop
- * calls this exactly like it already drains its separate per-adapter
- * progress-event queue, and it is ALWAYS checked first/independently:
- * this reserve's own capacity can never be exhausted by that other
- * queue's own backpressure (the whole point of a reserve distinct from
- * shared, coalescible progress traffic). `out_name`/`out_body` capacities
- * must be >= MTK_TERMINAL_EVENT_NAME_MAX/MTK_TERMINAL_EVENT_BODY_MAX.
- * Returns 1 if one was delivered, 0 if none pending right now. */
-int mtk_op_poll_terminal_event(uint32_t *out_token, char *out_name, size_t name_cap,
-                                uint8_t *out_body, size_t body_cap, size_t *out_body_len);
+/* Terminal events use the ordinary adapter event sink on a best-effort
+ * basis. There is no dedicated per-operation delivery reserve or guaranteed
+ * terminal delivery; operation status remains independently queryable. */
 
 /* ---- Transport diagnostics counters (GET_TRANSPORT_COUNTERS,
  * service 0x0005 opcode 0x0001) -- RC7 independent audit item 3 "packet-

@@ -25,8 +25,8 @@ menu "MonstaTek M1 Firmware"
                 see this menu's own comment for the separate cross-bus
                 (UART vs. SPI) race.
 
-        config MTEK_ADAPTER_BEDGE_C3
-            bool "M1 Community Compatibility (legacy Bedge/C3 wire profile)"
+        config MTEK_ADAPTER_COMPAT_C3
+            bool "Mtek Community Compatibility (C3 wire profile)"
             default y
             help
                 Independently implemented, optional translation layer

@@ -6,6 +6,53 @@
 #include "mtek_schema_message_descs.h"
 #include <string.h>
 
+/* Cancel at the exact point where the HAL still owns its sample context;
+ * no scheduler timing is needed to exercise this lifetime boundary. */
+static int cancel_via_reset;
+static int sample_result;
+static int sample_calls;
+static int sample_nested;
+static int cancel_during_sample(mtk_hal_mac6_t addr, uint8_t addr_type,
+                                int8_t *rssi_out, uint8_t *is_random_out) {
+    (void)addr; (void)addr_type;
+    sample_calls++;
+    if (sample_nested) return -1;
+    sample_nested = 1;
+    uint32_t token = mtk_arbiter_active_token();
+
+    /* Even a delayed sample must not overlap a second periodic tick. */
+    s_mtk_test_now_ms += 5001;
+    mtek_ble_signal_meter_tick();
+    MTK_CHECK_EQ(sample_calls, 1);
+
+    if (cancel_via_reset) {
+        mtk_op_id_t cancelled = mtek_ble_cancel_active_for_peer_reset();
+        MTK_CHECK_EQ(cancelled.token, token);
+        /* Native peer reset evicts terminal records before the HAL returns. */
+        mtk_op_evict_all_terminal();
+    } else {
+        mtk_fake_sink_state_t stop_sink; mtk_fake_sink_reset(&stop_sink);
+        mtk_request_ctx_t stop_ctx = mtk_test_ctx(&stop_sink, 20);
+        mtk_signal_meter_stop_req_t stop_req = { .operation_token = token };
+        mtk_test_call(&stop_ctx, mtk_test_find_op("SIGNAL_METER_STOP"), &stop_req);
+        MTK_CHECK_EQ(stop_sink.response.status, MTK_STATUS_OK);
+        mtk_signal_meter_stop_resp_t result = {0};
+        mtk_decode(&mtk_signal_meter_stop_resp_t_desc, &result,
+                   stop_sink.response.body, stop_sink.response.body_len, NULL);
+        MTK_CHECK_EQ(result.final_state, MTK_OPS_STOPPED);
+    }
+    MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_SM);
+    MTK_CHECK_EQ(mtk_arbiter_active_token(), token);
+    /* Another BLE operation cannot reuse the shared HAL callback context. */
+    MTK_CHECK_EQ(mtk_arbiter_acquire(MTK_ARB_GC, token + 1), MTK_ARB_GRANT_BUSY);
+    mtek_ble_signal_meter_tick();
+    MTK_CHECK_EQ(sample_calls, 1);
+    *rssi_out = -55;
+    *is_random_out = 0;
+    sample_nested = 0;
+    return sample_result;
+}
+
 MTK_TEST_MAIN_BEGIN
 
     mtk_test_bootstrap();
@@ -110,5 +157,33 @@ MTK_TEST_MAIN_BEGIN
     mtk_signal_meter_stop_resp_t sr = {0};
     mtk_decode(stop_op->resp_desc, &sr, stsink.response.body, stsink.response.body_len, NULL);
     MTK_CHECK_EQ(sr.final_state, MTK_OPS_FAILED); /* already terminal from the LOST path */
+
+    mtk_ble_hal_t cancelling_hal = g_fake_ble_hal;
+    cancelling_hal.signal_sample = cancel_during_sample;
+    for (cancel_via_reset = 0; cancel_via_reset < 2; cancel_via_reset++) {
+        for (sample_result = 0; sample_result < 2; sample_result++) {
+            mtk_test_bootstrap();
+            sample_calls = 0;
+            sample_nested = 0;
+            mtek_ble_set_hal(&cancelling_hal);
+            mtk_fake_sink_reset(&sink);
+            mtk_test_call(&ctx, start_op, &req);
+            MTK_CHECK_EQ(sink.response.status, MTK_STATUS_ACCEPTED);
+            MTK_CHECK_EQ(sample_calls, 1);
+            MTK_CHECK_EQ(sink.event_count, 0);
+            MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_NONE);
+            mtek_ble_set_hal(&g_fake_ble_hal);
+            /* Sampling and immediate STOP still work after the old HAL
+             * invocation returns and its ownership is released. */
+            mtk_fake_sink_reset(&sink);
+            mtk_test_call(&ctx, start_op, &req);
+            MTK_CHECK_EQ(sink.response.status, MTK_STATUS_ACCEPTED);
+            mtk_decode(start_op->resp_desc, &started, sink.response.body,
+                       sink.response.body_len, NULL);
+            sreq.operation_token = started.operation_token;
+            mtk_test_call(&stctx, stop_op, &sreq);
+            MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_NONE);
+        }
+    }
 
 MTK_TEST_MAIN_END

@@ -1,7 +1,7 @@
 # Architecture: canonical core, adapters, and optional modules
 
 MonstaTek M1 is the canonical platform. Community/legacy implementations
-(Bedge/C3-lineage and any future third-party protocol) adapt to this
+(community/C3-lineage and any future third-party protocol) adapt to this
 firmware's stable interfaces; their quirks are translated at the adapter
 boundary and must never define or bloat the canonical core.
 
@@ -61,19 +61,16 @@ boundary and must never define or bloat the canonical core.
 |---|---|---|
 | Factory M1 UART | Legacy ASCII REPL over UART0 | **Strict shipped parity** -- must not change shipped List A observable behavior |
 | Native M1 SPI v1 | The canonical, future-facing binary interface | Owns the canonical wire shape; new canonical features are designed against this adapter first |
-| M1 Community Compatibility (legacy Bedge/C3 wire profile) | Optional translation of a legacy/community (Bedge/C3-lineage) SPI wire protocol into the canonical API | No parity obligation of its own; translates faithfully from confirmed facts, never invents canonical behavior to match community quirks |
+| M1 Community Compatibility (legacy Mtek Compatibility/C3 wire profile) | Optional translation of a legacy/community (community/C3-lineage) SPI wire protocol into the canonical API | No parity obligation of its own; translates faithfully from confirmed facts, never invents canonical behavior to match community quirks |
 
-The M1 Community Compatibility adapter is exactly that -- a **compatibility**
-layer. Its own wire opcodes, structs, and behavioral citations
-(`mtek_bedge_*` source files, `mtk_bedge_*` C identifiers) retain their
-historical Bedge/C3 naming internally, because that is where the
-fact-citations legitimately live and a full internal rename was judged
-too large a change to make safely under this session's time budget
-without git version control to review it against. User-facing text
-(Kconfig prompts, this document, release notes) uses "M1 Community
-Compatibility" (or "M1 Community Compatibility (legacy Bedge/C3 wire
-profile)" on first mention in a document); historical source-
-identification lives in `docs/COMPATIBILITY_LEDGER.md`.
+The M1 Community Compatibility adapter translates the community/C3 wire
+protocol without changing its framing, opcode values, or behavior. Project-owned
+source files use `mtek_compat_*`, C identifiers use `mtk_compat_*`, and the
+build option is `CONFIG_MTEK_ADAPTER_COMPAT_C3`. Source/configuration names
+have changed; existing integrations must update these names when rebuilding.
+This is not a wire-protocol migration. Historical source identification remains
+in `docs/THIRD_PARTY_NOTICES.md`; compatibility evidence is described in
+`docs/COMPATIBILITY_LEDGER.md`.
 
 ### Optional capability modules
 
@@ -116,6 +113,3 @@ must cite it for every release candidate.
 - No new community-feature radio behavior (Karma/probe-flood/captive-
   portal/beacon RF logic) was implemented -- explicitly out of scope for
   this architecture-correction pass, per instruction.
-- The M1 Community Compatibility adapter's internal C identifiers/file names
-  were not renamed away from `mtek_bedge_*`/`mtk_bedge_*` -- a
-  user-facing/documentation-level rename only, this session.

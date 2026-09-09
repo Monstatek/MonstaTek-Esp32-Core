@@ -64,60 +64,83 @@ static inline void mtk_fake_sink_set_lock(mtk_fake_sink_lock_fn lock, mtk_fake_s
 static inline void mtk_fake_sink_lock(void) { if (s_fake_sink_lock_fn) s_fake_sink_lock_fn(); }
 static inline void mtk_fake_sink_unlock(void) { if (s_fake_sink_unlock_fn) s_fake_sink_unlock_fn(); }
 
-static inline void mtk_fake_emit_response(void *user, uint32_t correlation, uint8_t status,
+static inline mtk_emit_result_t mtk_fake_emit_response(void *user, uint32_t correlation, uint8_t status,
                                            const void *body, const mtk_struct_desc_t *desc) {
     (void)correlation;
     mtk_fake_sink_state_t *s = (mtk_fake_sink_state_t *)user;
     mtk_fake_sink_lock();
     s->response.status = status;
     size_t n = 0;
-    if (body && desc) mtk_encode(desc, body, s->response.body, sizeof(s->response.body), &n);
+    mtk_emit_result_t result = MTK_EMIT_OK;
+    if (body && desc && mtk_encode(desc, body, s->response.body, sizeof(s->response.body), &n) != MTK_CODEC_OK) {
+        s->response.status = MTK_STATUS_INTERNAL_ERROR;
+        n = 0;
+        result = MTK_EMIT_ENCODING_FAILED;
+    }
     s->response.body_len = n;
     s->response.set = 1; /* set last: a lock-holding reader that only checks `set` still sees a fully-written body/status */
     mtk_fake_sink_unlock();
+    return result;
 }
 
-static inline void mtk_fake_emit_response_raw(void *user, uint32_t correlation, uint8_t status,
+static inline mtk_emit_result_t mtk_fake_emit_response_raw(void *user, uint32_t correlation, uint8_t status,
                                                const uint8_t *body, size_t body_len) {
     (void)correlation;
     mtk_fake_sink_state_t *s = (mtk_fake_sink_state_t *)user;
     mtk_fake_sink_lock();
     s->response.status = status;
-    size_t n = body_len > sizeof(s->response.body) ? sizeof(s->response.body) : body_len;
+    if (body_len > sizeof(s->response.body)) {
+        s->response.status = MTK_STATUS_OVERFLOW;
+        s->response.body_len = 0;
+        s->response.set = 1;
+        mtk_fake_sink_unlock();
+        return MTK_EMIT_CAPACITY_FAILED;
+    }
+    size_t n = body_len;
     if (body && n) memcpy(s->response.body, body, n);
     s->response.body_len = n;
     s->response.set = 1;
     mtk_fake_sink_unlock();
+    return MTK_EMIT_OK;
 }
 
-static inline void mtk_fake_emit_event(void *user, uint32_t correlation_or_zero, const char *event_name,
+static inline mtk_emit_result_t mtk_fake_emit_event(void *user, uint32_t correlation_or_zero, const char *event_name,
                                         const void *body, const mtk_struct_desc_t *desc) {
     mtk_fake_sink_state_t *s = (mtk_fake_sink_state_t *)user;
     mtk_fake_sink_lock();
+    mtk_emit_result_t result = MTK_EMIT_CAPACITY_FAILED;
     if (s->event_count < MTK_FAKE_MAX_EVENTS) {
         mtk_fake_event_t *e = &s->events[s->event_count];
         e->correlation_or_zero = correlation_or_zero;
         strncpy(e->name, event_name, sizeof(e->name) - 1);
         size_t n = 0;
-        if (body && desc) mtk_encode(desc, body, e->body, sizeof(e->body), &n);
+        if (body && desc && mtk_encode(desc, body, e->body, sizeof(e->body), &n) != MTK_CODEC_OK) {
+            mtk_fake_sink_unlock();
+            return MTK_EMIT_ENCODING_FAILED;
+        }
         e->body_len = n;
         s->event_count++;
+        result = strlen(event_name) >= sizeof(e->name) ? MTK_EMIT_TRUNCATED : MTK_EMIT_OK;
     }
     mtk_fake_sink_unlock();
+    return result;
 }
 
-static inline void mtk_fake_emit_stream(void *user, uint32_t session_token, uint32_t sequence,
+static inline mtk_emit_result_t mtk_fake_emit_stream(void *user, uint32_t session_token, uint32_t sequence,
                                          const uint8_t *chunk, size_t len) {
     mtk_fake_sink_state_t *s = (mtk_fake_sink_state_t *)user;
     mtk_fake_sink_lock();
+    mtk_emit_result_t result = MTK_EMIT_CAPACITY_FAILED;
     if (s->stream_count < MTK_FAKE_MAX_STREAMS) {
         mtk_fake_stream_t *c = &s->streams[s->stream_count];
         c->session_token = session_token; c->sequence = sequence;
         c->len = len > sizeof(c->data) ? sizeof(c->data) : len;
         memcpy(c->data, chunk, c->len);
         s->stream_count++;
+        result = len > sizeof(c->data) ? MTK_EMIT_TRUNCATED : MTK_EMIT_OK;
     }
     mtk_fake_sink_unlock();
+    return result;
 }
 
 static inline mtk_sink_t mtk_fake_sink_make(mtk_fake_sink_state_t *state) {

@@ -1,8 +1,8 @@
 /* RC12 final blocker correction, item 2 "real deferred Community execution":
  * DETERMINISTIC proof (forced condvar synchronization -- never timing-only
- * sleeps) that the Community/Bedge adapter's two-part response/event state
- * machine (mtek_bedge_dispatch.c: dispatch_async_with_event +
- * mtek_bedge_dispatch_poll_outbound) is correct for AP_SCAN_START,
+ * sleeps) that the Community/Mtek Compatibility adapter's two-part response/event state
+ * machine (mtek_compat_dispatch.c: dispatch_async_with_event +
+ * mtek_compat_dispatch_poll_outbound) is correct for AP_SCAN_START,
  * STA_SCAN_START, and GATT_CONNECT under a genuinely deferred async runner
  * (the ESP32 target's own configuration).
  *
@@ -42,7 +42,7 @@
  * an inline / manual / failing runner variant with the gate inactive. No
  * unsolicited Community wire event or new opcode is introduced. */
 #include "mtk_test.h"
-#include "mtek_bedge_dispatch.h"
+#include "mtek_compat_dispatch.h"
 #include "mtek_router.h"
 #include "mtek_core.h"
 #include "mtek_arbiter.h"
@@ -185,7 +185,7 @@ static int blocking_runner(void (*fn)(void *), void *arg) {
  * event queue (the same public API the router's sink uses), to drive the
  * poll_outbound continuation through interleavings that production ordering
  * never produces on its own (see the documented invariant in the test). */
-static void push_event_generation(mtk_bedge_dispatch_ctx_t *d, const char *name,
+static void push_event_generation(mtk_compat_dispatch_ctx_t *d, const char *name,
                                   const mtk_struct_desc_t *desc, const void *ev) {
     mtk_async_frame_t f; memset(&f, 0, sizeof(f));
     f.kind = MTK_ASYNC_FRAME_EVENT;
@@ -195,19 +195,19 @@ static void push_event_generation(mtk_bedge_dispatch_ctx_t *d, const char *name,
     f.body_len = blen;
     MTK_CHECK(mtk_async_queue_push(&d->event_queue, &f) == 1); /* push returns 1 on success */
 }
-static void push_response_status(mtk_bedge_dispatch_ctx_t *d, uint8_t status) {
+static void push_response_status(mtk_compat_dispatch_ctx_t *d, uint8_t status) {
     mtk_async_frame_t f; memset(&f, 0, sizeof(f));
     f.kind = MTK_ASYNC_FRAME_RESPONSE;
     f.seq_or_status = status;
     MTK_CHECK(mtk_async_queue_push(&d->event_queue, &f) == 1); /* push returns 1 on success */
 }
 
-static mtk_bedge_dispatch_ctx_t dctx;
+static mtk_compat_dispatch_ctx_t dctx;
 
-static void make_req(mtk_bedge_header_t *req, uint16_t msg_id, uint16_t plen) {
+static void make_req(mtk_compat_header_t *req, uint16_t msg_id, uint16_t plen) {
     memset(req, 0, sizeof(*req));
-    req->magic = MTK_BEDGE_MAGIC; req->version = MTK_BEDGE_VERSION;
-    req->msg_type = MTK_BEDGE_MSG_REQ; req->msg_id = msg_id; req->payload_len = plen;
+    req->magic = MTK_COMPAT_MAGIC; req->version = MTK_COMPAT_VERSION;
+    req->msg_type = MTK_COMPAT_MSG_REQ; req->msg_id = msg_id; req->payload_len = plen;
 }
 
 /* ================================================================= */
@@ -238,11 +238,11 @@ MTK_TEST_MAIN_BEGIN
     mtek_wifi_service_register();
     mtek_ble_service_register();
 
-    mtek_bedge_dispatch_init(&dctx, 0x1234);
+    mtek_compat_dispatch_init(&dctx, 0x1234);
     mtk_async_queue_set_lock(&dctx.event_queue, q_lock, q_unlock, NULL);
 
-    mtk_bedge_header_t rh; uint8_t rp[MTK_BEDGE_SINGLE_CELL_PAYLOAD_MAX]; uint16_t rl = 0;
-    mtk_bedge_header_t req;
+    mtk_compat_header_t rh; uint8_t rp[MTK_COMPAT_SINGLE_CELL_PAYLOAD_MAX]; uint16_t rl = 0;
+    mtk_compat_header_t req;
 
     /* Canned HAL results reused across every phase. */
     v_lock();
@@ -267,7 +267,7 @@ MTK_TEST_MAIN_BEGIN
 
     /* Verifies the confirmed AP network-list bytes in a completed RESP. */
     #define VERIFY_AP_LIST(hdr, pl) do {                                     \
-        MTK_CHECK_EQ((hdr).msg_type, MTK_BEDGE_MSG_RESP);                    \
+        MTK_CHECK_EQ((hdr).msg_type, MTK_COMPAT_MSG_RESP);                    \
         uint16_t _n = (uint16_t)((pl)[0] | ((pl)[1] << 8));                 \
         MTK_CHECK_EQ(_n, 2);                                                 \
         MTK_CHECK(memcmp((pl) + 2, (uint8_t[]){0xAA,0xBB,0xCC,0xDD,0xEE,0xFF}, 6) == 0); \
@@ -295,8 +295,8 @@ MTK_TEST_MAIN_BEGIN
 
         /* -- CASE 1: neither response nor event present when dispatch returns. */
         make_req(&req, FEAT[fi].msg, FEAT[fi].plen);
-        mtek_bedge_dispatch_request(&dctx, &req, FEAT[fi].pl, &rh, rp, &rl);
-        MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_IDLE);
+        mtek_compat_dispatch_request(&dctx, &req, FEAT[fi].pl, &rh, rp, &rl);
+        MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_IDLE);
         MTK_CHECK_EQ(dctx.pending_start_msg_id, FEAT[fi].msg);
         MTK_CHECK_EQ(dctx.pending_have_response, 0);
         MTK_CHECK_EQ(dctx.pending_have_event, 0);
@@ -304,8 +304,8 @@ MTK_TEST_MAIN_BEGIN
         /* -- CASE 2: worker emits ACCEPTED, parks in the HAL; event pending. */
         gate_open_start();
         gate_wait_in_hal();
-        mtek_bedge_dispatch_poll_outbound(&dctx, &rh, rp, &rl);
-        MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_IDLE);          /* still IDLE, never a premature reply */
+        mtek_compat_dispatch_poll_outbound(&dctx, &rh, rp, &rl);
+        MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_IDLE);          /* still IDLE, never a premature reply */
         MTK_CHECK_EQ(dctx.pending_have_response, 1);            /* ACCEPTED captured internally */
         MTK_CHECK_EQ(dctx.pending_have_event, 0);              /* terminal event genuinely not yet seen */
         MTK_CHECK_EQ(dctx.pending_start_msg_id, FEAT[fi].msg); /* continuation still owed */
@@ -313,8 +313,8 @@ MTK_TEST_MAIN_BEGIN
         /* -- release the HAL: worker emits the terminal event and finishes. */
         gate_open_hal();
         gate_wait_done();
-        mtek_bedge_dispatch_poll_outbound(&dctx, &rh, rp, &rl);
-        MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_RESP);         /* confirmed reply, not fabricated earlier */
+        mtek_compat_dispatch_poll_outbound(&dctx, &rh, rp, &rl);
+        MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_RESP);         /* confirmed reply, not fabricated earlier */
         MTK_CHECK_EQ(rh.msg_id, FEAT[fi].msg);
         MTK_CHECK_EQ(dctx.pending_start_msg_id, 0);            /* continuation cleared */
 
@@ -326,8 +326,8 @@ MTK_TEST_MAIN_BEGIN
             MTK_CHECK(dctx.sta_scan_has_generation);
             /* STA results page works off the captured generation. */
             make_req(&req, 0x030F, 0);
-            mtek_bedge_dispatch_request(&dctx, &req, NULL, &rh, rp, &rl);
-            MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_RESP);
+            mtek_compat_dispatch_request(&dctx, &req, NULL, &rh, rp, &rl);
+            MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_RESP);
             uint16_t sn = (uint16_t)(rp[0] | (rp[1] << 8));
             MTK_CHECK_EQ(sn, 2);
             MTK_CHECK(memcmp(rp + 2, (uint8_t[]){0x0A,0x0B,0x0C,0x0D,0x0E,0x0F}, 6) == 0);
@@ -337,14 +337,14 @@ MTK_TEST_MAIN_BEGIN
             /* GATT disconnect reaches the fake HAL off the captured token. */
             unsigned before = g_fake_ble.gatt_disconnect_call_count;
             make_req(&req, 0x040A, 0);
-            mtek_bedge_dispatch_request(&dctx, &req, NULL, &rh, rp, &rl);
-            MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_RESP);
+            mtek_compat_dispatch_request(&dctx, &req, NULL, &rh, rp, &rl);
+            MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_RESP);
             MTK_CHECK_EQ(dctx.gatt_conn_token, 0);
             MTK_CHECK_EQ(g_fake_ble.gatt_disconnect_call_count, before + 1);
         }
         /* No duplicate response: the next poll is a clean IDLE. */
-        mtek_bedge_dispatch_poll_outbound(&dctx, &rh, rp, &rl);
-        MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_IDLE);
+        mtek_compat_dispatch_poll_outbound(&dctx, &rh, rp, &rl);
+        MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_IDLE);
         MTK_CHECK_EQ(dctx.pending_start_msg_id, 0);
     }
 
@@ -358,22 +358,22 @@ MTK_TEST_MAIN_BEGIN
     mtk_router_set_async_runner(manual_runner);
     for (unsigned fi = 0; fi < 3; fi++) {
         make_req(&req, FEAT[fi].msg, FEAT[fi].plen);
-        mtek_bedge_dispatch_request(&dctx, &req, FEAT[fi].pl, &rh, rp, &rl);
-        MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_IDLE);         /* armed, nothing run yet (case-1 state) */
+        mtek_compat_dispatch_request(&dctx, &req, FEAT[fi].pl, &rh, rp, &rl);
+        MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_IDLE);         /* armed, nothing run yet (case-1 state) */
         MTK_CHECK_EQ(dctx.pending_have_response, 0);
         MTK_CHECK_EQ(dctx.pending_have_event, 0);
 
         run_pending();                                         /* emits ACCEPTED + terminal event into the queue */
 
-        mtek_bedge_dispatch_poll_outbound(&dctx, &rh, rp, &rl); /* one drain sees both */
-        MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_RESP);
+        mtek_compat_dispatch_poll_outbound(&dctx, &rh, rp, &rl); /* one drain sees both */
+        MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_RESP);
         MTK_CHECK_EQ(rh.msg_id, FEAT[fi].msg);
         MTK_CHECK_EQ(dctx.pending_start_msg_id, 0);
         if (fi == 0) VERIFY_AP_LIST(rh, rp);
         if (fi == 2) { /* reset the live connection for the next connect */
             make_req(&req, 0x040A, 0);
-            mtek_bedge_dispatch_request(&dctx, &req, NULL, &rh, rp, &rl);
-            MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_RESP);
+            mtek_compat_dispatch_request(&dctx, &req, NULL, &rh, rp, &rl);
+            MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_RESP);
         }
     }
 
@@ -385,16 +385,16 @@ MTK_TEST_MAIN_BEGIN
     mtk_router_set_async_runner(inline_runner);
     for (unsigned fi = 0; fi < 3; fi++) {
         make_req(&req, FEAT[fi].msg, FEAT[fi].plen);
-        mtek_bedge_dispatch_request(&dctx, &req, FEAT[fi].pl, &rh, rp, &rl);
-        MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_RESP);         /* completed synchronously, no IDLE */
+        mtek_compat_dispatch_request(&dctx, &req, FEAT[fi].pl, &rh, rp, &rl);
+        MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_RESP);         /* completed synchronously, no IDLE */
         MTK_CHECK_EQ(rh.msg_id, FEAT[fi].msg);
         MTK_CHECK_EQ(dctx.pending_start_msg_id, 0);            /* never armed */
         if (fi == 0) VERIFY_AP_LIST(rh, rp);
         if (fi == 2) {
             MTK_CHECK(dctx.gatt_conn_token != 0);
             make_req(&req, 0x040A, 0);
-            mtek_bedge_dispatch_request(&dctx, &req, NULL, &rh, rp, &rl);
-            MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_RESP);
+            mtek_compat_dispatch_request(&dctx, &req, NULL, &rh, rp, &rl);
+            MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_RESP);
         }
     }
 
@@ -406,13 +406,13 @@ MTK_TEST_MAIN_BEGIN
     mtk_router_set_async_runner(failing_runner);
     for (unsigned fi = 0; fi < 3; fi++) {
         make_req(&req, FEAT[fi].msg, FEAT[fi].plen);
-        mtek_bedge_dispatch_request(&dctx, &req, FEAT[fi].pl, &rh, rp, &rl);
-        MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_NAK);          /* rejection relayed now, not awaited */
+        mtek_compat_dispatch_request(&dctx, &req, FEAT[fi].pl, &rh, rp, &rl);
+        MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_NAK);          /* rejection relayed now, not awaited */
         MTK_CHECK_EQ(rh.msg_id, FEAT[fi].msg);
         MTK_CHECK_EQ(dctx.pending_start_msg_id, 0);            /* nothing left pending */
         /* No indefinite IDLE / no phantom later reply: the next poll is IDLE. */
-        mtek_bedge_dispatch_poll_outbound(&dctx, &rh, rp, &rl);
-        MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_IDLE);
+        mtek_compat_dispatch_poll_outbound(&dctx, &rh, rp, &rl);
+        MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_IDLE);
         MTK_CHECK_EQ(dctx.pending_start_msg_id, 0);
     }
 
@@ -433,9 +433,9 @@ MTK_TEST_MAIN_BEGIN
         mtk_router_set_async_runner(blocking_runner);
 
         make_req(&req, FEAT[fi].msg, FEAT[fi].plen);
-        mtek_bedge_dispatch_request(&dctx, &req, FEAT[fi].pl, &rh, rp, &rl);
+        mtek_compat_dispatch_request(&dctx, &req, FEAT[fi].pl, &rh, rp, &rl);
         /* The initial drain saw ACCEPTED but not the event: */
-        MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_IDLE);
+        MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_IDLE);
         MTK_CHECK_EQ(dctx.pending_have_response, 1);   /* response half preserved from the INITIAL drain */
         MTK_CHECK_EQ(dctx.pending_have_event, 0);      /* event deliberately still withheld */
         MTK_CHECK_EQ(dctx.pending_start_msg_id, FEAT[fi].msg);
@@ -443,8 +443,8 @@ MTK_TEST_MAIN_BEGIN
         /* Release the HAL -> worker emits the terminal event and finishes. */
         gate_open_hal();
         gate_wait_done();
-        mtek_bedge_dispatch_poll_outbound(&dctx, &rh, rp, &rl);
-        MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_RESP);
+        mtek_compat_dispatch_poll_outbound(&dctx, &rh, rp, &rl);
+        MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_RESP);
         MTK_CHECK_EQ(rh.msg_id, FEAT[fi].msg);
         MTK_CHECK_EQ(dctx.pending_start_msg_id, 0);
 
@@ -454,8 +454,8 @@ MTK_TEST_MAIN_BEGIN
         } else if (fi == 1) {
             MTK_CHECK(dctx.sta_scan_has_generation);
             make_req(&req, 0x030F, 0);
-            mtek_bedge_dispatch_request(&dctx, &req, NULL, &rh, rp, &rl);
-            MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_RESP);
+            mtek_compat_dispatch_request(&dctx, &req, NULL, &rh, rp, &rl);
+            MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_RESP);
             uint16_t sn = (uint16_t)(rp[0] | (rp[1] << 8));
             MTK_CHECK_EQ(sn, 2);
             MTK_CHECK(memcmp(rp + 2, (uint8_t[]){0x0A,0x0B,0x0C,0x0D,0x0E,0x0F}, 6) == 0);
@@ -464,14 +464,14 @@ MTK_TEST_MAIN_BEGIN
             MTK_CHECK(dctx.gatt_conn_token != 0);
             unsigned before = g_fake_ble.gatt_disconnect_call_count;
             make_req(&req, 0x040A, 0);
-            mtek_bedge_dispatch_request(&dctx, &req, NULL, &rh, rp, &rl);
-            MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_RESP);
+            mtek_compat_dispatch_request(&dctx, &req, NULL, &rh, rp, &rl);
+            MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_RESP);
             MTK_CHECK_EQ(dctx.gatt_conn_token, 0);
             MTK_CHECK_EQ(g_fake_ble.gatt_disconnect_call_count, before + 1);
         }
         /* Response emitted exactly once; adapter not stuck in IDLE. */
-        mtek_bedge_dispatch_poll_outbound(&dctx, &rh, rp, &rl);
-        MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_IDLE);
+        mtek_compat_dispatch_poll_outbound(&dctx, &rh, rp, &rl);
+        MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_IDLE);
         MTK_CHECK_EQ(dctx.pending_start_msg_id, 0);
     }
 
@@ -499,16 +499,16 @@ MTK_TEST_MAIN_BEGIN
         g_gate_active = 0;
         mtk_router_set_async_runner(manual_runner);
         make_req(&req, 0x0103, 0);
-        mtek_bedge_dispatch_request(&dctx, &req, NULL, &rh, rp, &rl);
-        MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_IDLE);      /* armed, neither half present */
+        mtek_compat_dispatch_request(&dctx, &req, NULL, &rh, rp, &rl);
+        MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_IDLE);      /* armed, neither half present */
         MTK_CHECK_EQ(dctx.pending_have_response, 0);
         MTK_CHECK_EQ(dctx.pending_have_event, 0);
 
         /* Deliver ONLY the terminal event (response not yet emitted). */
         mtk_ap_scan_complete_ev_t ev; memset(&ev, 0, sizeof(ev)); ev.result_generation = 0xABCDu;
         push_event_generation(&dctx, "AP_SCAN_COMPLETE", &mtk_ap_scan_complete_ev_t_desc, &ev);
-        mtek_bedge_dispatch_poll_outbound(&dctx, &rh, rp, &rl);
-        MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_IDLE);      /* event carried, response still awaited */
+        mtek_compat_dispatch_poll_outbound(&dctx, &rh, rp, &rl);
+        MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_IDLE);      /* event carried, response still awaited */
         MTK_CHECK_EQ(dctx.pending_have_event, 1);           /* already-captured event preserved in pending state */
         MTK_CHECK_EQ(dctx.pending_event_generation, 0xABCDu);
         MTK_CHECK_EQ(dctx.pending_have_response, 0);
@@ -516,8 +516,8 @@ MTK_TEST_MAIN_BEGIN
 
         /* Now the response arrives -> completion, using the carried event. */
         push_response_status(&dctx, MTK_STATUS_ACCEPTED);
-        mtek_bedge_dispatch_poll_outbound(&dctx, &rh, rp, &rl);
-        MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_RESP);      /* emitted once, not stuck in IDLE */
+        mtek_compat_dispatch_poll_outbound(&dctx, &rh, rp, &rl);
+        MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_RESP);      /* emitted once, not stuck in IDLE */
         MTK_CHECK_EQ(rh.msg_id, 0x0103);
         MTK_CHECK_EQ(dctx.pending_start_msg_id, 0);
         /* No real AP scan ran (synthetic generation 0xABCD has no results
@@ -544,28 +544,28 @@ MTK_TEST_MAIN_BEGIN
         unsigned disc_before = g_fake_ble.gatt_disconnect_call_count;
 
         make_req(&req, 0x0409, sizeof(gatt_pl));
-        mtek_bedge_dispatch_request(&dctx, &req, gatt_pl, &rh, rp, &rl);
-        MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_IDLE);      /* deferred (case 1) */
+        mtek_compat_dispatch_request(&dctx, &req, gatt_pl, &rh, rp, &rl);
+        MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_IDLE);      /* deferred (case 1) */
 
         gate_open_start();
         gate_wait_in_hal();
-        mtek_bedge_dispatch_poll_outbound(&dctx, &rh, rp, &rl);
-        MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_IDLE);      /* ACCEPTED present, terminal pending (case 2) */
+        mtek_compat_dispatch_poll_outbound(&dctx, &rh, rp, &rl);
+        MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_IDLE);      /* ACCEPTED present, terminal pending (case 2) */
         MTK_CHECK_EQ(dctx.pending_have_response, 1);
 
         gate_open_hal();
         gate_wait_done();
-        mtek_bedge_dispatch_poll_outbound(&dctx, &rh, rp, &rl);
-        MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_NAK);       /* terminal failure -> NAK, not a false OK */
-        MTK_CHECK_EQ(rp[0], MTK_BEDGE_STATUS_ERR_TIMEOUT);  /* existing canonical->Community mapping */
+        mtek_compat_dispatch_poll_outbound(&dctx, &rh, rp, &rl);
+        MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_NAK);       /* terminal failure -> NAK, not a false OK */
+        MTK_CHECK_EQ(rp[0], MTK_COMPAT_STATUS_ERR_TIMEOUT);  /* existing canonical->Community mapping */
         MTK_CHECK_EQ(dctx.gatt_conn_token, 0);              /* no connection token retained */
         MTK_CHECK_EQ(dctx.pending_start_msg_id, 0);         /* continuation cleared */
 
-        mtek_bedge_dispatch_poll_outbound(&dctx, &rh, rp, &rl);
-        MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_IDLE);      /* no duplicate / no indefinite IDLE */
+        mtek_compat_dispatch_poll_outbound(&dctx, &rh, rp, &rl);
+        MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_IDLE);      /* no duplicate / no indefinite IDLE */
 
         make_req(&req, 0x040A, 0);                          /* GATT_DISCONNECT */
-        mtek_bedge_dispatch_request(&dctx, &req, NULL, &rh, rp, &rl);
+        mtek_compat_dispatch_request(&dctx, &req, NULL, &rh, rp, &rl);
         MTK_CHECK_EQ(g_fake_ble.gatt_disconnect_call_count, disc_before); /* HAL NOT reached (no connection) */
     }
 
@@ -576,14 +576,14 @@ MTK_TEST_MAIN_BEGIN
         unsigned disc_before = g_fake_ble.gatt_disconnect_call_count;
 
         make_req(&req, 0x0409, sizeof(gatt_pl));
-        mtek_bedge_dispatch_request(&dctx, &req, gatt_pl, &rh, rp, &rl);
-        MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_NAK);       /* same NAK as the deferred path */
-        MTK_CHECK_EQ(rp[0], MTK_BEDGE_STATUS_ERR_TIMEOUT);
+        mtek_compat_dispatch_request(&dctx, &req, gatt_pl, &rh, rp, &rl);
+        MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_NAK);       /* same NAK as the deferred path */
+        MTK_CHECK_EQ(rp[0], MTK_COMPAT_STATUS_ERR_TIMEOUT);
         MTK_CHECK_EQ(dctx.gatt_conn_token, 0);
         MTK_CHECK_EQ(dctx.pending_start_msg_id, 0);
 
         make_req(&req, 0x040A, 0);
-        mtek_bedge_dispatch_request(&dctx, &req, NULL, &rh, rp, &rl);
+        mtek_compat_dispatch_request(&dctx, &req, NULL, &rh, rp, &rl);
         MTK_CHECK_EQ(g_fake_ble.gatt_disconnect_call_count, disc_before);
     }
 
@@ -595,17 +595,17 @@ MTK_TEST_MAIN_BEGIN
         unsigned disc_before = g_fake_ble.gatt_disconnect_call_count;
 
         make_req(&req, 0x0409, sizeof(gatt_pl));
-        mtek_bedge_dispatch_request(&dctx, &req, gatt_pl, &rh, rp, &rl);
-        MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_NAK);
-        MTK_CHECK_EQ(rp[0], MTK_BEDGE_STATUS_ERR_NO_MEM);
+        mtek_compat_dispatch_request(&dctx, &req, gatt_pl, &rh, rp, &rl);
+        MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_NAK);
+        MTK_CHECK_EQ(rp[0], MTK_COMPAT_STATUS_ERR_NO_MEM);
         MTK_CHECK_EQ(dctx.gatt_conn_token, 0);
         MTK_CHECK_EQ(dctx.pending_start_msg_id, 0);
 
-        mtek_bedge_dispatch_poll_outbound(&dctx, &rh, rp, &rl);
-        MTK_CHECK_EQ(rh.msg_type, MTK_BEDGE_MSG_IDLE);
+        mtek_compat_dispatch_poll_outbound(&dctx, &rh, rp, &rl);
+        MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_IDLE);
 
         make_req(&req, 0x040A, 0);
-        mtek_bedge_dispatch_request(&dctx, &req, NULL, &rh, rp, &rl);
+        mtek_compat_dispatch_request(&dctx, &req, NULL, &rh, rp, &rl);
         MTK_CHECK_EQ(g_fake_ble.gatt_disconnect_call_count, disc_before);
     }
 

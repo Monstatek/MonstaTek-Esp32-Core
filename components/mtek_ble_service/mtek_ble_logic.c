@@ -428,7 +428,31 @@ static void handle_ble_adv_status(mtk_request_ctx_t *ctx, const mtk_opcode_entry
 static struct { uint32_t token; mtk_request_ctx_t ctx; mtk_hal_mac6_t addr; uint8_t addr_type;
                 int32_t avg_x10; uint32_t started_ms; uint8_t active;
                 uint64_t last_sample_ms; uint8_t sampled_once; uint8_t consecutive_misses;
-                uint32_t session_generation; } s_sig;
+                uint32_t session_generation; uint8_t sample_in_flight; } s_sig;
+
+/* STOP prevents new samples immediately, but the radio lease remains held until
+ * the outstanding sample has returned and retired its HAL callbacks. */
+static void signal_meter_cancel(uint32_t token) {
+    int release = 0;
+    ble_lock();
+    if (s_sig.token == token) {
+        s_sig.active = 0;
+        release = !s_sig.sample_in_flight;
+    }
+    ble_unlock();
+    if (release) mtk_arbiter_release_if_owner(MTK_ARB_SM, token);
+}
+
+static void signal_meter_sample_finished(uint32_t token) {
+    int release = 0;
+    ble_lock();
+    if (s_sig.token == token) {
+        s_sig.sample_in_flight = 0;
+        release = !s_sig.active;
+    }
+    ble_unlock();
+    if (release) mtk_arbiter_release_if_owner(MTK_ARB_SM, token);
+}
 
 static uint8_t rssi_category(int8_t rssi) {
     if (rssi >= -50) return 0;
@@ -512,7 +536,7 @@ void mtek_ble_signal_meter_tick(void) {
      * the same session just observed above -- a concurrent STOP followed
      * by a brand-new handle_signal_meter_start could have reinitialized
      * it for a wholly different session in the meantime. */
-    if (!s_sig.active || s_sig.token != token) { ble_unlock(); return; }
+    if (!s_sig.active || s_sig.token != token || s_sig.sample_in_flight) { ble_unlock(); return; }
     /* Self-throttle to the real sampling cadence regardless of how often
      * the caller's own periodic task invokes this tick (main/app_main.c's
      * ble_tick_task runs every 500ms for GATT-notification-polling
@@ -523,6 +547,7 @@ void mtek_ble_signal_meter_tick(void) {
     if (s_sig.sampled_once && now - s_sig.last_sample_ms < MTK_SIGNAL_METER_SAMPLE_INTERVAL_MS) { ble_unlock(); return; }
     s_sig.last_sample_ms = now;
     s_sig.sampled_once = 1;
+    s_sig.sample_in_flight = 1;
     mtk_hal_mac6_t addr = s_sig.addr;
     uint8_t addr_type = s_sig.addr_type;
     ble_unlock();
@@ -532,9 +557,9 @@ void mtek_ble_signal_meter_tick(void) {
 
     if (rc != 0) {
         ble_lock();
-        if (!s_sig.active || s_sig.token != token) { ble_unlock(); return; } /* stale by now -- a new session may already be running */
+        if (!s_sig.active || s_sig.token != token) { ble_unlock(); signal_meter_sample_finished(token); return; }
         s_sig.consecutive_misses++;
-        if (s_sig.consecutive_misses < MTK_SIGNAL_METER_MISS_TOLERANCE) { ble_unlock(); return; } /* one missed sample is not yet LOST */
+        if (s_sig.consecutive_misses < MTK_SIGNAL_METER_MISS_TOLERANCE) { ble_unlock(); signal_meter_sample_finished(token); return; } /* one missed sample is not yet LOST */
         uint32_t session_generation = s_sig.session_generation;
         mtk_sink_t sink = s_sig.ctx.sink;
         ble_unlock();
@@ -545,6 +570,7 @@ void mtek_ble_signal_meter_tick(void) {
          * transition and double-release the arbiter/double-emit. */
         if (!mtk_op_transition_by_token(token, boot_epoch, MTK_OPS_FAILED, MTK_STATUS_NOT_FOUND, now_ms())) {
             ble_lock(); if (s_sig.token == token) s_sig.active = 0; ble_unlock();
+            signal_meter_sample_finished(token);
             return;
         }
         /* P0 correction (follow-up read-only audit, "final P0 concurrency-
@@ -552,8 +578,8 @@ void mtek_ble_signal_meter_tick(void) {
          * matching every other class release site across this tree --
          * this one was missed in that round since s_sig had no lock/
          * generation infrastructure until now. */
-        mtk_arbiter_release_if_owner(MTK_ARB_SM, token);
         ble_lock(); if (s_sig.token == token) s_sig.active = 0; ble_unlock();
+        signal_meter_sample_finished(token);
         /* mtk_op_begin_publish_guard, held across the whole publish,
          * closes the window between winning the transition above and
          * actually emitting -- see its own doc comment in mtek_core.h. */
@@ -566,7 +592,7 @@ void mtek_ble_signal_meter_tick(void) {
     }
 
     ble_lock();
-    if (!s_sig.active || s_sig.token != token) { ble_unlock(); return; } /* stale by now -- a new session may already be running */
+    if (!s_sig.active || s_sig.token != token) { ble_unlock(); signal_meter_sample_finished(token); return; }
     s_sig.consecutive_misses = 0;
     s_sig.avg_x10 = s_sig.avg_x10 ? (s_sig.avg_x10 * 3 + rssi * 10) / 4 : rssi * 10;
     int32_t avg_x10 = s_sig.avg_x10;
@@ -583,6 +609,7 @@ void mtek_ble_signal_meter_tick(void) {
         sink.emit_event(sink.user, token, "SIGNAL_METER_UPDATE", &ev, &mtk_signal_meter_update_ev_t_desc);
         mtk_op_end_publish_guard();
     }
+    signal_meter_sample_finished(token);
 }
 
 static void handle_signal_meter_status(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t *op,
@@ -610,10 +637,7 @@ static void handle_signal_meter_stop(mtk_request_ctx_t *ctx, const mtk_opcode_en
         /* P0 correction (follow-up read-only audit, "final P0 concurrency-
          * closure round", issue 1, applied here in the following round
          * once s_sig gained a lock): atomic ownership-checked release. */
-        mtk_arbiter_release_if_owner(MTK_ARB_SM, req.operation_token);
-        ble_lock();
-        if (s_sig.token == req.operation_token) s_sig.active = 0;
-        ble_unlock();
+        signal_meter_cancel(req.operation_token);
     }
     if (!mtk_op_snapshot_family(req.operation_token, ctx->boot_epoch, BLE_SERVICE_ID, SIGNAL_METER_START_OPCODE, &snap)) { respond_empty(ctx, MTK_STATUS_NOT_FOUND); return; }
     mtk_signal_meter_stop_resp_t r; r.final_state = (uint8_t)snap.state; r.final_status = snap.final_status;
@@ -1502,7 +1526,6 @@ mtk_op_id_t mtek_ble_cancel_active_for_peer_reset(void) {
             break;
         case MTK_ARB_SM:
             if (mtk_op_transition_by_token(tok, epoch, MTK_OPS_STOPPED, MTK_STATUS_OK, now_ms())) {
-                mtk_arbiter_release(MTK_ARB_SM);
                 /* P0 correction (follow-up read-only audit, "Round 8: final
                  * concurrency and resource-failure closure", item 2 "audit
                  * every s_gatt read/write" -- s_sig shares the SAME lock
@@ -1512,9 +1535,7 @@ mtk_op_id_t mtek_ble_cancel_active_for_peer_reset(void) {
                  * every other s_sig mutation site's own established
                  * locked-and-token-checked pattern (handle_signal_
                  * meter_stop). */
-                ble_lock();
-                if (s_sig.token == tok) s_sig.active = 0;
-                ble_unlock();
+                signal_meter_cancel(tok);
                 id.token = tok; id.boot_epoch = epoch;
             }
             break;
@@ -1621,7 +1642,8 @@ static void mtek_gatt_dispatch(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t 
     }
 }
 
-void mtek_ble_service_register(void) {
-    mtk_router_register(0x0002, mtek_ble_dispatch);
-    mtk_router_register(0x0003, mtek_gatt_dispatch);
+mtk_register_result_t mtek_ble_service_register(void) {
+    mtk_register_result_t rc = mtk_router_register(0x0002, mtek_ble_dispatch);
+    if (rc != MTK_REGISTER_OK) return rc;
+    return mtk_router_register(0x0003, mtek_gatt_dispatch);
 }

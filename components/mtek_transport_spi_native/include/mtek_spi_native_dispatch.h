@@ -164,8 +164,14 @@ _Static_assert(sizeof(mtk_spi_native_dispatch_ctx_t) < 60000,
 
 void mtek_spi_native_dispatch_init(mtk_spi_native_dispatch_ctx_t *dctx, uint32_t boot_epoch);
 
-/* Feeds one already-parsed, already-CRC-valid physical cell. `now_seq` is
- * any caller-supplied monotonic counter (e.g. a transaction counter),
+/* Local inactivity policy, not a negotiated wire value: two seconds since
+ * the last accepted fragment. Owner task calls tick even without traffic.
+ * now_ms is the low 32 bits of monotonic milliseconds (wrap-safe). */
+#define MTK_SPI_NATIVE_REASM_TIMEOUT_MS 2000u
+void mtek_spi_native_dispatch_tick(mtk_spi_native_dispatch_ctx_t *dctx, uint32_t now_ms);
+
+/* Feeds one already-parsed, already-CRC-valid physical cell. `now_ms` is
+ * caller-supplied monotonic milliseconds, not a transaction counter,
  * used only to drive inbound-reassembly timeout tracking
  * (mtk_spi_native_reassembly_timed_out is checked internally before
  * accepting a continuation fragment for an already-abandoned message).
@@ -177,7 +183,7 @@ void mtek_spi_native_dispatch_init(mtk_spi_native_dispatch_ctx_t *dctx, uint32_t
  * (single-cell, or the first cell of a staged multi-cell one -- see
  * mtek_spi_native_dispatch_poll_outbound). */
 void mtek_spi_native_dispatch_feed_cell(mtk_spi_native_dispatch_ctx_t *dctx, const mtk_spi_native_header_t *hdr, const uint8_t *payload,
-                                         uint32_t now_seq, mtk_spi_native_header_t *resp_hdr, uint8_t *resp_payload, uint16_t *resp_payload_len);
+                                         uint32_t now_ms, mtk_spi_native_header_t *resp_hdr, uint8_t *resp_payload, uint16_t *resp_payload_len);
 
 /* Called when the physical loop receives an IDLE poll from the peer
  * while dctx->outbound.active: emits the next FRAG-equivalent

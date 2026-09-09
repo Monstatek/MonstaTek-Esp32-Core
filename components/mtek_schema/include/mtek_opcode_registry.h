@@ -16,7 +16,7 @@ typedef struct {
     uint8_t no_radio_lease;
     mtk_capability_state_t cap_native;
     mtk_capability_state_t cap_factory_uart;
-    mtk_capability_state_t cap_bedge_c3;
+    mtk_capability_state_t cap_compat_c3;
     uint32_t deadline_default_ms;
     uint32_t deadline_min_ms;
     uint32_t deadline_max_ms;

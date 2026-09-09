@@ -119,6 +119,7 @@ MTK_TEST_MAIN_BEGIN
     mtk_fake_sink_reset(&csink);
     mtk_request_ctx_t uctx = mtk_test_ctx(&csink, 9);
     uctx.profile = MTK_PROFILE_FACTORY_UART;
+    uctx.dispatch_mode = MTK_DISPATCH_INLINE;
     mtk_router_dispatch(&uctx, connect_op->service_id, connect_op->opcode, NULL, 0);
     MTK_CHECK_EQ(csink.response.status, MTK_STATUS_UNSUPPORTED);
 

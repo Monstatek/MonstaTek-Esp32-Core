@@ -110,7 +110,7 @@ typedef struct {
     uint32_t boot_epoch;
     uint32_t message_len;     /* total logical message length, from the first fragment */
     uint32_t received_len;    /* contiguous bytes received so far -- next expected fragment_offset */
-    uint32_t last_seen_seq;   /* monotonic liveness counter for timeout tracking, caller-supplied */
+    uint32_t last_seen_ms;   /* low 32 bits of caller-supplied monotonic milliseconds */
     uint8_t data[MTK_SPI_NATIVE_MAX_MESSAGE];
 } mtk_spi_native_reassembly_t;
 
@@ -143,18 +143,18 @@ typedef enum {
 
 void mtk_spi_native_reassembly_reset(mtk_spi_native_reassembly_t *ctx);
 
-/* Feeds one parsed, already-CRC-valid fragment. `now_seq` is any
- * caller-supplied monotonic counter (e.g. a transaction counter or
- * tick count) recorded as `last_seen_seq` on progress, letting the
+/* Feeds one parsed, already-CRC-valid fragment. `now_ms` is
+ * caller-supplied monotonic milliseconds, recorded as `last_seen_ms`
+ * on progress, letting the
  * caller implement its own timeout policy (mtk_spi_native_reassembly_
  * timed_out) without this portable component depending on a wall clock. */
 mtk_spi_reasm_result_t mtk_spi_native_reassembly_feed(mtk_spi_native_reassembly_t *ctx, const mtk_spi_native_header_t *hdr,
-                                                       const uint8_t *payload, uint32_t now_seq);
+                                                       const uint8_t *payload, uint32_t now_ms);
 
-/* True if `ctx` is active and `now_seq - ctx->last_seen_seq >= timeout_seq`
- * (caller-defined units) -- an abandoned in-flight reassembly the caller
+/* True if `ctx` is active and `now_ms - ctx->last_seen_ms >= timeout_ms`
+ * (milliseconds) -- an abandoned in-flight reassembly the caller
  * should mtk_spi_native_reassembly_reset() and reject. */
-int mtk_spi_native_reassembly_timed_out(const mtk_spi_native_reassembly_t *ctx, uint32_t now_seq, uint32_t timeout_seq);
+int mtk_spi_native_reassembly_timed_out(const mtk_spi_native_reassembly_t *ctx, uint32_t now_ms, uint32_t timeout_ms);
 
 /* ---- Outbound multi-cell fragmentation ---------------------------------
  * Stages a response/event/stream body too large for one cell; drained one

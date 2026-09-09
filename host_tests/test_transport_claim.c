@@ -28,7 +28,7 @@ static void test_single_threaded_first_wins(void) {
 
     /* A different adapter arriving after is permanently rejected. */
     MTK_CHECK_EQ(mtk_transport_claim_try(MTK_PUBLIC_ADAPTER_NATIVE_SPI), 0);
-    MTK_CHECK_EQ(mtk_transport_claim_try(MTK_PUBLIC_ADAPTER_BEDGE_C3_SPI), 0);
+    MTK_CHECK_EQ(mtk_transport_claim_try(MTK_PUBLIC_ADAPTER_COMPAT_C3_SPI), 0);
     MTK_CHECK_EQ(mtk_transport_claim_get(), MTK_PUBLIC_ADAPTER_FACTORY_UART); /* unchanged */
 
     /* The winner re-attempting (e.g. a second command line on the same
@@ -45,7 +45,7 @@ static void test_reset_allows_a_new_boot_session(void) {
     MTK_CHECK_EQ(mtk_transport_claim_try(MTK_PUBLIC_ADAPTER_NATIVE_SPI), 1);
     mtk_transport_claim_reset(); /* e.g. a fresh boot */
     MTK_CHECK_EQ(mtk_transport_claim_get(), MTK_PUBLIC_ADAPTER_NONE);
-    MTK_CHECK_EQ(mtk_transport_claim_try(MTK_PUBLIC_ADAPTER_BEDGE_C3_SPI), 1);
+    MTK_CHECK_EQ(mtk_transport_claim_try(MTK_PUBLIC_ADAPTER_COMPAT_C3_SPI), 1);
 }
 
 /* ---- Real concurrent race: exactly one of two genuinely simultaneous

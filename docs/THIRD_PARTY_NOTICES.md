@@ -1,9 +1,9 @@
 # Third-party and community-reference notices
 
-## Community Bedge/C3 reference firmware
+## Community/C3 reference firmware
 
 To establish M1 hardware and wire-protocol interoperability facts for the
-Community/C3 compatibility adapter (`components/mtek_transport_spi_bedge`),
+Community/C3 compatibility adapter (`components/mtek_transport_spi_compat`),
 engineering consulted the community firmware project `bedge117/m1-esp32-brain`
 at commit `e515182ad7e2c52689c0979a5e035cd2c28330c6`. This consultation is
 disclosed here rather than presented as unconsulted independent derivation.

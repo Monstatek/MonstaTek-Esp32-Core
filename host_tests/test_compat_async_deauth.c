@@ -2,7 +2,7 @@
  * DEAUTH_START (a required List B feature, explicitly owner-approved) --
  * not a single-threaded simulation. Registers a genuine pthread-based
  * mtk_router async runner + a real pthread_mutex lock, dispatches
- * DEAUTH_START through the full Bedge wire path, and proves: the
+ * DEAUTH_START through the full Mtek Compatibility wire path, and proves: the
  * dispatching call returns immediately without blocking on the
  * background thread; the current transaction correctly answers IDLE
  * while genuinely deferred; the persistent, dctx-owned event_queue
@@ -27,8 +27,8 @@
  * through fake_wifi_lock/fake_wifi_unlock via one coherent snapshot/reset
  * helper, never a direct field access. */
 #include "mtk_test.h"
-#include "mtek_bedge_dispatch.h"
-#include "mtek_bedge_opcode_map.h"
+#include "mtek_compat_dispatch.h"
+#include "mtek_compat_opcode_map.h"
 #include "mtek_router.h"
 #include "mtek_core.h"
 #include "mtek_arbiter.h"
@@ -146,7 +146,7 @@ static int worker_wait_done(worker_t *w, long timeout_ms) {
 }
 
 /* The router's own async-runner slot: exactly one worker is expected to
- * be spawned per mtek_bedge_dispatch_request call that defers (this test
+ * be spawned per mtek_compat_dispatch_request call that defers (this test
  * drives exactly two such calls, worker0 then worker1) -- set immediately
  * before each such call, consumed and cleared by the runner itself. A
  * dispatch that unexpectedly tries to defer with no worker assigned fails
@@ -220,8 +220,8 @@ MTK_TEST_MAIN_BEGIN
     mtek_system_service_register();
     mtek_wifi_service_register();
 
-    mtk_bedge_dispatch_ctx_t dctx;
-    mtek_bedge_dispatch_init(&dctx, 0x1234);
+    mtk_compat_dispatch_ctx_t dctx;
+    mtek_compat_dispatch_init(&dctx, 0x1234);
     /* The dctx-owned event_queue is genuinely shared across the calling
      * thread and the background worker thread the tracked runner above
      * spawns -- it needs real mutual exclusion, exactly as target glue
@@ -236,19 +236,19 @@ MTK_TEST_MAIN_BEGIN
     req_payload[13] = 1; req_payload[14] = 0; /* count = 1 LE */
     req_payload[15] = 0; req_payload[16] = 0; /* interval_ms = 0 */
 
-    mtk_bedge_header_t req_hdr = {0};
-    req_hdr.magic = MTK_BEDGE_MAGIC; req_hdr.version = MTK_BEDGE_VERSION;
-    req_hdr.msg_type = MTK_BEDGE_MSG_REQ; req_hdr.msg_id = 0x0302; req_hdr.payload_len = sizeof(req_payload);
+    mtk_compat_header_t req_hdr = {0};
+    req_hdr.magic = MTK_COMPAT_MAGIC; req_hdr.version = MTK_COMPAT_VERSION;
+    req_hdr.msg_type = MTK_COMPAT_MSG_REQ; req_hdr.msg_id = 0x0302; req_hdr.payload_len = sizeof(req_payload);
 
-    mtk_bedge_header_t resp_hdr; uint8_t resp_payload[MTK_BEDGE_SINGLE_CELL_PAYLOAD_MAX]; uint16_t resp_len = 0;
+    mtk_compat_header_t resp_hdr; uint8_t resp_payload[MTK_COMPAT_SINGLE_CELL_PAYLOAD_MAX]; uint16_t resp_len = 0;
 
     worker_t worker0, worker1;
     s_next_worker = &worker0;
-    mtek_bedge_dispatch_request(&dctx, &req_hdr, req_payload, &resp_hdr, resp_payload, &resp_len);
+    mtek_compat_dispatch_request(&dctx, &req_hdr, req_payload, &resp_hdr, resp_payload, &resp_len);
 
     /* Dispatching returned immediately: the transport loop is never
      * blocked waiting for the background deauth work to finish. */
-    MTK_CHECK_EQ(resp_hdr.msg_type, MTK_BEDGE_MSG_IDLE);
+    MTK_CHECK_EQ(resp_hdr.msg_type, MTK_COMPAT_MSG_IDLE);
     MTK_CHECK_EQ(dctx.pending_start_msg_id, 0x0302);
 
     /* worker0 is now genuinely parked -- signaled started, blocked on
@@ -265,10 +265,10 @@ MTK_TEST_MAIN_BEGIN
      * not have yet (because the ACCEPTED response is still in flight on
      * the other thread, still parked) is safely rejected -- no race, no
      * crash, no guessed token. */
-    mtk_bedge_header_t stop_hdr = req_hdr; stop_hdr.msg_id = 0x0303; stop_hdr.payload_len = 0;
-    mtek_bedge_dispatch_request(&dctx, &stop_hdr, NULL, &resp_hdr, resp_payload, &resp_len);
-    MTK_CHECK_EQ(resp_hdr.msg_type, MTK_BEDGE_MSG_NAK);
-    MTK_CHECK_EQ(resp_payload[0], MTK_BEDGE_STATUS_ERR_NOT_RUNNING);
+    mtk_compat_header_t stop_hdr = req_hdr; stop_hdr.msg_id = 0x0303; stop_hdr.payload_len = 0;
+    mtek_compat_dispatch_request(&dctx, &stop_hdr, NULL, &resp_hdr, resp_payload, &resp_len);
+    MTK_CHECK_EQ(resp_hdr.msg_type, MTK_COMPAT_MSG_NAK);
+    MTK_CHECK_EQ(resp_payload[0], MTK_COMPAT_STATUS_ERR_NOT_RUNNING);
 
     /* Release worker0: it now runs the real production callback (with
      * the rendezvous mutex already dropped), reaching the fake HAL and
@@ -283,12 +283,12 @@ MTK_TEST_MAIN_BEGIN
      * intentional way to catch a genuinely broken delivery path. */
     int got_resp = 0;
     for (int i = 0; i < 2000 && !got_resp; i++) {
-        mtek_bedge_dispatch_poll_outbound(&dctx, &resp_hdr, resp_payload, &resp_len);
-        if (resp_hdr.msg_type != MTK_BEDGE_MSG_IDLE) got_resp = 1;
+        mtek_compat_dispatch_poll_outbound(&dctx, &resp_hdr, resp_payload, &resp_len);
+        if (resp_hdr.msg_type != MTK_COMPAT_MSG_IDLE) got_resp = 1;
         else usleep(1000);
     }
     MTK_CHECK(got_resp);
-    MTK_CHECK_EQ(resp_hdr.msg_type, MTK_BEDGE_MSG_RESP);
+    MTK_CHECK_EQ(resp_hdr.msg_type, MTK_COMPAT_MSG_RESP);
     MTK_CHECK_EQ(resp_hdr.msg_id, 0x0302); /* answers the original DEAUTH_START request */
     MTK_CHECK_EQ(dctx.pending_start_msg_id, 0); /* cleared once delivered */
 
@@ -302,7 +302,7 @@ MTK_TEST_MAIN_BEGIN
     pthread_join(worker0.tid, NULL);
 
     /* The real canonical deauth logic genuinely ran on the background
-     * thread (not the thread that called mtek_bedge_dispatch_request):
+     * thread (not the thread that called mtek_compat_dispatch_request):
      * the fake HAL was actually reached, and the operation_token was
      * correctly harvested across the thread boundary via the persistent,
      * dctx-owned event_queue -- not a stack-local capture that would
@@ -316,14 +316,14 @@ MTK_TEST_MAIN_BEGIN
 
     /* Subsequent poll (nothing else outstanding): well-formed IDLE, not
      * a repeat of the already-delivered response. */
-    mtek_bedge_dispatch_poll_outbound(&dctx, &resp_hdr, resp_payload, &resp_len);
-    MTK_CHECK_EQ(resp_hdr.msg_type, MTK_BEDGE_MSG_IDLE);
+    mtek_compat_dispatch_poll_outbound(&dctx, &resp_hdr, resp_payload, &resp_len);
+    MTK_CHECK_EQ(resp_hdr.msg_type, MTK_COMPAT_MSG_IDLE);
 
     /* Now that the token is real, DEAUTH_STOP works normally (also
      * dispatched synchronously here since STOP is lifecycle SYNCHRONOUS,
      * never deferred by the router). */
-    mtek_bedge_dispatch_request(&dctx, &stop_hdr, NULL, &resp_hdr, resp_payload, &resp_len);
-    MTK_CHECK_EQ(resp_hdr.msg_type, MTK_BEDGE_MSG_RESP);
+    mtek_compat_dispatch_request(&dctx, &stop_hdr, NULL, &resp_hdr, resp_payload, &resp_len);
+    MTK_CHECK_EQ(resp_hdr.msg_type, MTK_COMPAT_MSG_RESP);
     MTK_CHECK_EQ(dctx.deauth_token, 0);
 
     /* Cancellation/reset of a still-pending deferred operation: start a
@@ -336,8 +336,8 @@ MTK_TEST_MAIN_BEGIN
     {
         deauth_fixture_reset_count();
         s_next_worker = &worker1;
-        mtek_bedge_dispatch_request(&dctx, &req_hdr, req_payload, &resp_hdr, resp_payload, &resp_len);
-        MTK_CHECK_EQ(resp_hdr.msg_type, MTK_BEDGE_MSG_IDLE);
+        mtek_compat_dispatch_request(&dctx, &req_hdr, req_payload, &resp_hdr, resp_payload, &resp_len);
+        MTK_CHECK_EQ(resp_hdr.msg_type, MTK_COMPAT_MSG_IDLE);
         MTK_CHECK_EQ(dctx.pending_start_msg_id, 0x0302);
         MTK_CHECK(worker_wait_started(&worker1, 5000));
 

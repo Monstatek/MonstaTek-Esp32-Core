@@ -11,13 +11,21 @@ first -- this file must never drift from the generated header.
 
 ## Canonical core budgets (from `schemas.json`)
 
+Runtime reliability maintenance adds one 4096-byte `mtek_delivery` task
+stack, plus its FreeRTOS task-control block, to isolate capture deadlines
+and 500ms GATT delivery from blocking BLE sampling. Capture is serviced
+every 10ms rounded to at least one RTOS tick. Native SPI reassembly now
+expires after 2000ms without an accepted fragment, including while the
+master is silent; this is a local timeout policy, not a negotiated wire
+parameter. Task stack/heap high-water measurements still require hardware.
+
 | Budget | Value | Meaning |
 |---|---|---|
 | Max in-flight requests | 4 | `MTK_BUDGET_MAX_INFLIGHT_REQUESTS` |
 | Max reassembly contexts | 4 | `MTK_BUDGET_MAX_REASSEMBLY_CONTEXTS` -- shared budget every over-one-cell control response draws from |
 | Max control payload | 65,536 bytes | `MTK_BUDGET_MAX_CONTROL_PAYLOAD_BYTES` -- the logical (reassembled) message ceiling |
 | Max operation tokens | 8 | `MTK_BUDGET_MAX_OPERATION_TOKENS` |
-| Terminal event reserve | 8 | `MTK_BUDGET_TERMINAL_EVENT_RESERVE` |
+| Terminal event reserve | 0 | `MTK_BUDGET_TERMINAL_EVENT_RESERVE` -- the dedicated non-starvable runtime reserve is retired; terminal events (`*_STOPPED` / `*_COMPLETE`) share the best-effort priority queue with progress events, without a dedicated delivery guarantee. `GET_LIMITS.max_terminal_event_reserve` now reports 0 to match the implemented behavior rather than advertising a guarantee the firmware does not provide. |
 | Max progress event queue | 8 | `MTK_BUDGET_MAX_PROGRESS_EVENT_QUEUE` |
 | Max active cursors | 4 | `MTK_BUDGET_MAX_ACTIVE_CURSORS` |
 | Max owned buffers | 4 | `MTK_BUDGET_MAX_OWNED_BUFFERS` |
@@ -39,8 +47,8 @@ first -- this file must never drift from the generated header.
 | Native SPI v1 reassembly abandonment threshold | 2000 (caller `now_seq` units) | `MTK_SPI_NATIVE_REASM_TIMEOUT_SEQ` -- a placeholder; real tuning needs hardware timing evidence not available this session, see `docs/PROVENANCE.md` |
 | Native SPI v1 concurrent inbound reassembly contexts | 1 | `mtk_spi_native_dispatch_ctx_t::inbound` -- **RC7: a second contract exception; see below.** A FIRST fragment for a different request_id while one is in progress is rejected `LINK_ERROR`/`MTK_STATUS_BUSY` (`MTK_SPI_REASM_BUSY`), never silently overwritten. |
 | Native SPI v1 concurrent DISPATCHED (already-received) operations | 4 | `MTK_SPI_NATIVE_MAX_IN_FLIGHT`, `mtk_spi_native_pending_t pending[4]` -- unaffected by either exception above: these are small correlation records (no bulk buffer), tracking operations the router has already accepted and is awaiting async completion for, matching the core contract's 4-in-flight budget exactly |
-| M1 Community Compatibility cell size | 512 bytes | `MTK_BEDGE_CELL_SIZE` (confirmed, `m1_link` fixed transaction size) |
-| M1 Community Compatibility reassembled message ceiling | 4082 bytes | `MTK_BEDGE_MAX_REASSEMBLY_PAYLOAD` (confirmed, matches the underlying SPI-DMA transport's own frame-size figure) |
+| M1 Community Compatibility cell size | 512 bytes | `MTK_COMPAT_CELL_SIZE` (confirmed, `m1_link` fixed transaction size) |
+| M1 Community Compatibility reassembled message ceiling | 4082 bytes | `MTK_COMPAT_MAX_REASSEMBLY_PAYLOAD` (confirmed, matches the underlying SPI-DMA transport's own frame-size figure) |
 | Async delivery queue depth (per adapter instance) | 8 | `MTK_ASYNC_QUEUE_DEPTH` (`mtek_async_queue.h`) -- bounded, drop-newest-on-full with a sticky drop counter, never blocks a producer |
 | Async delivery frame body | 960 bytes | `MTK_ASYNC_FRAME_MAX_BODY` |
 | Router async pool size | 4 | `MTK_ROUTER_ASYNC_POOL_SIZE` (`mtek_router.c`) -- matches the 4-in-flight-request core budget above |
@@ -50,7 +58,7 @@ first -- this file must never drift from the generated header.
 is catastrophically larger than the configured stacks")
 
 **The stack-overflow half (fixed unconditionally, no exception needed):**
-`mtk_spi_native_dispatch_ctx_t`/`mtk_bedge_dispatch_ctx_t` (`main/
+`mtk_spi_native_dispatch_ctx_t`/`mtk_compat_dispatch_ctx_t` (`main/
 mtek_spi_runtime.c`'s `spi_runtime_task`), `mtk_uart_adapter_state_t`/the
 4KB output buffer (`main/app_main.c`'s `uart_repl_task`), and every
 `uart_capture_t` local in `mtek_transport_uart/mtek_uart_adapter.c` (~25
@@ -138,7 +146,7 @@ future build's own `idf.py size` output (RC6 independent audit gate #2
 "published and mechanically checked in CI/build scripts") -- run it after
 `idf.py build`, from the same `export.sh`-sourced shell:
 `python3 tools/check_resource_budget.py build/mtkcore.map`. `mtk_spi_
-native_dispatch_ctx_t`, `mtk_bedge_dispatch_ctx_t`, and `mtk_uart_
+native_dispatch_ctx_t`, `mtk_compat_dispatch_ctx_t`, and `mtk_uart_
 adapter_state_t` each also carry a `_Static_assert` on their own
 `sizeof` (their own header files) as a second, compiler-level regression
 guard independent of any target build.
@@ -178,7 +186,7 @@ with both UART and SPI adapters now compiled AND started concurrently
 RC6's `MTEK_PRIMARY_TRANSPORT` Kconfig choice picked exactly one of
 UART/SPI to ever start at boot -- the RC7 independent audit found this
 directly contradicts `SPI_PROTOCOL_V1.md`'s own "Runtime transport
-selection" (AUTO discovery across a native SPI HELLO, a Bedge/C3
+selection" (AUTO discovery across a native SPI HELLO, a Mtek Compatibility/C3
 discovery frame, OR a valid legacy UART command). That Kconfig choice is
 removed; every compiled adapter (`CONFIG_MTEK_ADAPTER_*`) now starts its
 own physical loop unconditionally, and `mtk_transport_claim_try`

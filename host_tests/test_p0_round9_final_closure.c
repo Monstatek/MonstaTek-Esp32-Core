@@ -74,12 +74,12 @@
  *     it as their only generic MTK_LC_ACCEPTED_ASYNC + MTK_ARB_NONE
  *     vehicle. RC12 removed that coupling: those tests now use a test-only
  *     overlay opcode (host_tests/support/mtk_test_async_fixture.h, routed
- *     to the SAME handler), and TIME_SYNC_START's native/Bedge capability
+ *     to the SAME handler), and TIME_SYNC_START's native/Mtek Compatibility capability
  *     is now truthfully UNSUPPORTED in the generated registry. The
  *     historical reasoning that follows no longer reflects the shipped
  *     capability state.
  *     TIME_SYNC_START's own generated registry entry USED TO declare
- *     MTK_CAP_SUPPORTED for both the native and Bedge/C3 profiles, but this
+ *     MTK_CAP_SUPPORTED for both the native and Mtek Compatibility/C3 profiles, but this
  *     candidate has no SNTP client wired in at all -- handle_time_sync_
  *     start ALWAYS completes FAILED/IO_ERROR, unconditionally, every call
  *     (see its own doc comment). Making it refuse UNSUPPORTED was
@@ -738,7 +738,7 @@ static void test_gatt_discover_hal_failure_reports_io_error(void) {
  * capability downgrade because four host tests borrowed TIME_SYNC_START as
  * their only generic arbiter-free async vehicle. RC12 broke that coupling
  * (test-only overlay opcode, see mtk_test_async_fixture.h) and downgraded
- * the production capability to UNSUPPORTED (native + bedge_c3; factory_uart
+ * the production capability to UNSUPPORTED (native + compat_c3; factory_uart
  * was already UNAVAILABLE). This item is therefore now resolved, not
  * deferred; the operation's own runtime behavior when dispatched under the
  * test overlay (ACCEPTED, then always FAILED/IO_ERROR) is unchanged and is

@@ -23,12 +23,12 @@
  * cold-boot HELLO. */
 #include "mtk_test.h"
 #include "mtek_spi_native_dispatch.h"
-#include "mtek_bedge_frame.h"
+#include "mtek_compat_frame.h"
 #include "mtek_schema_constants.h"
 #include "mtek_core.h"
 #include <string.h>
 
-#define MTK_DISCOVERY_CELL_SIZE MTK_BEDGE_CELL_SIZE /* 512: shared discovery-phase transaction size */
+#define MTK_DISCOVERY_CELL_SIZE MTK_COMPAT_CELL_SIZE /* 512: shared discovery-phase transaction size */
 
 /* Release-tooling-round P0 correction (independent audit, "Native SPI
  * confuses the STM32 and ESP boot epochs"): deliberately DISTINCT from the

@@ -1,17 +1,17 @@
 /* Proves every one of the canonical opcodes schemas.json marks
- * capability_state.bedge_c3=SUPPORTED is actually reachable through its
- * real, documented Bedge wire opcode -- not merely present in a
+ * capability_state.compat_c3=SUPPORTED is actually reachable through its
+ * real, documented Mtek Compatibility wire opcode -- not merely present in a
  * registry, and never silently answered by the generic
  * default-unsupported switch case (Part 1, table-driven). Part 2 goes
- * further for every opcode with a confirmed exact Bedge wire byte
+ * further for every opcode with a confirmed exact Mtek Compatibility wire byte
  * layout: proves real request decode (the fake HAL/service actually
  * receives the decoded fields, not just "some request"), a real
- * canonical side effect, and the exact confirmed Bedge response byte
+ * canonical side effect, and the exact confirmed Mtek Compatibility response byte
  * shape -- not merely that a RESP/NAK came back. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
-#include "mtek_bedge_dispatch.h"
-#include "mtek_bedge_opcode_map.h"
+#include "mtek_compat_dispatch.h"
+#include "mtek_compat_opcode_map.h"
 #include <string.h>
 
 typedef struct {
@@ -28,8 +28,8 @@ static const uint8_t probe_flood_empty[2] = {6, 0}; /* channel=6, count=0 (wildc
 MTK_TEST_MAIN_BEGIN
 
     mtk_test_bootstrap();
-    mtk_bedge_dispatch_ctx_t dctx;
-    mtek_bedge_dispatch_init(&dctx, MTK_TEST_BOOT_EPOCH);
+    mtk_compat_dispatch_ctx_t dctx;
+    mtek_compat_dispatch_init(&dctx, MTK_TEST_BOOT_EPOCH);
 
     /* ==== Part 1: every SUPPORTED opcode's own wire call reaches the
      * router for its documented (service_id, opcode) ==================== */
@@ -40,9 +40,9 @@ MTK_TEST_MAIN_BEGIN
         { 0x0005, 0x0000, 0x0006, NULL, 0 },                 /* RESET_INTENT */
         /* RC12 hardening round, item 5 (P1): TIME_SYNC_START (canonical
          * 0x0000/0x0008) removed from this SUPPORTED-opcode coverage table
-         * -- its bedge_c3 capability is now UNSUPPORTED (no SNTP client),
+         * -- its compat_c3 capability is now UNSUPPORTED (no SNTP client),
          * so it is no longer one of the "opcodes schemas.json marks
-         * capability_state.bedge_c3=SUPPORTED" this table enumerates. */
+         * capability_state.compat_c3=SUPPORTED" this table enumerates. */
         { 0x0103, 0x0001, 0x0003, NULL, 0 },                 /* AP_SCAN_START, chains into AP_SCAN_RESULTS_PAGE (0x0003) for real -- see handle_ap_scan_start */
         { 0x030E, 0x0001, 0x0006, z32, 8 },                  /* STA_SCAN_START */
         { 0x0104, 0x0001, 0x000A, z32, 2 },                  /* STA_CONNECT */
@@ -82,15 +82,15 @@ MTK_TEST_MAIN_BEGIN
     const unsigned n = sizeof(rows) / sizeof(rows[0]);
 
     for (unsigned i = 0; i < n; i++) {
-        mtk_bedge_header_t hdr = {0};
-        hdr.magic = MTK_BEDGE_MAGIC; hdr.version = MTK_BEDGE_VERSION;
-        hdr.msg_type = MTK_BEDGE_MSG_REQ; hdr.msg_id = rows[i].msg_id; hdr.payload_len = rows[i].payload_len;
-        mtk_bedge_header_t resp_hdr; uint8_t resp_payload[MTK_BEDGE_SINGLE_CELL_PAYLOAD_MAX]; uint16_t resp_len = 0;
+        mtk_compat_header_t hdr = {0};
+        hdr.magic = MTK_COMPAT_MAGIC; hdr.version = MTK_COMPAT_VERSION;
+        hdr.msg_type = MTK_COMPAT_MSG_REQ; hdr.msg_id = rows[i].msg_id; hdr.payload_len = rows[i].payload_len;
+        mtk_compat_header_t resp_hdr; uint8_t resp_payload[MTK_COMPAT_SINGLE_CELL_PAYLOAD_MAX]; uint16_t resp_len = 0;
         dctx.last_dispatched_service_id = 0xFFFF; dctx.last_dispatched_opcode = 0xFFFF;
-        mtek_bedge_dispatch_request(&dctx, &hdr, rows[i].payload, &resp_hdr, resp_payload, &resp_len);
+        mtek_compat_dispatch_request(&dctx, &hdr, rows[i].payload, &resp_hdr, resp_payload, &resp_len);
         MTK_CHECK_EQ(dctx.last_dispatched_service_id, rows[i].service_id);
         MTK_CHECK_EQ(dctx.last_dispatched_opcode, rows[i].opcode);
-        MTK_CHECK(resp_hdr.msg_type == MTK_BEDGE_MSG_RESP || resp_hdr.msg_type == MTK_BEDGE_MSG_NAK || resp_hdr.msg_type == MTK_BEDGE_MSG_FRAG);
+        MTK_CHECK(resp_hdr.msg_type == MTK_COMPAT_MSG_RESP || resp_hdr.msg_type == MTK_COMPAT_MSG_NAK || resp_hdr.msg_type == MTK_COMPAT_MSG_FRAG);
     }
 
     /* GATT_CONNECT: request decode is byte-exact-confirmed
@@ -103,22 +103,22 @@ MTK_TEST_MAIN_BEGIN
         g_fake_ble.gatt_connect_rc = 0;
         g_fake_ble.gatt_vendor_handle = 77;
         uint8_t gc_payload[7] = {0x10,0x20,0x30,0x40,0x50,0x60, 1 /* RANDOM_STATIC */};
-        mtk_bedge_header_t hdr = {0};
-        hdr.magic = MTK_BEDGE_MAGIC; hdr.version = MTK_BEDGE_VERSION;
-        hdr.msg_type = MTK_BEDGE_MSG_REQ; hdr.msg_id = 0x0409; hdr.payload_len = sizeof(gc_payload);
-        mtk_bedge_header_t resp_hdr; uint8_t resp_payload[MTK_BEDGE_SINGLE_CELL_PAYLOAD_MAX]; uint16_t resp_len = 0;
-        mtek_bedge_dispatch_request(&dctx, &hdr, gc_payload, &resp_hdr, resp_payload, &resp_len);
+        mtk_compat_header_t hdr = {0};
+        hdr.magic = MTK_COMPAT_MAGIC; hdr.version = MTK_COMPAT_VERSION;
+        hdr.msg_type = MTK_COMPAT_MSG_REQ; hdr.msg_id = 0x0409; hdr.payload_len = sizeof(gc_payload);
+        mtk_compat_header_t resp_hdr; uint8_t resp_payload[MTK_COMPAT_SINGLE_CELL_PAYLOAD_MAX]; uint16_t resp_len = 0;
+        mtek_compat_dispatch_request(&dctx, &hdr, gc_payload, &resp_hdr, resp_payload, &resp_len);
         MTK_CHECK_EQ(dctx.last_dispatched_service_id, 0x0003);
         MTK_CHECK_EQ(dctx.last_dispatched_opcode, 0x0001);
-        MTK_CHECK_EQ(resp_hdr.msg_type, MTK_BEDGE_MSG_RESP); /* real ACCEPTED, real HAL reached */
+        MTK_CHECK_EQ(resp_hdr.msg_type, MTK_COMPAT_MSG_RESP); /* real ACCEPTED, real HAL reached */
         MTK_CHECK(dctx.gatt_conn_token != 0); /* minted from the real GATT_CONNECT_COMPLETE event */
 
         /* GATT_DISCONNECT now addresses that real, minted connection. */
-        mtek_bedge_dispatch_request(&dctx, &(mtk_bedge_header_t){.magic=MTK_BEDGE_MAGIC,.version=MTK_BEDGE_VERSION,.msg_type=MTK_BEDGE_MSG_REQ,.msg_id=0x040A,.payload_len=0}, NULL, &resp_hdr, resp_payload, &resp_len);
-        MTK_CHECK_EQ(resp_hdr.msg_type, MTK_BEDGE_MSG_RESP);
+        mtek_compat_dispatch_request(&dctx, &(mtk_compat_header_t){.magic=MTK_COMPAT_MAGIC,.version=MTK_COMPAT_VERSION,.msg_type=MTK_COMPAT_MSG_REQ,.msg_id=0x040A,.payload_len=0}, NULL, &resp_hdr, resp_payload, &resp_len);
+        MTK_CHECK_EQ(resp_hdr.msg_type, MTK_COMPAT_MSG_RESP);
     }
 
-    /* AP_SCAN_START: real fake-HAL AP records translated into Bedge's
+    /* AP_SCAN_START: real fake-HAL AP records translated into Mtek Compatibility's
      * confirmed exact wire shape: [count:2] + per-AP
      * [bssid:6][rssi:1][channel:1][authmode:1][ssid_len:1][ssid]. */
     {
@@ -132,12 +132,12 @@ MTK_TEST_MAIN_BEGIN
         memcpy(g_fake_wifi.ap_results[1].ssid, "OpenNet", 7); g_fake_wifi.ap_results[1].ssid_len = 7;
         g_fake_wifi.ap_results[1].channel = 1; g_fake_wifi.ap_results[1].rssi = -70; g_fake_wifi.ap_results[1].authmode = 0;
 
-        mtk_bedge_header_t hdr = {0};
-        hdr.magic = MTK_BEDGE_MAGIC; hdr.version = MTK_BEDGE_VERSION;
-        hdr.msg_type = MTK_BEDGE_MSG_REQ; hdr.msg_id = 0x0103; hdr.payload_len = 0;
-        mtk_bedge_header_t resp_hdr; uint8_t resp_payload[MTK_BEDGE_SINGLE_CELL_PAYLOAD_MAX]; uint16_t resp_len = 0;
-        mtek_bedge_dispatch_request(&dctx, &hdr, NULL, &resp_hdr, resp_payload, &resp_len);
-        MTK_CHECK_EQ(resp_hdr.msg_type, MTK_BEDGE_MSG_RESP);
+        mtk_compat_header_t hdr = {0};
+        hdr.magic = MTK_COMPAT_MAGIC; hdr.version = MTK_COMPAT_VERSION;
+        hdr.msg_type = MTK_COMPAT_MSG_REQ; hdr.msg_id = 0x0103; hdr.payload_len = 0;
+        mtk_compat_header_t resp_hdr; uint8_t resp_payload[MTK_COMPAT_SINGLE_CELL_PAYLOAD_MAX]; uint16_t resp_len = 0;
+        mtek_compat_dispatch_request(&dctx, &hdr, NULL, &resp_hdr, resp_payload, &resp_len);
+        MTK_CHECK_EQ(resp_hdr.msg_type, MTK_COMPAT_MSG_RESP);
         MTK_CHECK_EQ(resp_len, 2 + (6+1+1+1+1+7)*2);
         uint16_t count = (uint16_t)(resp_payload[0] | (resp_payload[1] << 8));
         MTK_CHECK_EQ(count, 2);
@@ -150,7 +150,7 @@ MTK_TEST_MAIN_BEGIN
     }
 
     /* STA_SCAN_START/RESULTS_PAGE: real fake-HAL station records
-     * translated into Bedge's confirmed exact [count:2] +
+     * translated into Mtek Compatibility's confirmed exact [count:2] +
      * [mac:6][rssi:1] shape. */
     {
         mtk_fake_wifi_reset();
@@ -162,22 +162,22 @@ MTK_TEST_MAIN_BEGIN
         g_fake_wifi.sta_results[1].rssi = -60;
 
         uint8_t start_payload[8] = {0x01,0x02,0x03,0x04,0x05,0x06, 6, 1};
-        mtk_bedge_header_t start_hdr = {0};
-        start_hdr.magic = MTK_BEDGE_MAGIC; start_hdr.version = MTK_BEDGE_VERSION;
-        start_hdr.msg_type = MTK_BEDGE_MSG_REQ; start_hdr.msg_id = 0x030E; start_hdr.payload_len = 8;
-        mtk_bedge_header_t resp_hdr; uint8_t resp_payload[MTK_BEDGE_SINGLE_CELL_PAYLOAD_MAX]; uint16_t resp_len = 0;
-        mtek_bedge_dispatch_request(&dctx, &start_hdr, start_payload, &resp_hdr, resp_payload, &resp_len);
+        mtk_compat_header_t start_hdr = {0};
+        start_hdr.magic = MTK_COMPAT_MAGIC; start_hdr.version = MTK_COMPAT_VERSION;
+        start_hdr.msg_type = MTK_COMPAT_MSG_REQ; start_hdr.msg_id = 0x030E; start_hdr.payload_len = 8;
+        mtk_compat_header_t resp_hdr; uint8_t resp_payload[MTK_COMPAT_SINGLE_CELL_PAYLOAD_MAX]; uint16_t resp_len = 0;
+        mtek_compat_dispatch_request(&dctx, &start_hdr, start_payload, &resp_hdr, resp_payload, &resp_len);
         MTK_CHECK(dctx.sta_scan_has_generation);
         /* Real request decode proven: the fake HAL received the exact
-         * bssid/channel/duration this Bedge payload encoded. */
+         * bssid/channel/duration this Mtek Compatibility payload encoded. */
         MTK_CHECK(memcmp(g_fake_wifi.last_sta_scan_bssid.b, start_payload, 6) == 0);
         MTK_CHECK_EQ(g_fake_wifi.last_sta_scan_channel, 6);
 
-        mtk_bedge_header_t page_hdr = start_hdr; page_hdr.msg_id = 0x030F; page_hdr.payload_len = 0;
-        mtek_bedge_dispatch_request(&dctx, &page_hdr, NULL, &resp_hdr, resp_payload, &resp_len);
+        mtk_compat_header_t page_hdr = start_hdr; page_hdr.msg_id = 0x030F; page_hdr.payload_len = 0;
+        mtek_compat_dispatch_request(&dctx, &page_hdr, NULL, &resp_hdr, resp_payload, &resp_len);
         MTK_CHECK_EQ(dctx.last_dispatched_service_id, 0x0001);
         MTK_CHECK_EQ(dctx.last_dispatched_opcode, 0x0008);
-        MTK_CHECK_EQ(resp_hdr.msg_type, MTK_BEDGE_MSG_RESP);
+        MTK_CHECK_EQ(resp_hdr.msg_type, MTK_COMPAT_MSG_RESP);
         MTK_CHECK_EQ(resp_len, 2 + 7*2);
         uint16_t count = (uint16_t)(resp_payload[0] | (resp_payload[1] << 8));
         MTK_CHECK_EQ(count, 2);
@@ -217,50 +217,50 @@ MTK_TEST_MAIN_BEGIN
         g_fake_wifi.frame_count = 1;
 
         uint8_t hs_payload[9] = {1,2,3,4,5,6, 6, 0,0};
-        mtk_bedge_header_t hdr = {0};
-        hdr.magic = MTK_BEDGE_MAGIC; hdr.version = MTK_BEDGE_VERSION;
-        hdr.msg_type = MTK_BEDGE_MSG_REQ; hdr.msg_id = 0x0310; hdr.payload_len = sizeof(hs_payload);
-        mtk_bedge_header_t resp_hdr; uint8_t resp_payload[MTK_BEDGE_SINGLE_CELL_PAYLOAD_MAX]; uint16_t resp_len = 0;
-        mtek_bedge_dispatch_request(&dctx, &hdr, hs_payload, &resp_hdr, resp_payload, &resp_len);
-        MTK_CHECK_EQ(resp_hdr.msg_type, MTK_BEDGE_MSG_RESP);
+        mtk_compat_header_t hdr = {0};
+        hdr.magic = MTK_COMPAT_MAGIC; hdr.version = MTK_COMPAT_VERSION;
+        hdr.msg_type = MTK_COMPAT_MSG_REQ; hdr.msg_id = 0x0310; hdr.payload_len = sizeof(hs_payload);
+        mtk_compat_header_t resp_hdr; uint8_t resp_payload[MTK_COMPAT_SINGLE_CELL_PAYLOAD_MAX]; uint16_t resp_len = 0;
+        mtek_compat_dispatch_request(&dctx, &hdr, hs_payload, &resp_hdr, resp_payload, &resp_len);
+        MTK_CHECK_EQ(resp_hdr.msg_type, MTK_COMPAT_MSG_RESP);
         MTK_CHECK(dctx.handshake_token != 0);
         MTK_CHECK_EQ(g_fake_wifi.promisc_start_count, 1); /* real HAL reached */
 
-        mtk_bedge_header_t st_hdr = hdr; st_hdr.msg_id = 0x0311; st_hdr.payload_len = 0;
-        mtek_bedge_dispatch_request(&dctx, &st_hdr, NULL, &resp_hdr, resp_payload, &resp_len);
-        MTK_CHECK_EQ(resp_hdr.msg_type, MTK_BEDGE_MSG_RESP);
+        mtk_compat_header_t st_hdr = hdr; st_hdr.msg_id = 0x0311; st_hdr.payload_len = 0;
+        mtek_compat_dispatch_request(&dctx, &st_hdr, NULL, &resp_hdr, resp_payload, &resp_len);
+        MTK_CHECK_EQ(resp_hdr.msg_type, MTK_COMPAT_MSG_RESP);
         MTK_CHECK_EQ(resp_len, 5);
         uint32_t total_len = (uint32_t)resp_payload[1] | ((uint32_t)resp_payload[2] << 8) | ((uint32_t)resp_payload[3] << 16) | ((uint32_t)resp_payload[4] << 24);
         MTK_CHECK(total_len > 0); /* one captured frame's worth of bytes */
 
         uint8_t rd_hdr_payload[6] = {0,0,0,0, 255,1}; /* offset=0, max_len=511 */
-        mtk_bedge_header_t rd_hdr = hdr; rd_hdr.msg_id = 0x0312; rd_hdr.payload_len = sizeof(rd_hdr_payload);
-        mtek_bedge_dispatch_request(&dctx, &rd_hdr, rd_hdr_payload, &resp_hdr, resp_payload, &resp_len);
-        MTK_CHECK_EQ(resp_hdr.msg_type, MTK_BEDGE_MSG_RESP);
+        mtk_compat_header_t rd_hdr = hdr; rd_hdr.msg_id = 0x0312; rd_hdr.payload_len = sizeof(rd_hdr_payload);
+        mtek_compat_dispatch_request(&dctx, &rd_hdr, rd_hdr_payload, &resp_hdr, resp_payload, &resp_len);
+        MTK_CHECK_EQ(resp_hdr.msg_type, MTK_COMPAT_MSG_RESP);
         MTK_CHECK(resp_len >= 6);
         uint32_t rd_total = (uint32_t)resp_payload[0] | ((uint32_t)resp_payload[1] << 8) | ((uint32_t)resp_payload[2] << 16) | ((uint32_t)resp_payload[3] << 24);
         uint16_t data_len = (uint16_t)(resp_payload[4] | (resp_payload[5] << 8));
         MTK_CHECK_EQ(rd_total, total_len);
         MTK_CHECK_EQ(resp_len, 6 + data_len);
 
-        mtk_bedge_header_t sp_hdr = hdr; sp_hdr.msg_id = 0x0313; sp_hdr.payload_len = 0;
-        mtek_bedge_dispatch_request(&dctx, &sp_hdr, NULL, &resp_hdr, resp_payload, &resp_len);
-        MTK_CHECK_EQ(resp_hdr.msg_type, MTK_BEDGE_MSG_RESP);
+        mtk_compat_header_t sp_hdr = hdr; sp_hdr.msg_id = 0x0313; sp_hdr.payload_len = 0;
+        mtek_compat_dispatch_request(&dctx, &sp_hdr, NULL, &resp_hdr, resp_payload, &resp_len);
+        MTK_CHECK_EQ(resp_hdr.msg_type, MTK_COMPAT_MSG_RESP);
         MTK_CHECK_EQ(resp_len, 2);
         MTK_CHECK_EQ(dctx.handshake_token, 0); /* cleared on stop */
     }
 
     /* PING: real byte-for-byte echo of an arbitrary-length payload,
-     * matching Bedge's own confirmed "does not interpret the cookie at
+     * matching Mtek Compatibility's own confirmed "does not interpret the cookie at
      * all" behavior -- not a canonical nonce round trip. */
     {
         uint8_t cookie[6] = {0xDE,0xAD,0xBE,0xEF,0x01,0x02};
-        mtk_bedge_header_t hdr = {0};
-        hdr.magic = MTK_BEDGE_MAGIC; hdr.version = MTK_BEDGE_VERSION;
-        hdr.msg_type = MTK_BEDGE_MSG_REQ; hdr.msg_id = 0x0001; hdr.payload_len = sizeof(cookie);
-        mtk_bedge_header_t resp_hdr; uint8_t resp_payload[MTK_BEDGE_SINGLE_CELL_PAYLOAD_MAX]; uint16_t resp_len = 0;
-        mtek_bedge_dispatch_request(&dctx, &hdr, cookie, &resp_hdr, resp_payload, &resp_len);
-        MTK_CHECK_EQ(resp_hdr.msg_type, MTK_BEDGE_MSG_RESP);
+        mtk_compat_header_t hdr = {0};
+        hdr.magic = MTK_COMPAT_MAGIC; hdr.version = MTK_COMPAT_VERSION;
+        hdr.msg_type = MTK_COMPAT_MSG_REQ; hdr.msg_id = 0x0001; hdr.payload_len = sizeof(cookie);
+        mtk_compat_header_t resp_hdr; uint8_t resp_payload[MTK_COMPAT_SINGLE_CELL_PAYLOAD_MAX]; uint16_t resp_len = 0;
+        mtek_compat_dispatch_request(&dctx, &hdr, cookie, &resp_hdr, resp_payload, &resp_len);
+        MTK_CHECK_EQ(resp_hdr.msg_type, MTK_COMPAT_MSG_RESP);
         MTK_CHECK_EQ(resp_len, sizeof(cookie));
         MTK_CHECK(memcmp(resp_payload, cookie, sizeof(cookie)) == 0);
     }
@@ -269,12 +269,12 @@ MTK_TEST_MAIN_BEGIN
      * translated into the confirmed exact m1esp_devstatus_t/
      * m1esp_fw_version_t shapes. */
     {
-        mtk_bedge_header_t hdr = {0};
-        hdr.magic = MTK_BEDGE_MAGIC; hdr.version = MTK_BEDGE_VERSION;
-        hdr.msg_type = MTK_BEDGE_MSG_REQ; hdr.msg_id = 0x0003; hdr.payload_len = 0; /* GET_FW_VERSION */
-        mtk_bedge_header_t resp_hdr; uint8_t resp_payload[MTK_BEDGE_SINGLE_CELL_PAYLOAD_MAX]; uint16_t resp_len = 0;
-        mtek_bedge_dispatch_request(&dctx, &hdr, NULL, &resp_hdr, resp_payload, &resp_len);
-        MTK_CHECK_EQ(resp_hdr.msg_type, MTK_BEDGE_MSG_RESP);
+        mtk_compat_header_t hdr = {0};
+        hdr.magic = MTK_COMPAT_MAGIC; hdr.version = MTK_COMPAT_VERSION;
+        hdr.msg_type = MTK_COMPAT_MSG_REQ; hdr.msg_id = 0x0003; hdr.payload_len = 0; /* GET_FW_VERSION */
+        mtk_compat_header_t resp_hdr; uint8_t resp_payload[MTK_COMPAT_SINGLE_CELL_PAYLOAD_MAX]; uint16_t resp_len = 0;
+        mtek_compat_dispatch_request(&dctx, &hdr, NULL, &resp_hdr, resp_payload, &resp_len);
+        MTK_CHECK_EQ(resp_hdr.msg_type, MTK_COMPAT_MSG_RESP);
         MTK_CHECK_EQ(resp_len, 3 + 16);
         MTK_CHECK_EQ(resp_payload[0], 1); /* product_major, from mtk_test_bootstrap's build_info {1,0,0,...} */
         MTK_CHECK_EQ(resp_payload[3 + 4], 0); /* git_hash null terminator within bound, build_id="test" -> 4 bytes then NUL */
@@ -282,21 +282,21 @@ MTK_TEST_MAIN_BEGIN
     }
 
     /* The 15 non-SUPPORTED opcodes: still dispatched (through the
-     * capability gate), never a hand-rolled Bedge-layer NAK. */
+     * capability gate), never a hand-rolled Mtek Compatibility-layer NAK. */
     {
         const uint16_t non_supported_msg_ids[] = {
             0x0100, 0x0101, 0x0004, 0x0405, 0x0406, 0x0407, 0x0408, 0x040B, 0x040C, 0x040D, 0x040E, 0x0411, 0x0412, 0x040F, 0x0410
         };
         for (unsigned i = 0; i < sizeof(non_supported_msg_ids)/sizeof(non_supported_msg_ids[0]); i++) {
-            mtk_bedge_header_t hdr = {0};
-            hdr.magic = MTK_BEDGE_MAGIC; hdr.version = MTK_BEDGE_VERSION;
-            hdr.msg_type = MTK_BEDGE_MSG_REQ; hdr.msg_id = non_supported_msg_ids[i]; hdr.payload_len = 0;
-            mtk_bedge_header_t resp_hdr; uint8_t resp_payload[MTK_BEDGE_SINGLE_CELL_PAYLOAD_MAX]; uint16_t resp_len = 0;
+            mtk_compat_header_t hdr = {0};
+            hdr.magic = MTK_COMPAT_MAGIC; hdr.version = MTK_COMPAT_VERSION;
+            hdr.msg_type = MTK_COMPAT_MSG_REQ; hdr.msg_id = non_supported_msg_ids[i]; hdr.payload_len = 0;
+            mtk_compat_header_t resp_hdr; uint8_t resp_payload[MTK_COMPAT_SINGLE_CELL_PAYLOAD_MAX]; uint16_t resp_len = 0;
             dctx.last_dispatched_service_id = 0xFFFF; dctx.last_dispatched_opcode = 0xFFFF;
-            mtek_bedge_dispatch_request(&dctx, &hdr, NULL, &resp_hdr, resp_payload, &resp_len);
+            mtek_compat_dispatch_request(&dctx, &hdr, NULL, &resp_hdr, resp_payload, &resp_len);
             MTK_CHECK(dctx.last_dispatched_service_id != 0xFFFF); /* really reached the router's capability gate */
-            MTK_CHECK_EQ(resp_hdr.msg_type, MTK_BEDGE_MSG_NAK);
-            MTK_CHECK_EQ(resp_payload[0], MTK_BEDGE_STATUS_ERR_UNSUPPORTED);
+            MTK_CHECK_EQ(resp_hdr.msg_type, MTK_COMPAT_MSG_NAK);
+            MTK_CHECK_EQ(resp_payload[0], MTK_COMPAT_STATUS_ERR_UNSUPPORTED);
         }
     }
 

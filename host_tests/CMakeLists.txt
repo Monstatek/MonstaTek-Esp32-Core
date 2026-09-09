@@ -45,10 +45,10 @@ add_library(mtek_host_lib STATIC
     ${ROOT}/components/mtek_transport_spi_native/mtek_spi_native_frame.c
     ${ROOT}/components/mtek_transport_spi_native/mtek_spi_native_dispatch.c
     ${ROOT}/components/mtek_transport_uart/mtek_uart_adapter.c
-    ${ROOT}/components/mtek_transport_spi_bedge/mtek_bedge_opcode_map.c
-    ${ROOT}/components/mtek_transport_spi_bedge/mtek_bedge_frame.c
-    ${ROOT}/components/mtek_transport_spi_bedge/mtek_bedge_dispatch.c
-    ${ROOT}/components/mtek_transport_spi_bedge/generated/mtek_bedge_opcode_table.c
+    ${ROOT}/components/mtek_transport_spi_compat/mtek_compat_opcode_map.c
+    ${ROOT}/components/mtek_transport_spi_compat/mtek_compat_frame.c
+    ${ROOT}/components/mtek_transport_spi_compat/mtek_compat_dispatch.c
+    ${ROOT}/components/mtek_transport_spi_compat/generated/mtek_compat_opcode_table.c
     ${ROOT}/components/mtek_transport_select/mtek_transport_select.c
     ${ROOT}/components/mtek_router/mtek_router.c
     ${ROOT}/components/mtek_wifi_service/mtek_wifi_logic.c
@@ -66,7 +66,7 @@ target_include_directories(mtek_host_lib PUBLIC
     ${ROOT}/components/mtek_hal_common/include
     ${ROOT}/components/mtek_transport_spi_native/include
     ${ROOT}/components/mtek_transport_uart/include
-    ${ROOT}/components/mtek_transport_spi_bedge/include
+    ${ROOT}/components/mtek_transport_spi_compat/include
     ${ROOT}/components/mtek_transport_select/include
     ${ROOT}/components/mtek_wifi_service/include
     ${ROOT}/components/mtek_ble_service/include
@@ -90,6 +90,10 @@ function(mtk_add_test name)
 endfunction()
 
 mtk_add_test(test_schema_codec)
+mtk_add_test(test_architecture_contracts)
+mtk_add_test(test_spi_runtime_reliability)
+target_include_directories(test_spi_runtime_reliability BEFORE PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/support/spi_runtime_stubs)
 mtk_add_test(test_opcode_registry)
 mtk_add_test(test_arbiter)
 mtk_add_test(test_spi_native_transport)
@@ -101,7 +105,7 @@ mtk_add_test(test_min_one_tick_policy)
 mtk_add_test(test_ble_op_lifecycle)
 mtk_add_test(test_transport_counters_concurrency)
 mtk_add_test(test_op_family_validation)
-mtk_add_test(test_bedge_deferred_scans_gatt)
+mtk_add_test(test_compat_deferred_scans_gatt)
 mtk_add_test(test_uart_ble_detail_and_discovery)
 mtk_add_test(test_wifi_prior_state_restore)
 mtk_add_test(test_uart_boot_banner_help)
@@ -134,9 +138,9 @@ mtk_add_test(test_release_artifact)
 # working directory was exactly two levels under the project root.
 get_filename_component(MTK_PROJECT_ROOT_ABS "${CMAKE_SOURCE_DIR}/.." ABSOLUTE)
 target_compile_definitions(test_release_artifact PRIVATE MTK_PROJECT_ROOT="${MTK_PROJECT_ROOT_ABS}")
-mtk_add_test(test_bedge_framing)
-mtk_add_test(test_bedge_coverage)
-mtk_add_test(test_bedge_fragmentation)
+mtk_add_test(test_compat_framing)
+mtk_add_test(test_compat_coverage)
+mtk_add_test(test_compat_fragmentation)
 mtk_add_test(test_spi_native_dispatch)
 mtk_add_test(test_transport_select)
 mtk_add_test(test_ble_op_generation)
@@ -150,13 +154,13 @@ add_executable(test_async_queue test_async_queue.c)
 target_link_libraries(test_async_queue PRIVATE mtek_host_lib Threads::Threads)
 add_test(NAME test_async_queue COMMAND test_async_queue)
 
-add_executable(test_bedge_async_deauth test_bedge_async_deauth.c)
-target_link_libraries(test_bedge_async_deauth PRIVATE mtek_host_lib Threads::Threads)
-add_test(NAME test_bedge_async_deauth COMMAND test_bedge_async_deauth)
+add_executable(test_compat_async_deauth test_compat_async_deauth.c)
+target_link_libraries(test_compat_async_deauth PRIVATE mtek_host_lib Threads::Threads)
+add_test(NAME test_compat_async_deauth COMMAND test_compat_async_deauth)
 
-add_executable(test_bedge_async_multi test_bedge_async_multi.c)
-target_link_libraries(test_bedge_async_multi PRIVATE mtek_host_lib Threads::Threads)
-add_test(NAME test_bedge_async_multi COMMAND test_bedge_async_multi)
+add_executable(test_compat_async_multi test_compat_async_multi.c)
+target_link_libraries(test_compat_async_multi PRIVATE mtek_host_lib Threads::Threads)
+add_test(NAME test_compat_async_multi COMMAND test_compat_async_multi)
 
 add_executable(test_spi_native_async test_spi_native_async.c)
 target_link_libraries(test_spi_native_async PRIVATE mtek_host_lib Threads::Threads)
@@ -234,7 +238,7 @@ target_link_libraries(test_transport_claim PRIVATE mtek_host_lib Threads::Thread
 target_link_libraries(test_uart_pre_radio_readiness PRIVATE mtek_host_lib Threads::Threads)
 target_link_libraries(test_ble_op_lifecycle PRIVATE mtek_host_lib Threads::Threads)
 target_link_libraries(test_transport_counters_concurrency PRIVATE mtek_host_lib Threads::Threads)
-target_link_libraries(test_bedge_deferred_scans_gatt PRIVATE mtek_host_lib Threads::Threads)
+target_link_libraries(test_compat_deferred_scans_gatt PRIVATE mtek_host_lib Threads::Threads)
 target_link_libraries(test_sta_scan_lifecycle PRIVATE mtek_host_lib Threads::Threads)
 target_link_libraries(test_sta_scan_rc10 PRIVATE mtek_host_lib Threads::Threads)
 target_link_libraries(test_ap_scan_rc11 PRIVATE mtek_host_lib Threads::Threads)

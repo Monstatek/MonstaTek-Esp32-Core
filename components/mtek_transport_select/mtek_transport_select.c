@@ -1,7 +1,7 @@
 /* Clean-room implementation from MonstaTek contract. */
 #include "mtek_transport_select.h"
 #include "mtek_spi_native_frame.h"
-#include "mtek_bedge_frame.h"
+#include "mtek_compat_frame.h"
 #include <stddef.h>
 
 mtk_transport_lock_t mtk_transport_try_recognize_discovery(const uint8_t *buf, size_t len) {
@@ -14,14 +14,14 @@ mtk_transport_lock_t mtk_transport_try_recognize_discovery(const uint8_t *buf, s
         return MTK_TRANSPORT_NATIVE_SPI;
     }
 
-    mtk_bedge_header_t bhdr;
+    mtk_compat_header_t bhdr;
     const uint8_t *bpayload;
-    /* "A valid Bedge/C3 frame locks that profile" -- any well-formed
+    /* "A valid Mtek Compatibility/C3 frame locks that profile" -- any well-formed
      * frame (the pinned reference always sends a well-formed IDLE frame
      * even when idle, per 001-profile-bootstrap-feasibility.md Sec 1.2,
      * so IDLE itself is a legitimate, expected lock trigger). */
-    if (mtk_bedge_parse_bounded(buf, len, &bhdr, &bpayload) == MTK_BEDGE_PARSE_OK) {
-        return MTK_TRANSPORT_BEDGE_C3_SPI;
+    if (mtk_compat_parse_bounded(buf, len, &bhdr, &bpayload) == MTK_COMPAT_PARSE_OK) {
+        return MTK_TRANSPORT_COMPAT_C3_SPI;
     }
 
     return MTK_TRANSPORT_AUTO;

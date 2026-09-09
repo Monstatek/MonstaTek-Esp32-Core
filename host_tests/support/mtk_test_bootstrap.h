@@ -2,6 +2,7 @@
  * + arbiter a target boot would, against the deterministic fake HALs. */
 #pragma once
 #include <string.h>
+#include <stdlib.h>
 #include "mtek_core.h"
 #include "mtek_arbiter.h"
 #include "mtek_router.h"
@@ -36,15 +37,16 @@ static inline void mtk_test_bootstrap(void) {
     mtek_wifi_set_hal(&g_fake_wifi_hal);
     mtek_ble_set_hal(&g_fake_ble_hal);
 
-    mtek_system_service_register();
-    mtek_wifi_service_register();
-    mtek_ble_service_register();
-    mtek_capture_service_register();
+    if (mtek_system_service_register() != MTK_REGISTER_OK ||
+        mtek_wifi_service_register() != MTK_REGISTER_OK ||
+        mtek_ble_service_register() != MTK_REGISTER_OK ||
+        mtek_capture_service_register() != MTK_REGISTER_OK) abort();
 }
 
 static inline mtk_request_ctx_t mtk_test_ctx(mtk_fake_sink_state_t *sink_state, uint32_t correlation) {
     mtk_request_ctx_t ctx;
     ctx.profile = MTK_PROFILE_HOST_ADAPTER;
+    ctx.dispatch_mode = MTK_DISPATCH_DEFER_ALLOWED;
     ctx.correlation = correlation;
     ctx.boot_epoch = MTK_TEST_BOOT_EPOCH;
     ctx.session_generation = 0; /* not session-scoped -- never fenced by mtek_router.c's own async_trampoline */

@@ -1,7 +1,7 @@
 /* Real cross-thread proof that native SPI v1's generic ACCEPTED_ASYNC
  * dispatch path (mtek_spi_native_dispatch.c's dispatch_complete_message)
  * is genuinely async-safe, using a real pthread-based mtk_router async
- * runner -- mirroring test_bedge_async_deauth.c/test_bedge_async_multi.c
+ * runner -- mirroring test_compat_async_deauth.c/test_compat_async_multi.c
  * for the other boot-exclusive adapter. Covers: lifetime/ownership (the
  * dctx-owned event_queue survives past the dispatching call's return),
  * ordering (two sequential deferred operations complete in issue order),

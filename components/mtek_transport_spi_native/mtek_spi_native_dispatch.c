@@ -1,7 +1,7 @@
 /* Clean-room implementation from MonstaTek contract (SPI_PROTOCOL_V1.md).
  * Native SPI v1 is transport-neutral by design (its header carries
  * service/opcode/status directly, and its payload is exactly the
- * canonical wire encoding) -- so unlike the Bedge/C3 translation layer,
+ * canonical wire encoding) -- so unlike the Mtek Compatibility/C3 translation layer,
  * this dispatch is a near-direct passthrough into mtk_router_dispatch,
  * with no per-opcode wire-shape guessing needed at all. Multi-cell
  * requests/responses are handled by real reassembly/fragmentation
@@ -9,6 +9,7 @@
  * mtk_spi_native_outbound_t), not a single-cell-only stub. */
 #include "mtek_spi_native_dispatch.h"
 #include "mtek_router.h"
+#include "mtek_async_sink.h"
 #include "mtek_core.h"
 #include "mtek_codec_api.h"
 #include "mtek_capture_service.h"
@@ -16,12 +17,12 @@
 #include "mtek_ble_service.h"
 #include <string.h>
 
-/* Placeholder reassembly-abandonment threshold (in caller-supplied
- * now_seq units, e.g. physical transactions) -- real tuning needs
- * hardware timing evidence this session does not have; documented as
- * such (docs/PROVENANCE.md), not claimed as a confirmed protocol
- * constant. */
-#define MTK_SPI_NATIVE_REASM_TIMEOUT_SEQ 2000
+/* Called only by the dispatcher-owning task, including while the SPI master
+ * is silent. This expires inbound staging, never an armed DMA transaction. */
+void mtek_spi_native_dispatch_tick(mtk_spi_native_dispatch_ctx_t *dctx, uint32_t now_ms) {
+    if (mtk_spi_native_reassembly_timed_out(&dctx->inbound, now_ms, MTK_SPI_NATIVE_REASM_TIMEOUT_MS))
+        mtk_spi_native_reassembly_reset(&dctx->inbound);
+}
 
 /* Non-queue-backed capture: used only for SYNCHRONOUS-lifecycle opcodes,
  * which the router never defers regardless of whether an async runner
@@ -32,19 +33,30 @@
  * measured stack-overflow defect on target). Large enough
  * (MTK_SPI_NATIVE_MAX_MESSAGE) to carry any response up to the reassembly
  * ceiling (e.g. AP_SCAN_RESULTS_PAGE's 50-record page). */
-static void cap_resp(void *user, uint32_t correlation, uint8_t status, const void *body, const mtk_struct_desc_t *desc) {
+static mtk_emit_result_t cap_resp(void *user, uint32_t correlation, uint8_t status, const void *body, const mtk_struct_desc_t *desc) {
     (void)correlation;
     mtk_spi_native_sync_capture_t *c = (mtk_spi_native_sync_capture_t *)user;
     c->status = status;
     c->body_len = 0;
-    if (body && desc) mtk_encode(desc, body, c->body, sizeof(c->body), &c->body_len);
+    if (body && desc && mtk_encode(desc, body, c->body, sizeof(c->body), &c->body_len) != MTK_CODEC_OK) {
+        c->status = MTK_STATUS_INTERNAL_ERROR;
+        c->body_len = 0;
+        return MTK_EMIT_ENCODING_FAILED;
+    }
+    return MTK_EMIT_OK;
 }
-static void cap_resp_raw(void *user, uint32_t correlation, uint8_t status, const uint8_t *body, size_t len) {
+static mtk_emit_result_t cap_resp_raw(void *user, uint32_t correlation, uint8_t status, const uint8_t *body, size_t len) {
     (void)correlation;
     mtk_spi_native_sync_capture_t *c = (mtk_spi_native_sync_capture_t *)user;
     c->status = status;
-    c->body_len = len > sizeof(c->body) ? sizeof(c->body) : len;
+    c->body_len = 0;
+    if (len > sizeof(c->body)) {
+        c->status = MTK_STATUS_OVERFLOW;
+        return MTK_EMIT_CAPACITY_FAILED;
+    }
+    c->body_len = len;
     if (body) memcpy(c->body, body, c->body_len);
+    return MTK_EMIT_OK;
 }
 
 /* Queue-backed sink: used only for ACCEPTED_ASYNC-lifecycle opcodes,
@@ -56,23 +68,6 @@ static void cap_resp_raw(void *user, uint32_t correlation, uint8_t status, const
  * just `{operation_token}` (4 bytes), comfortably under the async
  * queue's own 512-byte frame body bound -- see
  * dispatch_complete_message's own doc comment. */
-static void qcap_resp(void *user, uint32_t correlation, uint8_t status, const void *body, const mtk_struct_desc_t *desc) {
-    mtk_async_frame_t f; memset(&f, 0, sizeof(f));
-    f.kind = MTK_ASYNC_FRAME_RESPONSE;
-    f.correlation = correlation;
-    f.seq_or_status = status;
-    if (body && desc) mtk_encode(desc, body, f.body, sizeof(f.body), &f.body_len);
-    mtk_async_queue_push((mtk_async_queue_t *)user, &f);
-}
-static void qcap_resp_raw(void *user, uint32_t correlation, uint8_t status, const uint8_t *body, size_t len) {
-    mtk_async_frame_t f; memset(&f, 0, sizeof(f));
-    f.kind = MTK_ASYNC_FRAME_RESPONSE;
-    f.correlation = correlation;
-    f.seq_or_status = status;
-    f.body_len = len > sizeof(f.body) ? sizeof(f.body) : len;
-    if (body) memcpy(f.body, body, f.body_len);
-    mtk_async_queue_push((mtk_async_queue_t *)user, &f);
-}
 /* SYNCHRONOUS-lifecycle opcodes never emit an event/stream mid-handler in
  * this codebase (only ACCEPTED_ASYNC operations have a session that
  * outlives its own accept response) -- these two are wired to the
@@ -80,13 +75,13 @@ static void qcap_resp_raw(void *user, uint32_t correlation, uint8_t status, cons
  * enforced structurally (a stray call would be a silent no-op here,
  * never a crash), not because SYNCHRONOUS handlers are expected to use
  * them. */
-static void cap_event(void *user, uint32_t c, const char *n, const void *b, const mtk_struct_desc_t *d) { (void)user; (void)c; (void)n; (void)b; (void)d; }
-static void cap_stream(void *user, uint32_t t, uint32_t s, const uint8_t *c, size_t l) { (void)user; (void)t; (void)s; (void)c; (void)l; }
+static mtk_emit_result_t cap_event(void *user, uint32_t c, const char *n, const void *b, const mtk_struct_desc_t *d) { (void)user; (void)c; (void)n; (void)b; (void)d; return MTK_EMIT_DROPPED; }
+static mtk_emit_result_t cap_stream(void *user, uint32_t t, uint32_t s, const uint8_t *c, size_t l) { (void)user; (void)t; (void)s; (void)c; (void)l; return MTK_EMIT_DROPPED; }
 
 /* RC5 independent audit P0 "Native events and streams are not
  * implemented": real relay for ACCEPTED_ASYNC operations' EVENT/STREAM
- * traffic onto the native wire, queue-backed exactly like qcap_resp
- * above (mtek_router.h's SAFETY CONTRACT -- `user` is the persistent
+ * traffic onto the native wire, queue-backed through mtk_async_sink_resp
+ * (mtek_router.h's SAFETY CONTRACT -- `user` is the persistent
  * dctx->event_queue). Delivered by try_deliver_frame below as their own
  * EVENT/STREAM-class cells whenever nothing else is more urgent.
  *
@@ -109,23 +104,6 @@ static void cap_stream(void *user, uint32_t t, uint32_t s, const uint8_t *c, siz
  * capture service already pre-formats its own chunk header/payload shape
  * -- see mtek_capture_logic.c -- so nothing further wraps STREAM's own
  * body). */
-static void qcap_event(void *user, uint32_t correlation_or_zero, const char *name, const void *body, const mtk_struct_desc_t *desc) {
-    mtk_async_frame_t f; memset(&f, 0, sizeof(f));
-    f.kind = MTK_ASYNC_FRAME_EVENT;
-    f.correlation = correlation_or_zero;
-    if (name) { size_t n = strlen(name); if (n >= sizeof(f.event_name)) n = sizeof(f.event_name) - 1; memcpy(f.event_name, name, n); }
-    if (body && desc) mtk_encode(desc, body, f.body, sizeof(f.body), &f.body_len);
-    mtk_async_queue_push((mtk_async_queue_t *)user, &f);
-}
-static void qcap_stream(void *user, uint32_t session_token, uint32_t seq, const uint8_t *chunk, size_t len) {
-    mtk_async_frame_t f; memset(&f, 0, sizeof(f));
-    f.kind = MTK_ASYNC_FRAME_STREAM;
-    f.correlation = session_token;
-    f.seq_or_status = seq;
-    f.body_len = len > sizeof(f.body) ? sizeof(f.body) : len;
-    if (chunk) memcpy(f.body, chunk, f.body_len);
-    mtk_async_queue_push((mtk_async_queue_t *)user, &f);
-}
 
 /* Builds the EVENT/STREAM payload described above into `out` (capacity
  * >= 4 + 1 + MTK_ASYNC_EVENT_NAME_MAX + MTK_ASYNC_FRAME_MAX_BODY) and
@@ -275,7 +253,7 @@ static int content_matches(uint16_t service_a, uint16_t opcode_a, uint16_t len_a
  * SYNCHRONOUS lifecycle has a bare-status (NULL resp_desc, 0-byte)
  * response, and every ACCEPTED_ASYNC accept response is just
  * {operation_token} (4 bytes) -- comfortably under
- * MTK_SPI_NATIVE_MAX_PAYLOAD (984), same reasoning as qcap_resp's own doc
+ * MTK_SPI_NATIVE_MAX_PAYLOAD (984), same reasoning as the queue-backed sink's doc
  * comment. Guarded here anyway rather than assumed: silently caching a
  * TRUNCATED response would be worse than not caching at all (a later
  * genuine retry would be answered with corrupted data instead of a
@@ -524,6 +502,7 @@ static void dispatch_complete_message(mtk_spi_native_dispatch_ctx_t *dctx, uint1
         dctx->sync_capture.body_len = 0;
         mtk_request_ctx_t ctx;
         ctx.profile = MTK_PROFILE_NATIVE_SPI;
+        ctx.dispatch_mode = MTK_DISPATCH_INLINE;
         ctx.correlation = request_id;
         /* Release-tooling-round P0 correction (independent audit,
          * "Native SPI confuses the STM32 and ESP boot epochs"): the
@@ -594,6 +573,7 @@ static void dispatch_complete_message(mtk_spi_native_dispatch_ctx_t *dctx, uint1
 
     mtk_request_ctx_t ctx;
     ctx.profile = MTK_PROFILE_NATIVE_SPI;
+    ctx.dispatch_mode = MTK_DISPATCH_DEFER_ALLOWED;
     ctx.correlation = request_id;
     /* See the sync-dispatch path's identical assignment above for the full
      * rationale (release-tooling-round P0 correction, independent
@@ -612,10 +592,10 @@ static void dispatch_complete_message(mtk_spi_native_dispatch_ctx_t *dctx, uint1
     ctx.session_generation = mtk_core_session_generation();
     ctx.authorization_level = 0;
     ctx.sink.user = &dctx->event_queue;
-    ctx.sink.emit_response = qcap_resp;
-    ctx.sink.emit_response_raw = qcap_resp_raw;
-    ctx.sink.emit_event = qcap_event;
-    ctx.sink.emit_stream = qcap_stream;
+    ctx.sink.emit_response = mtk_async_sink_resp;
+    ctx.sink.emit_response_raw = mtk_async_sink_resp_raw;
+    ctx.sink.emit_event = mtk_async_sink_event;
+    ctx.sink.emit_stream = mtk_async_sink_stream;
     mtk_router_dispatch(&ctx, service, opcode, payload, payload_len);
 
     /* Whatever is now at the front of the queue -- this request's own
@@ -636,7 +616,8 @@ static void dispatch_complete_message(mtk_spi_native_dispatch_ctx_t *dctx, uint1
 }
 
 void mtek_spi_native_dispatch_feed_cell(mtk_spi_native_dispatch_ctx_t *dctx, const mtk_spi_native_header_t *hdr, const uint8_t *payload,
-                                         uint32_t now_seq, mtk_spi_native_header_t *resp_hdr, uint8_t *resp_payload, uint16_t *resp_payload_len) {
+                                         uint32_t now_ms, mtk_spi_native_header_t *resp_hdr, uint8_t *resp_payload, uint16_t *resp_payload_len) {
+    mtek_spi_native_dispatch_tick(dctx, now_ms);
     /* RC7 independent audit item 3 "packet-sequence diagnostics": every
      * cell that reaches this function (every class this dctx ever sees --
      * the real caller's own IDLE cells are intercepted before feed_cell,
@@ -801,11 +782,7 @@ void mtek_spi_native_dispatch_feed_cell(mtk_spi_native_dispatch_ctx_t *dctx, con
         return;
     }
 
-    if (dctx->inbound.active && mtk_spi_native_reassembly_timed_out(&dctx->inbound, now_seq, MTK_SPI_NATIVE_REASM_TIMEOUT_SEQ)) {
-        mtk_spi_native_reassembly_reset(&dctx->inbound);
-    }
-
-    mtk_spi_reasm_result_t rr = mtk_spi_native_reassembly_feed(&dctx->inbound, hdr, payload, now_seq);
+    mtk_spi_reasm_result_t rr = mtk_spi_native_reassembly_feed(&dctx->inbound, hdr, payload, now_ms);
     switch (rr) {
         case MTK_SPI_REASM_IN_PROGRESS:
             /* Still accumulating a multi-cell request: acknowledge this

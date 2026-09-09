@@ -6,7 +6,7 @@
 #include "mtk_test.h"
 #include "mtek_transport_select.h"
 #include "mtek_spi_native_frame.h"
-#include "mtek_bedge_frame.h"
+#include "mtek_compat_frame.h"
 #include <string.h>
 
 static void build_native_hello(uint8_t out[512]) {
@@ -20,20 +20,20 @@ static void build_native_hello(uint8_t out[512]) {
     memcpy(out, cell, 512); /* discovery transaction is 512 bytes */
 }
 
-static void build_bedge_idle(uint8_t out[512]) {
-    mtk_bedge_header_t h = {0};
-    h.magic = MTK_BEDGE_MAGIC; h.version = MTK_BEDGE_VERSION; h.msg_type = MTK_BEDGE_MSG_IDLE;
-    mtk_bedge_build_cell(&h, NULL, out);
+static void build_compat_idle(uint8_t out[512]) {
+    mtk_compat_header_t h = {0};
+    h.magic = MTK_COMPAT_MAGIC; h.version = MTK_COMPAT_VERSION; h.msg_type = MTK_COMPAT_MSG_IDLE;
+    mtk_compat_build_cell(&h, NULL, out);
 }
 
 MTK_TEST_MAIN_BEGIN
 
-    uint8_t native_buf[512], bedge_buf[512];
+    uint8_t native_buf[512], compat_buf[512];
     build_native_hello(native_buf);
-    build_bedge_idle(bedge_buf);
+    build_compat_idle(compat_buf);
 
     MTK_CHECK_EQ(mtk_transport_try_recognize_discovery(native_buf, 512), MTK_TRANSPORT_NATIVE_SPI);
-    MTK_CHECK_EQ(mtk_transport_try_recognize_discovery(bedge_buf, 512), MTK_TRANSPORT_BEDGE_C3_SPI);
+    MTK_CHECK_EQ(mtk_transport_try_recognize_discovery(compat_buf, 512), MTK_TRANSPORT_COMPAT_C3_SPI);
 
     /* All-zero / all-0xFF neutral input locks nothing. */
     uint8_t zeros[512]; memset(zeros, 0, sizeof(zeros));
@@ -43,7 +43,7 @@ MTK_TEST_MAIN_BEGIN
 
     /* Truncated buffers lock nothing. */
     MTK_CHECK_EQ(mtk_transport_try_recognize_discovery(native_buf, 20), MTK_TRANSPORT_AUTO);
-    MTK_CHECK_EQ(mtk_transport_try_recognize_discovery(bedge_buf, 5), MTK_TRANSPORT_AUTO);
+    MTK_CHECK_EQ(mtk_transport_try_recognize_discovery(compat_buf, 5), MTK_TRANSPORT_AUTO);
 
     /* Exhaustive 2-byte magic-region sweep: holding each real frame fixed
      * except its first two bytes, no combination ever locks the *other*
@@ -53,9 +53,9 @@ MTK_TEST_MAIN_BEGIN
         uint8_t probe[512];
         memcpy(probe, native_buf, 512);
         probe[0] = (uint8_t)v; probe[1] = (uint8_t)(v >> 8);
-        if (mtk_transport_try_recognize_discovery(probe, 512) == MTK_TRANSPORT_BEDGE_C3_SPI) false_accepts++;
+        if (mtk_transport_try_recognize_discovery(probe, 512) == MTK_TRANSPORT_COMPAT_C3_SPI) false_accepts++;
 
-        memcpy(probe, bedge_buf, 512);
+        memcpy(probe, compat_buf, 512);
         probe[0] = (uint8_t)v; probe[1] = (uint8_t)(v >> 8);
         if (mtk_transport_try_recognize_discovery(probe, 512) == MTK_TRANSPORT_NATIVE_SPI) false_accepts++;
     }

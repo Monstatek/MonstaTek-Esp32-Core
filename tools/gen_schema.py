@@ -25,7 +25,6 @@ PRIM_FIELD_ENUM = {
     "i8": "MTK_F_I8", "i16": "MTK_F_I16", "i32": "MTK_F_I32", "i64": "MTK_F_I64",
     "bool": "MTK_F_BOOL",
 }
-PRIM_SIZE = {"u8": 1, "u16": 2, "u32": 4, "u64": 8, "i8": 1, "i16": 2, "i32": 4, "i64": 8, "bool": 1}
 
 
 class TypePool:
@@ -129,7 +128,6 @@ def elem_c_type(pool, elem, hint):
         return name, "struct"
     if t == "bytes":
         # inline anonymous bytes-wrapper element type
-        key = f"bytes{elem['max']}"
         name = f"mtk_bytes{elem['max']}_t"
         if name not in pool.named:
             pool.named[name] = {"fields": None, "kind": "bytes_typedef", "max": elem["max"]}
@@ -150,26 +148,9 @@ def gen_struct_c_decl(name, entry):
     if entry["kind"] == "bytes_typedef":
         n = entry["max"]
         return f"typedef struct {{ uint16_t len; uint8_t data[{n}]; }} {name};"
-    lines = [f"typedef struct {{"]
-    for f in entry["fields"]:
-        lines.append("    " + gen_member(f, entry))
-    lines.append(f"}} {name};")
-    return "\n".join(lines)
-
-
-def gen_member(field, ctx_entry):
-    # thin wrapper reused by gen_struct_c_decl -- actual logic lives in c_field_decl
-    return _PENDING_POOL_c_field_decl(field, ctx_entry)
 
 
 # --- pass 2: descriptor table emission -------------------------------------
-
-FIELD_TYPE_ENUM = {
-    "mac6": "MTK_F_MAC6", "ipv4": "MTK_F_IPV4", "bytes": "MTK_F_BYTES",
-    "utf8": "MTK_F_UTF8", "bytes_fixed": "MTK_F_BYTES_FIXED",
-    "ref": "MTK_F_STRUCT", "struct": "MTK_F_STRUCT", "array": "MTK_F_ARRAY",
-}
-
 
 def len_prefix_code(lp):
     return {"u8": 1, "u16": 2, None: 0}.get(lp, 0)
@@ -214,12 +195,8 @@ def main():
     # (C requires member types fully defined for struct-by-value members),
     # so we render in dependency order using an explicit worklist that
     # re-walks pool.order as it grows (add_anon_struct appends live).
-    global _PENDING_POOL_c_field_decl
-
     def field_decl(field, hint):
         return c_field_decl(pool, field, hint)
-
-    _PENDING_POOL_c_field_decl = None  # placeholder, replaced below
 
     rendered = {}
     idx = 0
@@ -542,7 +519,7 @@ def gen_registry(schema, out, msg_desc_names):
     lines_h.append("    uint8_t no_radio_lease;")
     lines_h.append("    mtk_capability_state_t cap_native;")
     lines_h.append("    mtk_capability_state_t cap_factory_uart;")
-    lines_h.append("    mtk_capability_state_t cap_bedge_c3;")
+    lines_h.append("    mtk_capability_state_t cap_compat_c3;")
     lines_h.append("    uint32_t deadline_default_ms;")
     lines_h.append("    uint32_t deadline_min_ms;")
     lines_h.append("    uint32_t deadline_max_ms;")
@@ -591,7 +568,7 @@ def gen_registry(schema, out, msg_desc_names):
 
         src.append(
             f'    {{ "{op["name"]}", {op["service"]}, {op["opcode"]}, {lc}, {rc_c}, {nrl}, '
-            f'{cap_of("native")}, {cap_of("factory_uart")}, {cap_of("bedge_c3")}, '
+            f'{cap_of("native")}, {cap_of("factory_uart")}, {cap_of("compat_c3")}, '
             f"{dd}, {dmin}, {dmax}, {canc}, {idem}, {req_desc}, {resp_desc} }},"
         )
     src.append("};")

@@ -8,7 +8,7 @@ extern "C" {
 #endif
 
 void mtek_ble_service_init(uint64_t (*now_ms_fn)(void));
-void mtek_ble_service_register(void); /* registers service_id 0x0002 (ble) and 0x0003 (gatt) */
+mtk_register_result_t mtek_ble_service_register(void); /* registers service_id 0x0002 (ble) and 0x0003 (gatt) */
 
 /* P0 correction (follow-up read-only audit, "next focused P0 session-
  * publication closure round", requirement 4 "protect s_sig, s_gatt, and
@@ -71,9 +71,10 @@ void mtek_ble_gatt_tick(void);
 
 /* P0 correction (this round, item 4 "required task-creation failures"):
  * mtek_ble_signal_meter_tick/mtek_ble_gatt_tick above are only ever driven
- * by main/app_main.c's own ble_tick_task -- if that task fails to start
- * (xTaskCreate returning non-pdPASS), NOTHING ever calls either tick again
- * for the rest of this boot session. A serial log at that point is not
+ * by main/app_main.c's signal-sampling and periodic-delivery tasks. If
+ * either required task fails to start (xTaskCreate returning non-pdPASS),
+ * periodic BLE operations are conservatively disabled for this boot.
+ * A serial log at that point is not
  * honest protocol-level failure handling: SIGNAL_METER_START and GATT_
  * SUBSCRIBE would still be ACCEPTED as if their own background delivery
  * mechanism worked, when in fact no sample/notification could ever be

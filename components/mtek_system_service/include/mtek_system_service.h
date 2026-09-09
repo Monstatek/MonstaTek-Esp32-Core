@@ -19,7 +19,7 @@ typedef struct {
 
 /* now_ms: monotonic milliseconds, supplied by the caller (portable). */
 void mtek_system_service_init(const mtk_system_build_info_t *info, uint64_t (*now_ms_fn)(void));
-void mtek_system_service_register(void); /* registers with mtek_router for service_id 0x0000 */
+mtk_register_result_t mtek_system_service_register(void); /* registers with mtek_router for service_id 0x0000 */
 
 /* Injected so TIME_SYNC_START can honor its "requires an already-connected
  * station" precondition without a hard dependency on the wifi service. */

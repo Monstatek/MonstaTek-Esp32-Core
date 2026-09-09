@@ -19,6 +19,7 @@
  */
 #include "mtek_uart_adapter.h"
 #include "mtek_router.h"
+#include "mtek_async_sink.h"
 #include "mtek_schema_structs.h"
 #include "mtek_schema_message_descs.h"
 #include "mtek_codec_api.h"
@@ -74,33 +75,47 @@ typedef struct {
  * duration of its own synchronous call, exactly as before. */
 static uart_capture_t cap, cap2, ev;
 
-static void cap_resp(void *user, uint32_t correlation, uint8_t status, const void *body, const mtk_struct_desc_t *desc) {
+static mtk_emit_result_t cap_resp(void *user, uint32_t correlation, uint8_t status, const void *body, const mtk_struct_desc_t *desc) {
     (void)correlation;
     uart_capture_t *c = (uart_capture_t *)user;
     c->status = status;
     c->body_len = 0;
-    if (body && desc) mtk_encode(desc, body, c->body, sizeof(c->body), &c->body_len);
+    if (body && desc && mtk_encode(desc, body, c->body, sizeof(c->body), &c->body_len) != MTK_CODEC_OK) {
+        c->status = MTK_STATUS_INTERNAL_ERROR;
+        c->body_len = 0;
+        return MTK_EMIT_ENCODING_FAILED;
+    }
+    return MTK_EMIT_OK;
 }
-static void cap_resp_raw(void *user, uint32_t correlation, uint8_t status, const uint8_t *body, size_t len) {
+static mtk_emit_result_t cap_resp_raw(void *user, uint32_t correlation, uint8_t status, const uint8_t *body, size_t len) {
     (void)correlation;
     uart_capture_t *c = (uart_capture_t *)user;
     c->status = status;
-    c->body_len = len > sizeof(c->body) ? sizeof(c->body) : len;
+    c->body_len = 0;
+    if (len > sizeof(c->body)) {
+        c->status = MTK_STATUS_OVERFLOW;
+        return MTK_EMIT_CAPACITY_FAILED;
+    }
+    c->body_len = len;
     if (body) memcpy(c->body, body, c->body_len);
+    return MTK_EMIT_OK;
 }
-static void cap_event(void *user, uint32_t correlation_or_zero, const char *name, const void *body, const mtk_struct_desc_t *desc) {
+static mtk_emit_result_t cap_event(void *user, uint32_t correlation_or_zero, const char *name, const void *body, const mtk_struct_desc_t *desc) {
     (void)correlation_or_zero;
     uart_capture_t *c = (uart_capture_t *)user;
     strncpy(c->event_name, name, sizeof(c->event_name) - 1);
     c->event_body_len = 0;
-    if (body && desc) mtk_encode(desc, body, c->event_body, sizeof(c->event_body), &c->event_body_len);
+    if (body && desc && mtk_encode(desc, body, c->event_body, sizeof(c->event_body), &c->event_body_len) != MTK_CODEC_OK)
+        return MTK_EMIT_ENCODING_FAILED;
     c->have_event = 1;
+    return strlen(name) >= sizeof(c->event_name) ? MTK_EMIT_TRUNCATED : MTK_EMIT_OK;
 }
-static void cap_stream(void *user, uint32_t t, uint32_t s, const uint8_t *c, size_t l) { (void)user; (void)t; (void)s; (void)c; (void)l; }
+static mtk_emit_result_t cap_stream(void *user, uint32_t t, uint32_t s, const uint8_t *c, size_t l) { (void)user; (void)t; (void)s; (void)c; (void)l; return MTK_EMIT_DROPPED; }
 
 static mtk_request_ctx_t make_ctx(mtk_uart_adapter_state_t *st, uart_capture_t *cap) {
     mtk_request_ctx_t ctx;
     ctx.profile = MTK_PROFILE_FACTORY_UART;
+    ctx.dispatch_mode = MTK_DISPATCH_INLINE;
     ctx.correlation = ++st->next_correlation;
     ctx.boot_epoch = st->boot_epoch;
     ctx.session_generation = 0; /* factory UART has no peer-reboot concept of its own (mtek_core.h's own doc comment) -- never fenced */
@@ -121,45 +136,21 @@ static mtk_request_ctx_t make_ctx(mtk_uart_adapter_state_t *st, uart_capture_t *
  * never a stack-local object, so it stays valid for as long as the
  * canonical service's own session state (handshake_session_t, s_sig,
  * s_gatt) chooses to keep calling through it, exactly the same pattern
- * proven safe for native/Bedge SPI's own event_queue. */
-static void qcap_resp(void *user, uint32_t correlation, uint8_t status, const void *body, const mtk_struct_desc_t *desc) {
-    mtk_async_frame_t f; memset(&f, 0, sizeof(f));
-    f.kind = MTK_ASYNC_FRAME_RESPONSE;
-    f.correlation = correlation;
-    f.seq_or_status = status;
-    if (body && desc) mtk_encode(desc, body, f.body, sizeof(f.body), &f.body_len);
-    mtk_async_queue_push((mtk_async_queue_t *)user, &f);
-}
-static void qcap_event(void *user, uint32_t correlation_or_zero, const char *name, const void *body, const mtk_struct_desc_t *desc) {
-    mtk_async_frame_t f; memset(&f, 0, sizeof(f));
-    f.kind = MTK_ASYNC_FRAME_EVENT;
-    f.correlation = correlation_or_zero;
-    if (name) { size_t n = strlen(name); if (n >= sizeof(f.event_name)) n = sizeof(f.event_name) - 1; memcpy(f.event_name, name, n); }
-    if (body && desc) mtk_encode(desc, body, f.body, sizeof(f.body), &f.body_len);
-    mtk_async_queue_push((mtk_async_queue_t *)user, &f);
-}
-static void qcap_stream(void *user, uint32_t session_token, uint32_t seq, const uint8_t *chunk, size_t len) {
-    mtk_async_frame_t f; memset(&f, 0, sizeof(f));
-    f.kind = MTK_ASYNC_FRAME_STREAM;
-    f.correlation = session_token;
-    f.seq_or_status = seq;
-    f.body_len = len > sizeof(f.body) ? sizeof(f.body) : len;
-    if (chunk) memcpy(f.body, chunk, f.body_len);
-    mtk_async_queue_push((mtk_async_queue_t *)user, &f);
-}
+ * proven safe for native/Mtek Compatibility SPI's own event_queue. */
 
 static mtk_request_ctx_t make_session_ctx(mtk_uart_adapter_state_t *st) {
     mtk_request_ctx_t ctx;
     ctx.profile = MTK_PROFILE_FACTORY_UART;
+    ctx.dispatch_mode = MTK_DISPATCH_INLINE;
     ctx.correlation = ++st->next_correlation;
     ctx.boot_epoch = st->boot_epoch;
     ctx.session_generation = 0; /* factory UART has no peer-reboot concept of its own (mtek_core.h's own doc comment) -- never fenced */
     ctx.authorization_level = 0;
     ctx.sink.user = &st->session_queue;
-    ctx.sink.emit_response = qcap_resp;
+    ctx.sink.emit_response = mtk_async_sink_resp;
     ctx.sink.emit_response_raw = NULL; /* none of the three session-queue opcodes use the raw-response escape hatch */
-    ctx.sink.emit_event = qcap_event;
-    ctx.sink.emit_stream = qcap_stream;
+    ctx.sink.emit_event = mtk_async_sink_event;
+    ctx.sink.emit_stream = mtk_async_sink_stream;
     return ctx;
 }
 

@@ -9,7 +9,7 @@ extern "C" {
 #endif
 
 void mtek_capture_service_init(uint64_t (*now_ms_fn)(void));
-void mtek_capture_service_register(void); /* service_id 0x0004 (capture) and 0x0005 (diagnostics) */
+mtk_register_result_t mtek_capture_service_register(void); /* service_id 0x0004 (capture) and 0x0005 (diagnostics) */
 
 /* RC7 independent audit item 11 "the global session is raced between the
  * Wi-Fi callback and control/tick tasks": this service's own capture
@@ -96,7 +96,7 @@ void mtek_capture_set_hop_tick_pause_hook(mtk_capture_hop_tick_pause_hook_t hook
 
 /* P0 correction (this round, item 4 "required task-creation failures"):
  * mtek_capture_channel_hop_tick above is only ever driven by main/
- * app_main.c's own ble_tick_task (despite this whole file's own capture-
+ * app_main.c's own periodic_delivery_task (despite this whole file's own capture-
  * specific name, the SAME task also drives the BLE signal-meter/GATT
  * ticks -- see that task's own doc comment) -- if that task fails to
  * start, a CAPTURE_START with a nonzero duration_ms (auto-stop) or a

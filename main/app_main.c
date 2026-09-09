@@ -3,7 +3,7 @@
  * four canonical services to the router against their real ESP32-C6 HAL
  * implementations, and starts every COMPILED-IN public transport adapter
  * task -- the factory UART REPL and/or the SPI runtime (native SPI v1 +
- * Bedge/C3 SPI sharing one physical spi_slave peripheral with its own
+ * Mtek Compatibility/C3 SPI sharing one physical spi_slave peripheral with its own
  * internal AUTO profile discovery, mtek_spi_runtime.c, on the confirmed
  * production pins -- SCLK=GPIO7, MOSI=GPIO12, MISO=GPIO13, CS=GPIO15,
  * HANDSHAKE=GPIO14) -- concurrently, per CONFIG_MTEK_ADAPTER_* alone.
@@ -13,7 +13,7 @@
  * MTEK_PRIMARY_TRANSPORT build-time choice picked exactly ONE of UART/SPI
  * to ever start, which the audit found directly contradicts
  * SPI_PROTOCOL_V1.md's own "Runtime transport selection" -- AUTO
- * discovery is required across a native SPI HELLO, a Bedge/C3 discovery
+ * discovery is required across a native SPI HELLO, a Mtek Compatibility/C3 discovery
  * frame, OR a valid legacy UART command, with "only canonical dispatch...
  * exclusive after the first valid operational input", not a build-time
  * pick that could ship deaf to whichever bus a given real M1 host is
@@ -55,7 +55,7 @@
 #if CONFIG_MTEK_ADAPTER_FACTORY_UART
 #include "mtek_uart_adapter.h"
 #endif
-#if CONFIG_MTEK_ADAPTER_NATIVE_SPI || CONFIG_MTEK_ADAPTER_BEDGE_C3
+#if CONFIG_MTEK_ADAPTER_NATIVE_SPI || CONFIG_MTEK_ADAPTER_COMPAT_C3
 #include "mtek_spi_runtime.h"
 #endif
 
@@ -102,7 +102,7 @@ static void mtek_enter_safe_failure_state(const char *reason) {
  * mtek_arbiter.c's single active-owner slot, mtek_router.c's async pool,
  * mtek_transport_select.c's cross-transport claim latch, and every
  * adapter's own persistent async_queue (native_dctx.event_queue,
- * bedge_dctx.event_queue, and -- newly locked this round, see
+ * compat_dctx.event_queue, and -- newly locked this round, see
  * uart_repl_task below -- the UART adapter's st.session_queue, which
  * RC6 left unlocked despite already being genuinely pushed to from the
  * Wi-Fi promiscuous-mode callback/ble_tick_task's own task context while
@@ -577,24 +577,32 @@ static void uart_repl_task(void *arg) {
 }
 #endif /* CONFIG_MTEK_ADAPTER_FACTORY_UART */
 
-/* Periodic tick for the BLE signal-meter/GATT-notification delivery paths
- * (see mtek_ble_service.h: these are inherently repeated-over-time, not
- * one blocking HAL call). */
+/* Blocking signal sampling retains its existing cadence and lifecycle.
+ * Capture deadlines and GATT delivery run independently below. */
 static void ble_tick_task(void *arg) {
     (void)arg;
     while (1) {
         mtek_ble_signal_meter_tick();
-        mtek_ble_gatt_tick();
-        /* RC5 independent audit P1 "MonstaShark capture path is
-         * incomplete": real channel hopping needs a periodic driver, the
-         * same shape as the two BLE ticks above -- see
-         * mtek_capture_service.h's own doc comment on this call. A
-         * shorter tick period than the two BLE ticks strictly need is
-         * fine (hop-mode capture is a List B capability, not tied to
-         * their own timing), and mtek_capture_channel_hop_tick itself is
-         * a no-op except during a genuinely active hop-mode session. */
-        mtek_capture_channel_hop_tick(now_ms());
         vTaskDelay(pdMS_TO_TICKS(500));
+    }
+}
+
+/* Capture gets tick-resolution service independently of BLE sample waits.
+ * GATT polling retains its 500ms period; no extra signal samples are taken.
+ * Always block for at least one tick, including on a 100Hz FreeRTOS build. */
+static void periodic_delivery_task(void *arg) {
+    (void)arg;
+    uint64_t last_gatt_ms = 0;
+    int first_gatt = 1;
+    while (1) {
+        uint64_t now = now_ms();
+        mtek_capture_channel_hop_tick(now);
+        if (first_gatt || now - last_gatt_ms >= 500) {
+            first_gatt = 0;
+            last_gatt_ms = now;
+            mtek_ble_gatt_tick();
+        }
+        vTaskDelay((TickType_t)MTK_CLAMP_MIN_ONE_TICK(pdMS_TO_TICKS(10)));
     }
 }
 
@@ -728,7 +736,7 @@ void app_main(void) {
      * whether) Wi-Fi/BLE bring-up below succeeds -- the false-readiness
      * gap the read-only gate identified in the first correction is closed
      * at its actual dependency root, not merely by printing an earlier
-     * banner. native SPI/Bedge-C3 task startup (mtek_spi_runtime_start,
+     * banner. native SPI/Mtek Compatibility-C3 task startup (mtek_spi_runtime_start,
      * below, unchanged position) is deliberately NOT moved here: the
      * STM32 bridge in this deployment is wired to factory UART, not SPI,
      * moving it too is unproven/out of scope for this targeted fix (the
@@ -934,31 +942,24 @@ void app_main(void) {
     if (ble_hal_ready) mtek_ble_set_hal(mtek_ble_hal_esp32_get());
     mtek_system_set_sta_query(mtek_wifi_is_sta_connected);
 
-    mtek_system_service_register();
-    mtek_wifi_service_register();
-    mtek_ble_service_register();
-    mtek_capture_service_register();
+    if (mtek_system_service_register() != MTK_REGISTER_OK ||
+        mtek_wifi_service_register() != MTK_REGISTER_OK ||
+        mtek_ble_service_register() != MTK_REGISTER_OK ||
+        mtek_capture_service_register() != MTK_REGISTER_OK) {
+        mtek_enter_safe_failure_state("service registration failed");
+        return;
+    }
 
-    /* P0 correction (Round 8, item 4 "check ble_tick_task ... creation"):
-     * previously created with no return-value check at all. Its absence
-     * cannot itself corrupt shared state (a task that never exists can
-     * never touch anything concurrently) -- it silently stops the signal-
-     * meter/GATT-notification/capture-channel-hop periodic delivery paths
-     * mtek_ble_service.h documents as this task's own job, an honest
-     * capability loss now actually detected and logged, matching wifi_
-     * promisc_tick_task's own established non-fatal-degrade precedent
-     * just below rather than a full boot failure (every synchronous,
-     * per-request opcode remains fully available and safe either way). */
-    /* P0 correction (this round, item 4 "do not advertise/accept signal-
-     * meter, GATT polling, capture duration, or channel-hopping operations
-     * when ble_tick_task is absent"): a log line alone left SIGNAL_METER_
-     * START/GATT_SUBSCRIBE/a duration-bounded or hop-mode CAPTURE_START
-     * still ACCEPTED as if their own background delivery worked -- these
-     * two calls make that dishonest-acceptance protocol-level, not just a
-     * log a developer might miss. */
+    /* Sampling and delivery have separate task lifetimes. A missing BLE
+     * worker conservatively disables periodic BLE operations; a missing
+     * delivery worker also disables timed/hopping capture. Never accept
+     * an operation whose required periodic driver could not be started. */
     if (xTaskCreate(ble_tick_task, "mtek_ble_tick", 4096, NULL, 5, NULL) != pdPASS) {
-        ESP_LOGE(TAG, "xTaskCreate(mtek_ble_tick) failed -- signal-meter/GATT-notification/"
-                      "capture-channel-hop periodic delivery will not run this boot session");
+        ESP_LOGE(TAG, "xTaskCreate(mtek_ble_tick) failed -- periodic BLE operations will be refused");
+        mtek_ble_service_mark_tick_task_failed();
+    }
+    if (xTaskCreate(periodic_delivery_task, "mtek_delivery", 4096, NULL, 5, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "xTaskCreate(mtek_delivery) failed -- periodic BLE/capture operations will be refused");
         mtek_ble_service_mark_tick_task_failed();
         mtek_capture_service_mark_tick_task_failed();
     }
@@ -998,8 +999,8 @@ void app_main(void) {
      * this function (RC12 round 2 -- alongside uart_repl_task's own now-
      * relocated creation, before Wi-Fi/BLE bring-up); only `spi_task_ok` is
      * declared here. */
-    uint8_t spi_task_ok = 0;  /* meaningful only when CONFIG_MTEK_ADAPTER_NATIVE_SPI/BEDGE_C3 */
-#if CONFIG_MTEK_ADAPTER_NATIVE_SPI || CONFIG_MTEK_ADAPTER_BEDGE_C3
+    uint8_t spi_task_ok = 0;  /* meaningful only when CONFIG_MTEK_ADAPTER_NATIVE_SPI/COMPAT_C3 */
+#if CONFIG_MTEK_ADAPTER_NATIVE_SPI || CONFIG_MTEK_ADAPTER_COMPAT_C3
     /* P0 correction (Round 8, item 4 "check ... SPI runtime task
      * creation"): mtek_spi_runtime_start's own internal xTaskCreate call
      * was previously unchecked too -- see its own doc comment
@@ -1010,10 +1011,10 @@ void app_main(void) {
      * below, rather than being a bare, otherwise-inert log line. */
     spi_task_ok = (mtek_spi_runtime_start(s_shared_mutex) == 0);
     if (!spi_task_ok) {
-        ESP_LOGE(TAG, "xTaskCreate(mtek_spi_runtime) failed -- the native SPI/Bedge-C3 transport will never become reachable this boot session");
+        ESP_LOGE(TAG, "xTaskCreate(mtek_spi_runtime) failed -- the native SPI/Mtek Compatibility-C3 transport will never become reachable this boot session");
     }
 #endif
-#if !CONFIG_MTEK_ADAPTER_FACTORY_UART && !CONFIG_MTEK_ADAPTER_NATIVE_SPI && !CONFIG_MTEK_ADAPTER_BEDGE_C3
+#if !CONFIG_MTEK_ADAPTER_FACTORY_UART && !CONFIG_MTEK_ADAPTER_NATIVE_SPI && !CONFIG_MTEK_ADAPTER_COMPAT_C3
     ESP_LOGE(TAG, "No public transport adapter is compiled in (every CONFIG_MTEK_ADAPTER_* is disabled) -- "
                   "no public adapter will start this boot; fix the build configuration");
 #endif
@@ -1048,7 +1049,7 @@ void app_main(void) {
 #else
         0
 #endif
-#if CONFIG_MTEK_ADAPTER_NATIVE_SPI || CONFIG_MTEK_ADAPTER_BEDGE_C3
+#if CONFIG_MTEK_ADAPTER_NATIVE_SPI || CONFIG_MTEK_ADAPTER_COMPAT_C3
         || spi_task_ok
 #else
         || 0

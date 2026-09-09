@@ -4,11 +4,58 @@
  * fixed priority slots -- RESPONSE > EVENT > STREAM -- replacing the
  * original plain FIFO). */
 #include "mtek_async_queue.h"
+#include "mtek_async_sink.h"
+#include "mtek_codec_api.h"
 #include "mtek_core.h"
 #include <string.h>
 
 void mtk_async_queue_init(mtk_async_queue_t *q) {
     memset(q, 0, sizeof(*q));
+}
+
+mtk_emit_result_t mtk_async_sink_resp(void *user, uint32_t correlation, uint8_t status, const void *body, const mtk_struct_desc_t *desc) {
+    mtk_async_frame_t f; memset(&f, 0, sizeof(f));
+    f.kind = MTK_ASYNC_FRAME_RESPONSE;
+    f.correlation = correlation;
+    f.seq_or_status = status;
+    if (body && desc && mtk_encode(desc, body, f.body, sizeof(f.body), &f.body_len) != MTK_CODEC_OK)
+        return MTK_EMIT_ENCODING_FAILED;
+    if (!mtk_async_queue_push((mtk_async_queue_t *)user, &f)) return MTK_EMIT_CAPACITY_FAILED;
+    return MTK_EMIT_OK;
+}
+
+mtk_emit_result_t mtk_async_sink_resp_raw(void *user, uint32_t correlation, uint8_t status, const uint8_t *body, size_t len) {
+    mtk_async_frame_t f; memset(&f, 0, sizeof(f));
+    f.kind = MTK_ASYNC_FRAME_RESPONSE;
+    f.correlation = correlation;
+    f.seq_or_status = status;
+    if (len > sizeof(f.body)) return MTK_EMIT_CAPACITY_FAILED;
+    f.body_len = len;
+    if (body) memcpy(f.body, body, f.body_len);
+    if (!mtk_async_queue_push((mtk_async_queue_t *)user, &f)) return MTK_EMIT_CAPACITY_FAILED;
+    return MTK_EMIT_OK;
+}
+
+mtk_emit_result_t mtk_async_sink_event(void *user, uint32_t correlation_or_zero, const char *name, const void *body, const mtk_struct_desc_t *desc) {
+    mtk_async_frame_t f; memset(&f, 0, sizeof(f));
+    f.kind = MTK_ASYNC_FRAME_EVENT;
+    f.correlation = correlation_or_zero;
+    if (name) { size_t n = strlen(name); if (n >= sizeof(f.event_name)) n = sizeof(f.event_name) - 1; memcpy(f.event_name, name, n); }
+    if (body && desc && mtk_encode(desc, body, f.body, sizeof(f.body), &f.body_len) != MTK_CODEC_OK)
+        return MTK_EMIT_ENCODING_FAILED;
+    if (!mtk_async_queue_push((mtk_async_queue_t *)user, &f)) return MTK_EMIT_CAPACITY_FAILED;
+    return name && strlen(name) >= sizeof(f.event_name) ? MTK_EMIT_TRUNCATED : MTK_EMIT_OK;
+}
+
+mtk_emit_result_t mtk_async_sink_stream(void *user, uint32_t session_token, uint32_t seq, const uint8_t *chunk, size_t len) {
+    mtk_async_frame_t f; memset(&f, 0, sizeof(f));
+    f.kind = MTK_ASYNC_FRAME_STREAM;
+    f.correlation = session_token;
+    f.seq_or_status = seq;
+    f.body_len = len > sizeof(f.body) ? sizeof(f.body) : len;
+    if (chunk) memcpy(f.body, chunk, f.body_len);
+    if (!mtk_async_queue_push((mtk_async_queue_t *)user, &f)) return MTK_EMIT_CAPACITY_FAILED;
+    return len > sizeof(f.body) ? MTK_EMIT_TRUNCATED : MTK_EMIT_OK;
 }
 
 void mtk_async_queue_set_lock(mtk_async_queue_t *q, mtk_async_lock_fn lock, mtk_async_lock_fn unlock, void *lock_ctx) {
@@ -19,6 +66,11 @@ void mtk_async_queue_set_lock(mtk_async_queue_t *q, mtk_async_lock_fn lock, mtk_
 
 static void do_lock(mtk_async_queue_t *q) { if (q->lock) q->lock(q->lock_ctx); }
 static void do_unlock(mtk_async_queue_t *q) { if (q->unlock) q->unlock(q->lock_ctx); }
+
+void mtk_async_queue_set_notify(mtk_async_queue_t *q, mtk_async_notify_fn notify, void *notify_ctx) {
+    q->notify = notify;
+    q->notify_ctx = notify_ctx;
+}
 
 /* Returns the index of the empty slot, or -1 if none. */
 static int find_empty_slot(mtk_async_queue_t *q) {
@@ -86,6 +138,7 @@ int mtk_async_queue_push(mtk_async_queue_t *q, const mtk_async_frame_t *frame) {
         ok = 1;
     }
     do_unlock(q);
+    if (ok && q->notify) q->notify(q->notify_ctx);
     return ok;
 }
 

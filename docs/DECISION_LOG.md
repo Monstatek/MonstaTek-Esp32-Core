@@ -50,7 +50,7 @@ timeout/retire path that has already torn down the context it is about to
 use. This closes the check-to-use gap that a generation-only guard leaves
 open.
 
-## Community/Bedge deferred completion
+## Community/Mtek Compatibility deferred completion
 
 A deferred (asynchronous) Community/C3 operation reports its accepted
 status and its eventual terminal event as two independent parts that may

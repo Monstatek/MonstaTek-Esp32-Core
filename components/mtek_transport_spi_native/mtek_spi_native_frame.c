@@ -115,7 +115,7 @@ void mtk_spi_native_reassembly_reset(mtk_spi_native_reassembly_t *ctx) {
 }
 
 mtk_spi_reasm_result_t mtk_spi_native_reassembly_feed(mtk_spi_native_reassembly_t *ctx, const mtk_spi_native_header_t *hdr,
-                                                       const uint8_t *payload, uint32_t now_seq) {
+                                                       const uint8_t *payload, uint32_t now_ms) {
     int is_first = (hdr->flags & MTK_SPI_FLAG_FIRST) != 0;
     int is_last = (hdr->flags & MTK_SPI_FLAG_LAST) != 0;
 
@@ -146,7 +146,7 @@ mtk_spi_reasm_result_t mtk_spi_native_reassembly_feed(mtk_spi_native_reassembly_
         ctx->boot_epoch = hdr->boot_epoch;
         ctx->message_len = hdr->message_len;
         ctx->received_len = 0;
-        ctx->last_seen_seq = now_seq;
+        ctx->last_seen_ms = now_ms;
     } else {
         if (!ctx->active || hdr->request_id != ctx->request_id) {
             /* A continuation fragment with no matching in-progress
@@ -165,7 +165,7 @@ mtk_spi_reasm_result_t mtk_spi_native_reassembly_feed(mtk_spi_native_reassembly_
     }
     if (hdr->payload_len) memcpy(ctx->data + hdr->fragment_offset, payload, hdr->payload_len);
     ctx->received_len += hdr->payload_len;
-    ctx->last_seen_seq = now_seq;
+    ctx->last_seen_ms = now_ms;
 
     if (is_last) {
         mtk_spi_reasm_result_t result = (ctx->received_len == ctx->message_len) ? MTK_SPI_REASM_COMPLETE : MTK_SPI_REASM_GAP;
@@ -175,9 +175,9 @@ mtk_spi_reasm_result_t mtk_spi_native_reassembly_feed(mtk_spi_native_reassembly_
     return MTK_SPI_REASM_IN_PROGRESS;
 }
 
-int mtk_spi_native_reassembly_timed_out(const mtk_spi_native_reassembly_t *ctx, uint32_t now_seq, uint32_t timeout_seq) {
+int mtk_spi_native_reassembly_timed_out(const mtk_spi_native_reassembly_t *ctx, uint32_t now_ms, uint32_t timeout_ms) {
     if (!ctx->active) return 0;
-    return (now_seq - ctx->last_seen_seq) >= timeout_seq; /* unsigned wraparound-safe for a monotonic now_seq */
+    return (now_ms - ctx->last_seen_ms) >= timeout_ms; /* unsigned wraparound-safe for a monotonic now_ms */
 }
 
 /* ---- Outbound multi-cell fragmentation ---------------------------------- */
@@ -212,47 +212,7 @@ int mtk_spi_native_outbound_next(mtk_spi_native_outbound_t *ob, uint8_t *out) {
 
 mtk_spi_parse_result_t mtk_spi_native_parse_cell(const uint8_t *in, mtk_spi_native_header_t *hdr,
                                                   const uint8_t **payload_out) {
-    mtk_spi_native_header_t h;
-    h.magic = get_u32(in + 0);
-    if (h.magic != MTK_SPI_NATIVE_MAGIC) return MTK_SPI_PARSE_BAD_MAGIC;
-    h.major = in[4];
-    h.minor = in[5];
-    if (h.major != MTK_SPI_NATIVE_MAJOR) return MTK_SPI_PARSE_BAD_VERSION;
-    h.msg_class = in[6];
-    if (h.msg_class > MTK_SPI_CLASS_LINK_ERROR) return MTK_SPI_PARSE_BAD_CLASS;
-    h.flags = in[7];
-    if (h.flags & MTK_SPI_FLAG_RESERVED_MASK) return MTK_SPI_PARSE_BAD_FLAGS;
-    h.service = get_u16(in + 8);
-    h.opcode = get_u16(in + 10);
-    h.status = get_u16(in + 12);
-    h.payload_len = get_u16(in + 14);
-    if (h.payload_len > MTK_SPI_NATIVE_MAX_PAYLOAD) return MTK_SPI_PARSE_BAD_LENGTH;
-    h.request_id = get_u32(in + 16);
-    h.packet_seq = get_u32(in + 20);
-    h.boot_epoch = get_u32(in + 24);
-    h.message_len = get_u32(in + 28);
-    h.fragment_offset = get_u32(in + 32);
-    h.crc32c = get_u32(in + 36);
-
-    uint8_t crc_input[MTK_SPI_NATIVE_HEADER_SIZE - 4 + MTK_SPI_NATIVE_MAX_PAYLOAD];
-    memcpy(crc_input, in, MTK_SPI_NATIVE_HEADER_SIZE - 4);
-    memcpy(crc_input + (MTK_SPI_NATIVE_HEADER_SIZE - 4), in + MTK_SPI_NATIVE_HEADER_SIZE, h.payload_len);
-    uint32_t computed = mtk_crc32c(crc_input, (MTK_SPI_NATIVE_HEADER_SIZE - 4) + h.payload_len);
-    if (computed != h.crc32c) return MTK_SPI_PARSE_BAD_CRC;
-
-    /* Fragment/class-direction bounds a receiver can check without service
-     * context: fragment_offset + payload_len must not exceed message_len
-     * for a REQUEST/RESPONSE/EVENT/STREAM fragment. */
-    if (h.msg_class == MTK_SPI_CLASS_REQUEST || h.msg_class == MTK_SPI_CLASS_RESPONSE ||
-        h.msg_class == MTK_SPI_CLASS_EVENT || h.msg_class == MTK_SPI_CLASS_STREAM) {
-        if ((uint64_t)h.fragment_offset + h.payload_len > h.message_len && h.message_len != 0) {
-            return MTK_SPI_PARSE_BAD_LENGTH;
-        }
-    }
-
-    *hdr = h;
-    if (payload_out) *payload_out = in + MTK_SPI_NATIVE_HEADER_SIZE;
-    return MTK_SPI_PARSE_OK;
+    return mtk_spi_native_parse_bounded(in, MTK_SPI_NATIVE_CELL_SIZE, hdr, payload_out);
 }
 
 void mtk_spi_native_packet_seq_tracker_init(mtk_spi_native_packet_seq_tracker_t *t) {

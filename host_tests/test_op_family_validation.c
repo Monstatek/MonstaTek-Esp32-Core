@@ -19,7 +19,6 @@
  * consumes -- mirrors the per-file constants in the service logic. */
 #define SVC_WIFI 0x0001
 #define SVC_BLE  0x0002
-#define SVC_GATT 0x0003
 #define SVC_CAP  0x0004
 #define SVC_SYS  0x0000
 

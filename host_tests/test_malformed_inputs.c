@@ -42,6 +42,7 @@ MTK_TEST_MAIN_BEGIN
         mtk_fake_sink_state_t sink; mtk_fake_sink_reset(&sink);
         mtk_request_ctx_t ctx = mtk_test_ctx(&sink, 4);
         ctx.profile = MTK_PROFILE_FACTORY_UART;
+        ctx.dispatch_mode = MTK_DISPATCH_INLINE;
         const mtk_opcode_entry_t *op = mtk_test_find_op("STA_CONNECT");
         mtk_router_dispatch(&ctx, op->service_id, op->opcode, NULL, 0);
         MTK_CHECK_EQ(sink.response.status, MTK_STATUS_UNSUPPORTED);

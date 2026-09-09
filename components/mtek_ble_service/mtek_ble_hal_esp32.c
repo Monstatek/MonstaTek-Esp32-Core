@@ -147,7 +147,6 @@ int mtek_ble_hal_esp32_init(void) {
     return 0;
 }
 
-int mtek_ble_hal_esp32_is_synced(void) { return atomic_load(&s_synced); }
 
 /* ---- scan (also reused for the signal-meter's short single-target scan) */
 

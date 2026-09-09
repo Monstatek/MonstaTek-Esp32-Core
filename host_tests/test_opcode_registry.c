@@ -44,14 +44,14 @@ MTK_TEST_MAIN_BEGIN
     const mtk_opcode_entry_t *deauth_start = mtk_opcode_find(0x0001, 0x0010);
     MTK_CHECK_EQ(deauth_start->cap_native, MTK_CAP_SUPPORTED);
     MTK_CHECK_EQ(deauth_start->cap_factory_uart, MTK_CAP_SUPPORTED);
-    MTK_CHECK_EQ(deauth_start->cap_bedge_c3, MTK_CAP_SUPPORTED);
+    MTK_CHECK_EQ(deauth_start->cap_compat_c3, MTK_CAP_SUPPORTED);
 
     /* STA_CONNECT: factory-UART UNAVAILABLE (no connect verb exists in the
-     * audited console grammar), native/Bedge SUPPORTED. */
+     * audited console grammar), native/Mtek Compatibility SUPPORTED. */
     const mtk_opcode_entry_t *sta_connect = mtk_opcode_find(0x0001, 0x000A);
     MTK_CHECK_EQ(sta_connect->cap_native, MTK_CAP_SUPPORTED);
     MTK_CHECK_EQ(sta_connect->cap_factory_uart, MTK_CAP_UNAVAILABLE);
-    MTK_CHECK_EQ(sta_connect->cap_bedge_c3, MTK_CAP_SUPPORTED);
+    MTK_CHECK_EQ(sta_connect->cap_compat_c3, MTK_CAP_SUPPORTED);
 
     /* STA_STATUS never acquires a radio lease (Sec 4.1 core contract). */
     const mtk_opcode_entry_t *sta_status = mtk_opcode_find(0x0001, 0x000C);

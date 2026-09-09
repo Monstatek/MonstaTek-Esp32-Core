@@ -9,7 +9,7 @@ extern "C" {
 #endif
 
 void mtek_wifi_service_init(uint64_t (*now_ms_fn)(void));
-void mtek_wifi_service_register(void);
+mtk_register_result_t mtek_wifi_service_register(void);
 /* Drain deferred promiscuous frames from a normal application task. */
 void mtek_wifi_service_tick(void);
 /* Restore prior radio state and release its lease only when restoration
@@ -65,7 +65,7 @@ void mtek_wifi_service_set_lock(mtk_wifi_lock_fn lock, mtk_wifi_lock_fn unlock);
  * currently active arbiter class (if any) does not belong to this
  * service. Called by a transport adapter that must invalidate every
  * operation belonging to a peer session that just ended -- currently only
- * native SPI has such a concept (Bedge/C3 and factory UART have no peer
+ * native SPI has such a concept (Mtek Compatibility/C3 and factory UART have no peer
  * reboot detection of their own, mtek_core.h's boot_epoch doc comment).
  * Returns the cancelled operation's own {token, boot_epoch} (mtk_op_id_t,
  * mtek_core.h) so the caller can immediately evict it via mtk_op_evict

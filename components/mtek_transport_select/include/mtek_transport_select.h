@@ -14,7 +14,7 @@ extern "C" {
 typedef enum {
     MTK_TRANSPORT_AUTO = 0,
     MTK_TRANSPORT_NATIVE_SPI,
-    MTK_TRANSPORT_BEDGE_C3_SPI,
+    MTK_TRANSPORT_COMPAT_C3_SPI,
 } mtk_transport_lock_t;
 
 /* Examines one discovery-phase transaction buffer (SPI_PROTOCOL_V1.md:
@@ -22,7 +22,7 @@ typedef enum {
  * it recognizes, or MTK_TRANSPORT_AUTO if neither parser accepts it (stay
  * in AUTO and keep polling). Cross-profile rejection is guaranteed by
  * construction: native's fixed 4-byte magic ("M1S1", wire bytes
- * 4D 31 53 31) and Bedge's fixed 2-byte magic (0x4D31 LE, wire bytes
+ * 4D 31 53 31) and Mtek Compatibility's fixed 2-byte magic (0x4D31 LE, wire bytes
  * 31 4D) are disjoint at byte 0 (0x4D vs 0x31)
  * (001-profile-bootstrap-feasibility.md Sec 2), so at most one of the two
  * bounded parsers below can ever accept the same buffer -- never both. */
@@ -31,7 +31,7 @@ mtk_transport_lock_t mtk_transport_try_recognize_discovery(const uint8_t *buf, s
 /* RC7 independent audit P0 "The release artifact starts the wrong
  * transport for shipped M1 compatibility": SPI_PROTOCOL_V1.md's own
  * "Runtime transport selection" section requires AUTO discovery across a
- * native SPI HELLO, a Bedge/C3 discovery frame, OR a valid legacy UART
+ * native SPI HELLO, a Mtek Compatibility/C3 discovery frame, OR a valid legacy UART
  * command -- three independent physical listeners (UART0 and the shared
  * SPI bus are genuinely different buses, so both can and must run
  * concurrently before selection) that may all be live at boot, but
@@ -48,7 +48,7 @@ typedef enum {
     MTK_PUBLIC_ADAPTER_NONE = 0,
     MTK_PUBLIC_ADAPTER_FACTORY_UART,
     MTK_PUBLIC_ADAPTER_NATIVE_SPI,
-    MTK_PUBLIC_ADAPTER_BEDGE_C3_SPI,
+    MTK_PUBLIC_ADAPTER_COMPAT_C3_SPI,
 } mtk_public_adapter_t;
 
 typedef void (*mtk_transport_claim_lock_fn)(void);

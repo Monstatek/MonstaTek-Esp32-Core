@@ -20,42 +20,26 @@ typedef void (*mtk_service_dispatch_fn)(mtk_request_ctx_t *ctx, const mtk_opcode
                                          const uint8_t *req_bytes, size_t req_len);
 
 void mtk_router_init(void);
-void mtk_router_register(uint16_t service_id, mtk_service_dispatch_fn fn);
+typedef enum {
+    MTK_REGISTER_OK = 0,
+    MTK_REGISTER_INVALID_HANDLER,
+    MTK_REGISTER_DUPLICATE,
+    MTK_REGISTER_FULL,
+} mtk_register_result_t;
+/* Startup-only. Failure leaves the registry unchanged. */
+mtk_register_result_t mtk_router_register(uint16_t service_id, mtk_service_dispatch_fn fn);
 
-/* Optional async execution hook (ESP32 target glue only; never registered
- * by host tests, which keep the deterministic synchronous-call model).
- * When set, every ACCEPTED_ASYNC opcode's handler runs via `runner`
- * (expected to spawn a bounded FreeRTOS worker task and call `fn(arg)` on
- * it, returning 0 on success or nonzero if task creation itself failed)
- * instead of on the calling thread, so a long-running scan/deauth/
- * capture/connect never stalls the adapter's own request-dispatch loop
- * and STOP/status/other requests on the same transport remain
- * servicable while it runs. mtk_router_dispatch copies the request bytes
- * and request context into a bounded internal pool (matching the
- * 4-in-flight-request core budget) before invoking `runner`, since the
- * BORROWED request payload is otherwise only valid for the synchronous
- * duration of the call (002-canonical-core-contract.md Sec 2 `payload`
- * row). Pool exhaustion, and a `runner` that reports it failed to spawn a
- * task, are both checked failures: the caller receives NO_MEMORY
- * synchronously, never a silent drop.
+/* Optional async runner: 0 means ownership of fn(arg) was accepted; a
+ * nonzero result means fn was not scheduled. Deferred requests are copied
+ * into a bounded pool before scheduling. Pool/spawn failure emits NO_MEMORY.
  *
- * SAFETY CONTRACT (binding on every caller of mtk_router_dispatch, not
- * just this header): `ctx->sink.user` -- and anything the sink callbacks
- * dereference through it -- must remain valid for the *entire* async
- * operation's lifetime once this runner is registered, not merely for
- * the synchronous duration of the dispatch call. Every sink function
- * pointer in `ctx->sink` is copied by value into the pool slot and
- * invoked later, from the worker task, with that same `user` pointer.
- * A caller whose sink target is a stack-local object that goes out of
- * scope when the calling function returns (the pattern every adapter in
- * this tree currently uses: build a stack-local capture struct, call
- * mtk_router_dispatch, synchronously read the capture struct's fields
- * immediately afterward) MUST NOT be reached by this path -- doing so is
- * a use-after-return. This is precisely why no adapter in this codebase
- * currently registers a runner: each would need to switch from
- * synchronous stack-local capture to a persistent, adapter-owned sink
- * object (e.g. a per-session outbound queue) before enabling this
- * mechanism safely. See docs/PROVENANCE.md. */
+ * Only ACCEPTED_ASYNC requests with dispatch_mode=DEFER_ALLOWED may be
+ * deferred. This mode is a caller promise: sink.user and everything its
+ * callbacks access must survive the entire async operation. The router
+ * copies pointers, not their storage. A borrowed synchronous capture must
+ * select INLINE; factory UART does so even for its persistent event sink.
+ * Wire/capability profile does not determine execution eligibility.
+ * Configure runner and pool locks before concurrent dispatch begins. */
 typedef int (*mtk_async_runner_fn)(void (*fn)(void *arg), void *arg);
 void mtk_router_set_async_runner(mtk_async_runner_fn runner);
 
@@ -67,8 +51,8 @@ void mtk_router_set_async_runner(mtk_async_runner_fn runner);
  * "run until stopped" ACCEPTED_ASYNC operation (e.g. DEAUTH_START
  * count=0 -- mtek_wifi_logic.c) can query this to decide whether it is
  * safe to block indefinitely waiting for a concurrent STOP: even with a
- * runner registered, a FACTORY_UART-profile dispatch is never deferred
- * (mtk_router_dispatch's own transport-aware gate) and this reports 0 for
+ * runner registered, an INLINE dispatch is never deferred
+ * (the factory UART adapter explicitly selects INLINE) and this reports 0 for
  * it, exactly like the fully-synchronous case (no runner registered at
  * all, matching every host test that does not itself register one) --
  * in both, nothing else could ever dispatch a concurrent STOP, so

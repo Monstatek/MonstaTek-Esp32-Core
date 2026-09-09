@@ -27,7 +27,7 @@ directly, with no build-time choice needed or possible.
 |---|---|
 | Factory M1 UART adapter | Compiled in; boot-started unconditionally; may win the runtime AUTO-selection race |
 | Native M1 SPI v1 adapter | Compiled in; boot-started unconditionally (AUTO-selected vs. M1 Community Compatibility on the shared SPI bus, then races UART for cross-transport exclusivity) |
-| M1 Community Compatibility adapter (legacy Bedge/C3 wire profile) | Compiled in; boot-started unconditionally (same AUTO/cross-transport selection as above) |
+| M1 Community Compatibility adapter (legacy Mtek Compatibility/C3 wire profile) | Compiled in; boot-started unconditionally (same AUTO/cross-transport selection as above) |
 | Karma auto-responder module | Compiled in (not yet implemented -- reports `UNSUPPORTED`, see `docs/PROVENANCE.md`) |
 | Probe-request flood module | Compiled in (not yet implemented -- reports `UNSUPPORTED`) |
 | Captive portal module | Compiled in (not yet implemented -- reports `UNSUPPORTED`) |
@@ -117,11 +117,11 @@ operation always terminates FAILED/IO_ERROR):
 | Profile       | Before      | After         |
 |---------------|-------------|---------------|
 | native_spi    | SUPPORTED   | **UNSUPPORTED** |
-| bedge_c3      | SUPPORTED   | **UNSUPPORTED** |
+| compat_c3      | SUPPORTED   | **UNSUPPORTED** |
 | factory_uart  | UNAVAILABLE | UNAVAILABLE (no change) |
 
 `GET_CAPABILITIES` now reports UNSUPPORTED for TIME_SYNC_START on native and
-Bedge/C3. Restore to SUPPORTED only when a real SNTP client is implemented.
+Mtek Compatibility/C3. Restore to SUPPORTED only when a real SNTP client is implemented.
 Host tests that used TIME_SYNC_START as a generic arbiter-free async vehicle
 were migrated to a test-only opcode overlay (`mtk_opcode_overlay`, inert in
 production; `host_tests/support/mtk_test_async_fixture.h`).
@@ -130,13 +130,13 @@ production; `host_tests/support/mtk_test_async_fixture.h`).
 
 `TIME_SYNC_STOP` (service 0x0000, opcode 0x0009) native capability_state
 changed SUPPORTED -> UNSUPPORTED, to match TIME_SYNC_START (UNSUPPORTED on
-native/bedge_c3 -- no SNTP client). factory_uart stays UNAVAILABLE,
-bedge_c3 stays UNSUPPORTED. Host tests needing a generic token-addressed
+native/compat_c3 -- no SNTP client). factory_uart stays UNAVAILABLE,
+compat_c3 stays UNSUPPORTED. Host tests needing a generic token-addressed
 STOP use a test-only overlay opcode (0x00F1) compiled only into the
 host-test build (MTK_ENABLE_TEST_OPCODES), never the ESP32 target.
 
 | Opcode         | Profile      | Before      | After         |
 |----------------|--------------|-------------|---------------|
 | TIME_SYNC_STOP | native_spi   | SUPPORTED   | **UNSUPPORTED** |
-| TIME_SYNC_STOP | bedge_c3     | UNSUPPORTED | UNSUPPORTED (no change) |
+| TIME_SYNC_STOP | compat_c3     | UNSUPPORTED | UNSUPPORTED (no change) |
 | TIME_SYNC_STOP | factory_uart | UNAVAILABLE | UNAVAILABLE (no change) |

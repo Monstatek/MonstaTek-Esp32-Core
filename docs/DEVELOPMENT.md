@@ -27,7 +27,7 @@ For the ESP32-C6 target, activate ESP-IDF v6.0.1, then run:
 
 ```sh
 python3 tools/gen_schema.py --schema tools/schemas.json --out components/mtek_schema
-python3 tools/gen_bedge_map.py --schema tools/schemas.json --out components/mtek_transport_spi_bedge
+python3 tools/gen_compat_map.py --schema tools/schemas.json --out components/mtek_transport_spi_compat
 idf.py -B /tmp/mtek-idf-build set-target esp32c6
 idf.py -B /tmp/mtek-idf-build build
 python3 tools/check_resource_budget.py /tmp/mtek-idf-build/mtkcore.map

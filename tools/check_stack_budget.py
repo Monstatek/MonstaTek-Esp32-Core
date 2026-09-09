@@ -43,6 +43,35 @@ import sys
 # own HAL/driver call frames, and interrupt/register-save overhead).
 CHAINS = [
     {
+        "task": "ble_tick_task (blocking signal sample)",
+        "stack_bytes": 4096,
+        "margin": 0.60,
+        "members": [
+            ("main/app_main.c", "ble_tick_task"),
+            ("components/mtek_ble_service/mtek_ble_logic.c", "mtek_ble_signal_meter_tick"),
+            ("components/mtek_ble_service/mtek_ble_hal_esp32.c", "esp32_signal_sample"),
+        ],
+    },
+    {
+        "task": "periodic_delivery_task (GATT delivery)",
+        "stack_bytes": 4096,
+        "margin": 0.60,
+        "members": [
+            ("main/app_main.c", "periodic_delivery_task"),
+            ("components/mtek_ble_service/mtek_ble_logic.c", "mtek_ble_gatt_tick"),
+            ("components/mtek_core/mtek_async_queue.c", "mtk_async_sink_event"),
+        ],
+    },
+    {
+        "task": "periodic_delivery_task (capture deadlines)",
+        "stack_bytes": 4096,
+        "margin": 0.60,
+        "members": [
+            ("main/app_main.c", "periodic_delivery_task"),
+            ("components/mtek_capture_service/mtek_capture_logic.c", "mtek_capture_channel_hop_tick"),
+        ],
+    },
+    {
         "task": "spi_runtime_task (native SPI v1 worst path)",
         "stack_bytes": 12288,
         "margin": 0.60,
@@ -55,13 +84,13 @@ CHAINS = [
         ],
     },
     {
-        "task": "spi_runtime_task (Bedge/C3 worst path)",
+        "task": "spi_runtime_task (Mtek Compatibility/C3 worst path)",
         "stack_bytes": 12288,
         "margin": 0.60,
         "members": [
             ("main/mtek_spi_runtime.c", "spi_runtime_task"),
-            ("components/mtek_transport_spi_bedge/mtek_bedge_dispatch.c", "mtek_bedge_dispatch_request"),
-            ("components/mtek_transport_spi_bedge/mtek_bedge_dispatch.c", "handle_raw_tx"),
+            ("components/mtek_transport_spi_compat/mtek_compat_dispatch.c", "mtek_compat_dispatch_request"),
+            ("components/mtek_transport_spi_compat/mtek_compat_dispatch.c", "handle_raw_tx"),
         ],
     },
     {

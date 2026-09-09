@@ -381,7 +381,7 @@ static void frame_cb(void *user, const uint8_t *frame, uint16_t len, int8_t rssi
  * status" requirement for the new native SPI CREDIT class. Returns 1 if
  * `token` matched the currently active capture session (credit applied),
  * 0 otherwise (unknown/mismatched/no active session -- a safe no-op, not
- * an error, matching the pre-existing UART/Bedge callers' own
+ * an error, matching the pre-existing UART/Mtek Compatibility callers' own
  * fire-and-forget usage of this same function). */
 uint8_t mtek_capture_grant_credit(uint32_t token, uint32_t bytes) {
     cap_lock();
@@ -966,7 +966,8 @@ static void mtek_diagnostics_dispatch(mtk_request_ctx_t *ctx, const mtk_opcode_e
     }
 }
 
-void mtek_capture_service_register(void) {
-    mtk_router_register(0x0004, mtek_capture_dispatch);
-    mtk_router_register(0x0005, mtek_diagnostics_dispatch);
+mtk_register_result_t mtek_capture_service_register(void) {
+    mtk_register_result_t rc = mtk_router_register(0x0004, mtek_capture_dispatch);
+    if (rc != MTK_REGISTER_OK) return rc;
+    return mtk_router_register(0x0005, mtek_diagnostics_dispatch);
 }

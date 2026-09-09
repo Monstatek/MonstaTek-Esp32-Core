@@ -3,7 +3,7 @@
     "purpose": "Non-production, machine-readable mirror of the Task 002 canonical contract, rework 9 (contract review 9 closure-correction pass applied on top of the rework 8 User Classification Decision / contract review 8 closure pass). Independently authored for this task; imports no external source.",
     "task": "002_CANONICAL_SERVICE_CONTRACTS",
     "protocol_ref": "02-protocol/SPI_PROTOCOL_V1.md",
-    "completeness_note": "Every one of the 91 canonical opcodes (corrected this rework: 86 + TIME_SYNC_START + TIME_SYNC_STOP + WIFI_MODE_GET + WIFI_MODE_SET + WIFI_MAC_GET, contract review 8 items 2-3 -- the user classified SNTP_SYNC and Wi-Fi GET_MODE/SET_MODE/GET_MAC as List B clean-slate platform utilities on 2026-09-04, so all five now have real canonical owners and are folded into `opcodes` below like every other List B family, no longer left in the unclassified/reserved ledger) carries explicit request_fields/response_fields (empty arrays where genuinely empty, never a missing key), a capability_state per profile, a resource_class (or no_radio_lease:true), and lifecycle metadata (status_outcomes, deadline bounds, cancellable, idempotent, persistent_effects, stop_owner). Major async operations carry explicit event schemas. Bedge-only commands/events that remain genuinely reserved-DISABLED (Zigbee, ESP-NOW, system OTA) are enumerated separately in `bedge_ledger_summary` below and in full in `002-adapter-translation-matrix.md` Sec 5, not folded into `opcodes`, since they have no canonical owner to encode fields against. The qMonstatek/screen host bridge remains the one deliberate exception: capability-only and DISABLED under accepted design input 12 (contract review 4 item 2), not because it is unclassified. Every `notes` field that previously carried a stale `UNCLASSIFIED` label on an opcode already reclassified into List B (BEACON_START and the twelve BLE compatibility-family opcodes) was corrected in rework 5 (contract review 5 item 1); the same correction is applied this rework to every reference to the four now-resolved items."
+    "completeness_note": "Every one of the 91 canonical opcodes (corrected this rework: 86 + TIME_SYNC_START + TIME_SYNC_STOP + WIFI_MODE_GET + WIFI_MODE_SET + WIFI_MAC_GET, contract review 8 items 2-3 -- the user classified SNTP_SYNC and Wi-Fi GET_MODE/SET_MODE/GET_MAC as List B clean-slate platform utilities on 2026-09-04, so all five now have real canonical owners and are folded into `opcodes` below like every other List B family, no longer left in the unclassified/reserved ledger) carries explicit request_fields/response_fields (empty arrays where genuinely empty, never a missing key), a capability_state per profile, a resource_class (or no_radio_lease:true), and lifecycle metadata (status_outcomes, deadline bounds, cancellable, idempotent, persistent_effects, stop_owner). Major async operations carry explicit event schemas. Mtek Compatibility-only commands/events that remain genuinely reserved-DISABLED (Zigbee, ESP-NOW, system OTA) are enumerated separately in `compat_ledger_summary` below and in full in `002-adapter-translation-matrix.md` Sec 5, not folded into `opcodes`, since they have no canonical owner to encode fields against. The qMonstatek/screen host bridge remains the one deliberate exception: capability-only and DISABLED under accepted design input 12 (contract review 4 item 2), not because it is unclassified. Every `notes` field that previously carried a stale `UNCLASSIFIED` label on an opcode already reclassified into List B (BEACON_START and the twelve BLE compatibility-family opcodes) was corrected in rework 5 (contract review 5 item 1); the same correction is applied this rework to every reference to the four now-resolved items."
   },
   "status_codes": {
     "OK": 0,
@@ -88,7 +88,7 @@
     "when_false": "the gated operation reports capability_state DISABLED for every profile that would otherwise be SUPPORTED, and any request against it (bypassing capability discovery) is rejected the legal wire status UNSUPPORTED with no side effect -- mode is left completely unchanged, no partial state transition, no radio/arbiter interaction attempted. DISABLED is a capability-discovery state only, never a wire status (contract review 10 item 5); status_outcomes for the gated operation lists UNSUPPORTED, never DISABLED.",
     "when_true": "ordinary authorization_level >= TRANSPORT_POSSESSION plus the operation's own atomic-lock BUSY/no-side-effect precondition checks (opcode lifecycle_meta) still apply in full -- the lab gate only removes the DISABLED capability-discovery default, it never substitutes for or weakens the other checks",
     "enablement_mechanism": "a separately identified lab build/profile (a distinct compile-time configuration from the universal three-adapter customer/factory artifact, 002-compatibility-boundary-and-size-gate.md Sec 5.5) or a future authenticated administrative policy -- neither is an unauthenticated runtime toggle, and this task does not invent one",
-    "opcode_stays_compiled_in": "the canonical opcode remains compiled into the universal image and is truthfully capability-reported as DISABLED there (never removed/hidden); only a lab-enabled native build may report SUPPORTED for it -- WIFI_MODE_SET's bedge_c3 mapping remains DISABLED regardless of this gate, pending T-WIFI-5, since T-WIFI-5 (no dispatch case evidenced in any pinned build) is a wholly separate, unrelated gate that a lab-enabled Bedge build does not close (contract review 10 item 7)"
+    "opcode_stays_compiled_in": "the canonical opcode remains compiled into the universal image and is truthfully capability-reported as DISABLED there (never removed/hidden); only a lab-enabled native build may report SUPPORTED for it -- WIFI_MODE_SET's compat_c3 mapping remains DISABLED regardless of this gate, pending T-WIFI-5, since T-WIFI-5 (no dispatch case evidenced in any pinned build) is a wholly separate, unrelated gate that a lab-enabled Mtek Compatibility build does not close (contract review 10 item 7)"
   },
   "registry": [
     {
@@ -192,7 +192,7 @@
             "WIFI_MAC_GET"
           ],
           "capability_state_factory_uart": "UNAVAILABLE",
-          "note": "range extended 0x0026->0x0029 (contract review 8 item 3): Wi-Fi GET_MODE/SET_MODE/GET_MAC classified List B 2026-09-04. Corrected contract review 9 items 4-5: WIFI_MODE_GET/WIFI_MODE_SET report bedge_c3 DISABLED (pending T-WIFI-5, not a tested interoperability claim); WIFI_MODE_SET additionally reports native DISABLED in the universal customer/factory artifact by default (lab_controls_enabled policy gate, schemas.json top-level lab_controls_policy, false by default -- TRANSPORT_POSSESSION authorization alone is not lab authorization); WIFI_MAC_GET alone remains SUPPORTED for native/bedge_c3, subject to its own T-WIFI-5 hardware replay gate for live confirmation only, since its header-evidenced shape is otherwise sufficient."
+          "note": "range extended 0x0026->0x0029 (contract review 8 item 3): Wi-Fi GET_MODE/SET_MODE/GET_MAC classified List B 2026-09-04. Corrected contract review 9 items 4-5: WIFI_MODE_GET/WIFI_MODE_SET report compat_c3 DISABLED (pending T-WIFI-5, not a tested interoperability claim); WIFI_MODE_SET additionally reports native DISABLED in the universal customer/factory artifact by default (lab_controls_enabled policy gate, schemas.json top-level lab_controls_policy, false by default -- TRANSPORT_POSSESSION authorization alone is not lab authorization); WIFI_MAC_GET alone remains SUPPORTED for native/compat_c3, subject to its own T-WIFI-5 hardware replay gate for live confirmation only, since its header-evidenced shape is otherwise sufficient."
         }
       ]
     },
@@ -268,7 +268,7 @@
     "max_control_payload_bytes": 65536,
     "duplicate_cache_depth": 8,
     "max_operation_tokens": 8,
-    "terminal_event_reserve": 8,
+    "terminal_event_reserve": 0,
     "max_progress_event_queue": 8,
     "max_active_cursors": 4,
     "max_owned_buffers": 4,
@@ -284,8 +284,8 @@
     "wifi_channel_regulatory_min": 1,
     "wifi_channel_regulatory_max": 13,
     "beacon_max_ssids_canonical": 32,
-    "beacon_max_ssids_bedge_wire_transport_shape": 32,
-    "beacon_max_ssids_bedge_effective_enforced": 16,
+    "beacon_max_ssids_compat_wire_transport_shape": 32,
+    "beacon_max_ssids_compat_effective_enforced": 16,
     "beacon_max_ssids_prior_experimental_implementation": 11,
     "sta_scan_duration_wire_unit": "seconds",
     "sta_scan_duration_wire_max_seconds": 255,
@@ -619,11 +619,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0001 M1ESP_SYS_PING"
+        "compat_c3": "0x0001 M1ESP_SYS_PING"
       }
     },
     {
@@ -730,11 +730,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "version",
-        "bedge_c3": "0x0002+0x0003 M1ESP_SYS_GET_STATUS + M1ESP_SYS_GET_FW_VERSION (merged)"
+        "compat_c3": "0x0002+0x0003 M1ESP_SYS_GET_STATUS + M1ESP_SYS_GET_FW_VERSION (merged)"
       },
       "notes": "service_summary added rework 2 review item 7: bounded per-service {id,major,minor} digest so GET_VERSION alone answers 'what service versions does this build implement' without a second GET_CAPABILITIES round trip; GET_CAPABILITIES remains the sole owner of per-operation state/limits/dependencies (Sec 2 002-service-registry.md)."
     },
@@ -801,11 +801,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNSUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": null
+        "compat_c3": null
       }
     },
     {
@@ -900,11 +900,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "help (synthesized internally, never on wire)",
-        "bedge_c3": "0x0002 M1ESP_SYS_GET_STATUS cap_bitmap (coarse, whole-service rows only)"
+        "compat_c3": "0x0002 M1ESP_SYS_GET_STATUS cap_bitmap (coarse, whole-service rows only)"
       },
       "notes": "service_major/service_minor added to each entry rework 2 review item 7. Every opcode in this file has an effective GET_CAPABILITIES entry (either its own explicit override row or its service's whole-service default row, 002-service-registry.md Sec 2) -- this is the byte-unambiguous inheritance encoding that satisfies 'return an effective entry for every operation (paged), or define and test an inheritance encoding'."
     },
@@ -965,11 +965,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNSUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": null
+        "compat_c3": null
       }
     },
     {
@@ -1027,13 +1027,13 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "reboot",
-        "bedge_c3": "0x0005 M1ESP_SYS_RESET"
+        "compat_c3": "0x0005 M1ESP_SYS_RESET"
       },
-      "notes": "Corrected rework 2 review item 9: lifecycle relabeled ACKNOWLEDGED_ONE_SHOT (not ONE_WAY) -- it emits an explicit ACCEPTED response (accepted_delay_ms, clamped to the 60000ms bound) before the device resets, then a RESET_SCHEDULED lifecycle event fires immediately after (correlation_or_zero=0, session-scoped) reporting the actual scheduled fire time so a peer that missed the synchronous response can still learn the outcome from the event stream. This preserves the Bedge header-vs-implementation divergence explicitly (002-adapter-translation-matrix.md Sec 2): the header comment says 'no resp', the pinned dispatch code sends RESP(OK) then resets after 50ms -- the canonical model matches the dispatch code (source-proven, not the stale comment)."
+      "notes": "Corrected rework 2 review item 9: lifecycle relabeled ACKNOWLEDGED_ONE_SHOT (not ONE_WAY) -- it emits an explicit ACCEPTED response (accepted_delay_ms, clamped to the 60000ms bound) before the device resets, then a RESET_SCHEDULED lifecycle event fires immediately after (correlation_or_zero=0, session-scoped) reporting the actual scheduled fire time so a peer that missed the synchronous response can still learn the outcome from the event stream. This preserves the Mtek Compatibility header-vs-implementation divergence explicitly (002-adapter-translation-matrix.md Sec 2): the header comment says 'no resp', the pinned dispatch code sends RESP(OK) then resets after 50ms -- the canonical model matches the dispatch code (source-proven, not the stale comment)."
     },
     {
       "service": "0x0000",
@@ -1066,11 +1066,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNSUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": null
+        "compat_c3": null
       }
     },
     {
@@ -1171,14 +1171,14 @@
       "capability_state": {
         "native": "UNSUPPORTED",
         "factory_uart": "UNAVAILABLE",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
-      "rc12_capability_correction": "RC12 hardening round, item 5 (P1): native/bedge_c3 downgraded SUPPORTED -> UNSUPPORTED. This candidate wires no SNTP client, so a dispatched TIME_SYNC_START always terminates FAILED/IO_ERROR (handle_time_sync_start, mtek_system_logic.c). Advertising SUPPORTED was a dishonest capability claim kept alive only because several host tests borrowed this opcode as a generic arbiter-free ACCEPTED_ASYNC vehicle; those tests are decoupled onto a test-only overlay opcode (mtek_opcode_overlay.h / mtk_test_async_fixture) so the production advertisement can now tell the truth. factory_uart was already UNAVAILABLE (no diff). Restore to SUPPORTED only when a real SNTP implementation exists.",
+      "rc12_capability_correction": "RC12 hardening round, item 5 (P1): native/compat_c3 downgraded SUPPORTED -> UNSUPPORTED. This candidate wires no SNTP client, so a dispatched TIME_SYNC_START always terminates FAILED/IO_ERROR (handle_time_sync_start, mtek_system_logic.c). Advertising SUPPORTED was a dishonest capability claim kept alive only because several host tests borrowed this opcode as a generic arbiter-free ACCEPTED_ASYNC vehicle; those tests are decoupled onto a test-only overlay opcode (mtek_opcode_overlay.h / mtk_test_async_fixture) so the production advertisement can now tell the truth. factory_uart was already UNAVAILABLE (no diff). Restore to SUPPORTED only when a real SNTP implementation exists.",
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0009 M1_RPC_SYS_SNTP_SYNC (REQ none, WiFi must be up -> RESP m1_rpc_time_t{year:u16,month:u8,day:u8,hour:u8,minute:u8,second:u8,weekday:u8} or NAK). Bedge supports this START mapping only when the canonical request's server field is empty or exactly the literal 'pool.ntp.org' -- any other server value returns status=UNSUPPORTED before dispatch, with no operation token minted and no Bedge request ever sent, since the Bedge dispatch has no per-call server-selection wire field to carry a different value toward (contract review 9 item 3). RC12: superseded by the capability downgrade above -- native/bedge_c3 now report UNSUPPORTED for TIME_SYNC_START unconditionally until a real SNTP client exists."
+        "compat_c3": "0x0009 M1_RPC_SYS_SNTP_SYNC (REQ none, WiFi must be up -> RESP m1_rpc_time_t{year:u16,month:u8,day:u8,hour:u8,minute:u8,second:u8,weekday:u8} or NAK). Mtek Compatibility supports this START mapping only when the canonical request's server field is empty or exactly the literal 'pool.ntp.org' -- any other server value returns status=UNSUPPORTED before dispatch, with no operation token minted and no Mtek Compatibility request ever sent, since the Mtek Compatibility dispatch has no per-call server-selection wire field to carry a different value toward (contract review 9 item 3). RC12: superseded by the capability downgrade above -- native/compat_c3 now report UNSUPPORTED for TIME_SYNC_START unconditionally until a real SNTP client exists."
       },
-      "notes": "List B -- clean-slate platform utility, classified 2026-09-04 (User Classification Decision / contract review 8 item 2, tasks/002_CANONICAL_SERVICE_CONTRACTS.md); not a shipped-customer parity surface, no List A preservation obligation. Precondition (own field, not a generic core rule): requires an already-connected station -- source-confirmed handle_sntp_sync checks wifi_mgr_is_connected() first and returns NAK(M1_RPC_ERR_NOT_RUNNING) if not connected; the canonical operation rejects with status=NOT_READY (no operation token minted) under the identical precondition, never attempting to bring Wi-Fi up itself. Malformed/out-of-bounds server or timeout_ms is rejected status=INVALID_ARGUMENT (no token minted); an already-active time sync (one in-flight TIME_SYNC_START per session) is rejected status=BUSY; operation-table exhaustion is rejected status=NO_MEMORY; a request against an unavailable profile (factory-UART, capability_state=UNAVAILABLE) or a rejected Bedge custom-server value (adapter_map above) reports the legal wire status UNSUPPORTED, no token minted -- UNAVAILABLE/DISABLED/UNSUPPORTED are capability-discovery states, not wire statuses, so status_outcomes never lists UNAVAILABLE (contract review 10 item 5). These five pre-acceptance outcomes and the four post-acceptance terminal outcomes (lifecycle_meta.terminal_outcomes above) are exact and exhaustive -- no IO_ERROR/NOT_READY ambiguity (contract review 9 item 2). Never changes Wi-Fi mode or credentials and owns no radio-mode lease (no_radio_lease:true) -- it rides on whatever station connection already exists, exactly like STA_STATUS. The request always encodes both fields on the wire (server is a bounded length-prefixed field whose zero length selects the configured/default pool; timeout_ms is an explicit u32 with no separate implicit timer) -- no optional-field encoding is invented; an API caller that omits timeout_ms sends the literal default 15000. Accepted timeout_ms range is exactly 1000..60000. The Bedge dispatch itself blocks synchronously up to 5000ms (esp_netif_sntp_sync_wait(pdMS_TO_TICKS(5000))) and always targets a hard-coded pool.ntp.org; the adapter therefore only honors a canonical server value of '' or 'pool.ntp.org' toward a Bedge peer (adapter_map above) and cannot honor any other value -- a genuine per-profile field-expressibility gap, not a byte assumption, named as adapter test T-SYS-2. Bedge's minimal m1_rpc_time_t carries no stratum/uncertainty figure at all; on a successful Bedge-sourced translation the adapter reports stratum=0 (UNSPECIFIED) and uncertainty_ms=0xFFFFFFFF (reserved sentinel meaning 'not reported by this profile', never a claim of perfect precision), named as the same adapter test T-SYS-2; all Bedge-sourced failure translations remain all-zero like every other non-success terminal payload. unix_time_ms is the adapter's own conversion of the calendar-form m1_rpc_time_t to milliseconds since the Unix epoch (UTC, matching the struct's own gmtime_r-sourced fields) -- an ordinary, lossless calendar-to-epoch conversion, not a wire fact requiring source evidence. Native/Bedge SUPPORTED for TIME_SYNC_START specifically; factory-UART UNAVAILABLE absent any evidenced factory time-sync console command. TIME_SYNC_STOP is a separate opcode with its own, different per-profile capability_state (see its own entry) -- the two time operations do not share one Bedge disposition (contract review 9 item 3)."
+      "notes": "List B -- clean-slate platform utility, classified 2026-09-04 (User Classification Decision / contract review 8 item 2, tasks/002_CANONICAL_SERVICE_CONTRACTS.md); not a shipped-customer parity surface, no List A preservation obligation. Precondition (own field, not a generic core rule): requires an already-connected station -- source-confirmed handle_sntp_sync checks wifi_mgr_is_connected() first and returns NAK(M1_RPC_ERR_NOT_RUNNING) if not connected; the canonical operation rejects with status=NOT_READY (no operation token minted) under the identical precondition, never attempting to bring Wi-Fi up itself. Malformed/out-of-bounds server or timeout_ms is rejected status=INVALID_ARGUMENT (no token minted); an already-active time sync (one in-flight TIME_SYNC_START per session) is rejected status=BUSY; operation-table exhaustion is rejected status=NO_MEMORY; a request against an unavailable profile (factory-UART, capability_state=UNAVAILABLE) or a rejected Mtek Compatibility custom-server value (adapter_map above) reports the legal wire status UNSUPPORTED, no token minted -- UNAVAILABLE/DISABLED/UNSUPPORTED are capability-discovery states, not wire statuses, so status_outcomes never lists UNAVAILABLE (contract review 10 item 5). These five pre-acceptance outcomes and the four post-acceptance terminal outcomes (lifecycle_meta.terminal_outcomes above) are exact and exhaustive -- no IO_ERROR/NOT_READY ambiguity (contract review 9 item 2). Never changes Wi-Fi mode or credentials and owns no radio-mode lease (no_radio_lease:true) -- it rides on whatever station connection already exists, exactly like STA_STATUS. The request always encodes both fields on the wire (server is a bounded length-prefixed field whose zero length selects the configured/default pool; timeout_ms is an explicit u32 with no separate implicit timer) -- no optional-field encoding is invented; an API caller that omits timeout_ms sends the literal default 15000. Accepted timeout_ms range is exactly 1000..60000. The Mtek Compatibility dispatch itself blocks synchronously up to 5000ms (esp_netif_sntp_sync_wait(pdMS_TO_TICKS(5000))) and always targets a hard-coded pool.ntp.org; the adapter therefore only honors a canonical server value of '' or 'pool.ntp.org' toward a Mtek Compatibility peer (adapter_map above) and cannot honor any other value -- a genuine per-profile field-expressibility gap, not a byte assumption, named as adapter test T-SYS-2. Mtek Compatibility's minimal m1_rpc_time_t carries no stratum/uncertainty figure at all; on a successful Mtek Compatibility-sourced translation the adapter reports stratum=0 (UNSPECIFIED) and uncertainty_ms=0xFFFFFFFF (reserved sentinel meaning 'not reported by this profile', never a claim of perfect precision), named as the same adapter test T-SYS-2; all Mtek Compatibility-sourced failure translations remain all-zero like every other non-success terminal payload. unix_time_ms is the adapter's own conversion of the calendar-form m1_rpc_time_t to milliseconds since the Unix epoch (UTC, matching the struct's own gmtime_r-sourced fields) -- an ordinary, lossless calendar-to-epoch conversion, not a wire fact requiring source evidence. Native/Mtek Compatibility SUPPORTED for TIME_SYNC_START specifically; factory-UART UNAVAILABLE absent any evidenced factory time-sync console command. TIME_SYNC_STOP is a separate opcode with its own, different per-profile capability_state (see its own entry) -- the two time operations do not share one Mtek Compatibility disposition (contract review 9 item 3)."
     },
     {
       "service": "0x0000",
@@ -1219,17 +1219,17 @@
       },
       "resource_class": null,
       "no_radio_lease": true,
-      "rc12_blocker_capability_correction": "RC12 blocker round, item 1: native SUPPORTED -> UNSUPPORTED, to match TIME_SYNC_START (which is UNSUPPORTED on native/bedge_c3 -- no SNTP client). A STOP for an operation family whose START cannot be dispatched has nothing to stop; advertising it SUPPORTED on native was inconsistent. factory_uart stays UNAVAILABLE, bedge_c3 stays UNSUPPORTED. Host tests that need a generic SYNCHRONOUS token-addressed STOP use the test-only 0x00F1 fixture opcode (mtk_test_async_fixture.h), compiled only into the host-test build (MTK_ENABLE_TEST_OPCODES), never the ESP32 target.",
+      "rc12_blocker_capability_correction": "RC12 blocker round, item 1: native SUPPORTED -> UNSUPPORTED, to match TIME_SYNC_START (which is UNSUPPORTED on native/compat_c3 -- no SNTP client). A STOP for an operation family whose START cannot be dispatched has nothing to stop; advertising it SUPPORTED on native was inconsistent. factory_uart stays UNAVAILABLE, compat_c3 stays UNSUPPORTED. Host tests that need a generic SYNCHRONOUS token-addressed STOP use the test-only 0x00F1 fixture opcode (mtk_test_async_fixture.h), compiled only into the host-test build (MTK_ENABLE_TEST_OPCODES), never the ESP32 target.",
       "capability_state": {
         "native": "UNSUPPORTED",
         "factory_uart": "UNAVAILABLE",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": null
+        "compat_c3": null
       },
-      "notes": "Native-only, no Bedge source: M1_RPC_SYS_SNTP_SYNC is a single blocking REQ/RESP with no cancel concept on the wire (same category as PMKID_CAPTURE_STOP, 002-wifi-service.md Sec 2.8.3) -- this is a new clean-slate STOP with no corresponding Bedge command to map to, stated plainly rather than inventing one. Cancellable only through this token-addressed STOP, per contract review 8 item 2's explicit requirement."
+      "notes": "Native-only, no Mtek Compatibility source: M1_RPC_SYS_SNTP_SYNC is a single blocking REQ/RESP with no cancel concept on the wire (same category as PMKID_CAPTURE_STOP, 002-wifi-service.md Sec 2.8.3) -- this is a new clean-slate STOP with no corresponding Mtek Compatibility command to map to, stated plainly rather than inventing one. Cancellable only through this token-addressed STOP, per contract review 8 item 2's explicit requirement."
     },
     {
       "service": "0x0001",
@@ -1314,13 +1314,13 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "scan -a",
-        "bedge_c3": "0x0103 M1ESP_WIFI_SCAN"
+        "compat_c3": "0x0103 M1ESP_WIFI_SCAN"
       },
-      "notes": "band=BAND_5GHZ(1) alone rejected UNSUPPORTED on ESP32-C6 (2.4GHz-only hardware, rework 2 review item 5). Bedge's own handle_wifi_scan does not read the request payload at all (source-confirmed, header-vs-implementation divergence) -- the Bedge adapter mapping therefore always sends band=BAND_ALL toward a Bedge peer regardless of the canonical caller's requested band, since Bedge cannot honor a band selection either way."
+      "notes": "band=BAND_5GHZ(1) alone rejected UNSUPPORTED on ESP32-C6 (2.4GHz-only hardware, rework 2 review item 5). Mtek Compatibility's own handle_wifi_scan does not read the request payload at all (source-confirmed, header-vs-implementation divergence) -- the Mtek Compatibility adapter mapping therefore always sends band=BAND_ALL toward a Mtek Compatibility peer regardless of the canonical caller's requested band, since Mtek Compatibility cannot honor a band selection either way."
     },
     {
       "service": "0x0001",
@@ -1363,11 +1363,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNSUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": null
+        "compat_c3": null
       }
     },
     {
@@ -1425,11 +1425,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "list -a",
-        "bedge_c3": "0x0103 M1ESP_WIFI_SCAN (RESP payload, same call)"
+        "compat_c3": "0x0103 M1ESP_WIFI_SCAN (RESP payload, same call)"
       }
     },
     {
@@ -1474,11 +1474,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "stop",
-        "bedge_c3": null
+        "compat_c3": null
       }
     },
     {
@@ -1523,11 +1523,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNSUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": null
+        "compat_c3": null
       }
     },
     {
@@ -1598,13 +1598,13 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "scan -s",
-        "bedge_c3": "0x030E M1ESP_OFF_STA_SCAN_START"
+        "compat_c3": "0x030E M1ESP_OFF_STA_SCAN_START"
       },
-      "notes": "Closes T-WIFI-3 (rework 2 review item 4): wifi_sta_scan.h/.c (references/bedge/m1-esp32-brain/components/wifi_attack) confirm wifi_sta_scan_start(bssid, channel, uint16_t duration_sec) is SECONDS; main.c's handle_sta_scan_start passes only payload[7] (a single wire byte) as that argument, so the wire-representable range is 0..255 seconds even though the underlying function signature is uint16_t. duration_ms stays the richer canonical field (superset); the Bedge adapter converts duration_ms -> whole seconds (floor(duration_ms/1000), clamped 0..255) -- not an unconfirmed unit any more."
+      "notes": "Closes T-WIFI-3 (rework 2 review item 4): wifi_sta_scan.h/.c (references/compat/m1-esp32-brain/components/wifi_attack) confirm wifi_sta_scan_start(bssid, channel, uint16_t duration_sec) is SECONDS; main.c's handle_sta_scan_start passes only payload[7] (a single wire byte) as that argument, so the wire-representable range is 0..255 seconds even though the underlying function signature is uint16_t. duration_ms stays the richer canonical field (superset); the Mtek Compatibility adapter converts duration_ms -> whole seconds (floor(duration_ms/1000), clamped 0..255) -- not an unconfirmed unit any more."
     },
     {
       "service": "0x0001",
@@ -1647,11 +1647,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNSUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": null
+        "compat_c3": null
       }
     },
     {
@@ -1709,11 +1709,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "list -s",
-        "bedge_c3": "0x030F M1ESP_OFF_STA_SCAN_RESULTS"
+        "compat_c3": "0x030F M1ESP_OFF_STA_SCAN_RESULTS"
       }
     },
     {
@@ -1758,11 +1758,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "stop",
-        "bedge_c3": null
+        "compat_c3": null
       }
     },
     {
@@ -1874,7 +1874,7 @@
         "deadline_max_ms": 60000,
         "cancellable": true,
         "idempotent": true,
-        "idempotent_note": "same-SSID reconnect while already connected completes immediately without a disconnect/reconnect cycle, source-matched to Bedge handle_wifi_connect",
+        "idempotent_note": "same-SSID reconnect while already connected completes immediately without a disconnect/reconnect cycle, source-matched to Mtek Compatibility handle_wifi_connect",
         "persistent_effects": "settings (if persistence=PERSISTENT; DISABLED in Phase 1, rework 2 review item 13 -- see 002-wifi-service.md Sec 2.6.1)",
         "stop_owner": "caller via STA_DISCONNECT",
         "cleanup": "radio released on disconnect/fail/timeout"
@@ -1883,13 +1883,13 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNAVAILABLE",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0104 M1ESP_WIFI_CONNECT"
+        "compat_c3": "0x0104 M1ESP_WIFI_CONNECT"
       },
-      "notes": "List A (tasks/002_CANONICAL_SERVICE_CONTRACTS.md boundary correction): factory-field mechanism UNAVAILABLE pending hardware replay gate T-A2 (002-compatibility-boundary-and-size-gate.md Sec 1); canonical + native + Bedge all SUPPORTED. Corrected contract review 10 item 5: UNAVAILABLE is a capability-discovery state, not a wire status; a request against the factory-UART profile (capability_state.factory_uart=UNAVAILABLE) returns the legal wire status UNSUPPORTED with no side effect -- status_outcomes above lists UNSUPPORTED, never UNAVAILABLE."
+      "notes": "List A (tasks/002_CANONICAL_SERVICE_CONTRACTS.md boundary correction): factory-field mechanism UNAVAILABLE pending hardware replay gate T-A2 (002-compatibility-boundary-and-size-gate.md Sec 1); canonical + native + Mtek Compatibility all SUPPORTED. Corrected contract review 10 item 5: UNAVAILABLE is a capability-discovery state, not a wire status; a request against the factory-UART profile (capability_state.factory_uart=UNAVAILABLE) returns the legal wire status UNSUPPORTED with no side effect -- status_outcomes above lists UNSUPPORTED, never UNAVAILABLE."
     },
     {
       "service": "0x0001",
@@ -1910,17 +1910,17 @@
         "idempotent": true,
         "persistent_effects": "none",
         "stop_owner": "n/a (is the stop for STA_CONNECT)",
-        "cleanup": "releases WMC lease; response may precede full teardown, source-matched to Bedge's own immediate-ack behavior"
+        "cleanup": "releases WMC lease; response may precede full teardown, source-matched to Mtek Compatibility's own immediate-ack behavior"
       },
       "resource_class": "WMC",
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNAVAILABLE",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0105 M1ESP_WIFI_DISCONNECT"
+        "compat_c3": "0x0105 M1ESP_WIFI_DISCONNECT"
       }
     },
     {
@@ -1980,11 +1980,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNAVAILABLE",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0106 M1ESP_WIFI_GET_STATUS"
+        "compat_c3": "0x0106 M1ESP_WIFI_GET_STATUS"
       }
     },
     {
@@ -2064,13 +2064,13 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "beacon \"...\"",
-        "bedge_c3": "0x0304 M1ESP_OFF_BEACON_START"
+        "compat_c3": "0x0304 M1ESP_OFF_BEACON_START"
       },
-      "notes": "List B -- clean-slate design; SUPPORTED for native/factory_uart/bedge_c3, already live, no separate enablement gate pending (unlike the BLE compatibility family, which is DISABLED pending its own gate -- beacon is not in that category). Corrected rework 5 (contract review 5 item 1): stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving Wi-Fi beacon broadcast into List B (002-wifi-service.md Sec 2.3, 002-compatibility-boundary-and-size-gate.md Sec 2). ssids bound raised 11->32 (rework 2 review item 6): canonical max is now a genuine superset of this project's own 11, Bedge's wire-representable 32 (main.c parses up to 32 into the transport struct), and Bedge's own source-confirmed effective enforcement of BEACON_MAX_SSIDS=16 (wifi_attack.c, clamped inside wifi_attack_beacon_start). The Bedge adapter must therefore visibly report (never silently truncate) any canonical request with ssids.length in 17..32 as exceeding that specific profile's effective limit -- OVERFLOW for that adapter's translation, not a silent drop; native/factory profiles support the full 32 canonically."
+      "notes": "List B -- clean-slate design; SUPPORTED for native/factory_uart/compat_c3, already live, no separate enablement gate pending (unlike the BLE compatibility family, which is DISABLED pending its own gate -- beacon is not in that category). Corrected rework 5 (contract review 5 item 1): stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving Wi-Fi beacon broadcast into List B (002-wifi-service.md Sec 2.3, 002-compatibility-boundary-and-size-gate.md Sec 2). ssids bound raised 11->32 (rework 2 review item 6): canonical max is now a genuine superset of this project's own 11, Mtek Compatibility's wire-representable 32 (main.c parses up to 32 into the transport struct), and Mtek Compatibility's own source-confirmed effective enforcement of BEACON_MAX_SSIDS=16 (wifi_attack.c, clamped inside wifi_attack_beacon_start). The Mtek Compatibility adapter must therefore visibly report (never silently truncate) any canonical request with ssids.length in 17..32 as exceeding that specific profile's effective limit -- OVERFLOW for that adapter's translation, not a silent drop; native/factory profiles support the full 32 canonically."
     },
     {
       "service": "0x0001",
@@ -2114,11 +2114,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "stop",
-        "bedge_c3": "0x0305 M1ESP_OFF_BEACON_STOP"
+        "compat_c3": "0x0305 M1ESP_OFF_BEACON_STOP"
       }
     },
     {
@@ -2162,11 +2162,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNSUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": null
+        "compat_c3": null
       }
     },
     {
@@ -2287,13 +2287,13 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "bare 'deauth' (no args) -> SELECTED, single target = the console's currently select -s'd station against the console's currently select -a'd AP (precondition: both selections done, else '[!] Invalid deauth target selection. Scan/select targets first.'); 'deauth set <id,id,...>' -> SELECTED, targets = the comma-listed station-table ids; 'deauth all' -> ALL_SCANNED against the current station-scan table; 'deauth broadcast' -> BROADCAST against the selected AP; malformed/unknown syntax -> '[!] Usage: deauth [set <id,id,...>|all|broadcast]' -- baseline grammar/selection errors preserved unchanged from 001-command-behavior-matrix.md lines 45-48",
-        "bedge_c3": "0x0302 M1ESP_OFF_DEAUTH_START, m1esp_deauth_req_t{bssid[6], channel, station[6], count, interval_ms} (references/bedge/M1OS/m1_csrc/m1_esp_rpc.h lines 352-359) -- source-evidenced as exactly one AP BSSID plus one station MAC per RPC, so a Bedge peer can express SELECTED (station = a specific client MAC) and BROADCAST (station = FF:FF:FF:FF:FF:FF) but never ALL_SCANNED or a multi-target set in one RPC; this is a per-profile field-expressibility limit of the Bedge wire shape, not a missing deauth capability -- the Bedge/C3 UI's own specific-client-versus-'All (broadcast)' choice on one selected AP maps to native SELECTED versus BROADCAST, never to native ALL_SCANNED's per-scan station enumeration. Bedge source is design evidence only, not List A parity."
+        "compat_c3": "0x0302 M1ESP_OFF_DEAUTH_START, m1esp_deauth_req_t{bssid[6], channel, station[6], count, interval_ms} (references/compat/M1OS/m1_csrc/m1_esp_rpc.h lines 352-359) -- source-evidenced as exactly one AP BSSID plus one station MAC per RPC, so a Mtek Compatibility peer can express SELECTED (station = a specific client MAC) and BROADCAST (station = FF:FF:FF:FF:FF:FF) but never ALL_SCANNED or a multi-target set in one RPC; this is a per-profile field-expressibility limit of the Mtek Compatibility wire shape, not a missing deauth capability -- the Mtek Compatibility/C3 UI's own specific-client-versus-'All (broadcast)' choice on one selected AP maps to native SELECTED versus BROADCAST, never to native ALL_SCANNED's per-scan station enumeration. Mtek Compatibility source is design evidence only, not List A parity."
       },
-      "notes": "Freezes the user's default-support decision (tasks/002_CANONICAL_SERVICE_CONTRACTS.md contract review 10 item 1): DEAUTH_START/STOP/STATUS remain List B clean-room features (no shipped-parity obligation) but are compiled, enabled, and capability-reported SUPPORTED by default in the universal customer/factory artifact for native, factory-UART, and Bedge/C3 -- List B means no preservation obligation, not disabled; unlike WIFI_MODE_SET, these three opcodes are absent from lab_controls_policy.gated_operations (schemas.json top-level) and are never lab-gated. One bounded DEAUTH_START engine covers all three DeauthTargetMode values (enums.DeauthTargetMode above, SELECTED=0/ALL_SCANNED=1/BROADCAST=2); exactly one operation token and one D-class radio lease cover the entire selected/all/broadcast run; STOP, reset, peer loss, completion, and error each restore the prior radio mode and release all owned state. channel/count/interval_ms retained as good design informed by Bedge's m1esp_deauth_req_t shape, not as a preservation obligation. contract review 10 item 2 renames the ambiguous broadcast_bssid field to ap_bssid and adds station_scan_token so ALL_SCANNED can mean all stations from a real completed scan rather than an unverifiable caller claim."
+      "notes": "Freezes the user's default-support decision (tasks/002_CANONICAL_SERVICE_CONTRACTS.md contract review 10 item 1): DEAUTH_START/STOP/STATUS remain List B clean-room features (no shipped-parity obligation) but are compiled, enabled, and capability-reported SUPPORTED by default in the universal customer/factory artifact for native, factory-UART, and Mtek Compatibility/C3 -- List B means no preservation obligation, not disabled; unlike WIFI_MODE_SET, these three opcodes are absent from lab_controls_policy.gated_operations (schemas.json top-level) and are never lab-gated. One bounded DEAUTH_START engine covers all three DeauthTargetMode values (enums.DeauthTargetMode above, SELECTED=0/ALL_SCANNED=1/BROADCAST=2); exactly one operation token and one D-class radio lease cover the entire selected/all/broadcast run; STOP, reset, peer loss, completion, and error each restore the prior radio mode and release all owned state. channel/count/interval_ms retained as good design informed by Mtek Compatibility's m1esp_deauth_req_t shape, not as a preservation obligation. contract review 10 item 2 renames the ambiguous broadcast_bssid field to ap_bssid and adds station_scan_token so ALL_SCANNED can mean all stations from a real completed scan rather than an unverifiable caller claim."
     },
     {
       "service": "0x0001",
@@ -2337,11 +2337,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "stop",
-        "bedge_c3": "0x0303 M1ESP_OFF_DEAUTH_STOP"
+        "compat_c3": "0x0303 M1ESP_OFF_DEAUTH_STOP"
       }
     },
     {
@@ -2385,11 +2385,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNSUPPORTED",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x030D M1ESP_OFF_DEAUTH_STATUS"
+        "compat_c3": "0x030D M1ESP_OFF_DEAUTH_STATUS"
       }
     },
     {
@@ -2478,13 +2478,13 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "handshake",
-        "bedge_c3": "0x0310 M1ESP_OFF_HS_START"
+        "compat_c3": "0x0310 M1ESP_OFF_HS_START"
       },
-      "notes": "List B (clean-slate lab design). channel/deauth_count retained as good design informed by Bedge's confirmed compound deauth-burst-then-capture behavior."
+      "notes": "List B (clean-slate lab design). channel/deauth_count retained as good design informed by Mtek Compatibility's confirmed compound deauth-burst-then-capture behavior."
     },
     {
       "service": "0x0001",
@@ -2527,11 +2527,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "list -h (partial)",
-        "bedge_c3": "0x0311 M1ESP_OFF_HS_STATUS"
+        "compat_c3": "0x0311 M1ESP_OFF_HS_STATUS"
       }
     },
     {
@@ -2587,11 +2587,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNSUPPORTED",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0312 M1ESP_OFF_HS_GET"
+        "compat_c3": "0x0312 M1ESP_OFF_HS_GET"
       }
     },
     {
@@ -2636,11 +2636,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "stop",
-        "bedge_c3": "0x0313 M1ESP_OFF_HS_STOP"
+        "compat_c3": "0x0313 M1ESP_OFF_HS_STOP"
       }
     },
     {
@@ -2679,11 +2679,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "stop / bare Enter",
-        "bedge_c3": null
+        "compat_c3": null
       }
     },
     {
@@ -2725,11 +2725,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNSUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": null
+        "compat_c3": null
       }
     },
     {
@@ -2799,13 +2799,13 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNAVAILABLE",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0200 M1ESP_SOFTAP_START"
+        "compat_c3": "0x0200 M1ESP_SOFTAP_START"
       },
-      "notes": "New rework 4 (contract review 4 item 1). List B (approved 2026-09-04). psk empty=open/non-empty=WPA2-PSK, matching Bedge's own confirmed implicit-auth-from-password-presence behavior (handle_softap_start, main.c, read in full this session). factory_uart UNAVAILABLE is a disclosed evidence gap, not a policy choice -- no factory-console SoftAP command was located in this task's evidence base (002-wifi-service.md Sec 5). Corrected this rework (contract review 6 item 4): SOFTAP_READY changed from TERMINAL to LIFECYCLE kind (a live SAP lease continues after READY, so READY cannot be the operation's terminal state); SOFTAP_STOPPED added as the real, exactly-once terminal event."
+      "notes": "New rework 4 (contract review 4 item 1). List B (approved 2026-09-04). psk empty=open/non-empty=WPA2-PSK, matching Mtek Compatibility's own confirmed implicit-auth-from-password-presence behavior (handle_softap_start, main.c, read in full this session). factory_uart UNAVAILABLE is a disclosed evidence gap, not a policy choice -- no factory-console SoftAP command was located in this task's evidence base (002-wifi-service.md Sec 5). Corrected this rework (contract review 6 item 4): SOFTAP_READY changed from TERMINAL to LIFECYCLE kind (a live SAP lease continues after READY, so READY cannot be the operation's terminal state); SOFTAP_STOPPED added as the real, exactly-once terminal event."
     },
     {
       "service": "0x0001",
@@ -2849,11 +2849,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNAVAILABLE",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0201 M1ESP_SOFTAP_STOP"
+        "compat_c3": "0x0201 M1ESP_SOFTAP_STOP"
       }
     },
     {
@@ -2895,13 +2895,13 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNAVAILABLE",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0202 M1ESP_SOFTAP_STA_LIST"
+        "compat_c3": "0x0202 M1ESP_SOFTAP_STA_LIST"
       },
-      "notes": "Response shape corrected to Bedge's actual wire shape this session (handle_softap_sta_list: resp[0]=station_count, resp[1]=internet_shared) -- not a per-station StationRecord list, which the pinned reference implementation does not provide at this opcode."
+      "notes": "Response shape corrected to Mtek Compatibility's actual wire shape this session (handle_softap_sta_list: resp[0]=station_count, resp[1]=internet_shared) -- not a per-station StationRecord list, which the pinned reference implementation does not provide at this opcode."
     },
     {
       "service": "0x0001",
@@ -2984,13 +2984,13 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNAVAILABLE",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0306 M1ESP_OFF_PROBE_START"
+        "compat_c3": "0x0306 M1ESP_OFF_PROBE_START"
       },
-      "notes": "New this rework. List B. ssids max=16 matches Bedge's own hard-coded static char ssids[16][33] array bound exactly (handle_probe_start); empty list = wildcard broadcast probes, Bedge's own confirmed count=0 semantic."
+      "notes": "New this rework. List B. ssids max=16 matches Mtek Compatibility's own hard-coded static char ssids[16][33] array bound exactly (handle_probe_start); empty list = wildcard broadcast probes, Mtek Compatibility's own confirmed count=0 semantic."
     },
     {
       "service": "0x0001",
@@ -3034,11 +3034,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNAVAILABLE",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0307 M1ESP_OFF_PROBE_STOP"
+        "compat_c3": "0x0307 M1ESP_OFF_PROBE_STOP"
       }
     },
     {
@@ -3106,13 +3106,13 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNAVAILABLE",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": null
+        "compat_c3": null
       },
-      "notes": "New rework 4. List B. T-WIFI-4 (honest blocker, 002-wifi-service.md Sec 2.8.3): M1ESP_OFF_PMKID_CAPTURE=0x0308 has no dispatch case anywhere in the pinned main.c read in full this session, and M1_FW_CAPS's own comment confirms M1_CAP_PMKID is 'intentionally omitted until implemented' -- reserved-but-unimplemented-anywhere, not dead-in-pinned-build like HANDSHAKE_CAP/BLE_INIT. bedge_c3 is UNSUPPORTED (not SUPPORTED) because no wire shape can be evidenced. Rework 5 (contract review 5 item 2): stop_owner now names the real PMKID_CAPTURE_STOP opcode -- link-level CANCEL cannot stop an already-ACCEPTED asynchronous operation (002-canonical-core-contract.md Sec 4), so the prior 'n/a (self-terminating)' stop_owner was invalid, not merely incomplete. Corrected this rework (contract review 6 item 2): PMKID_CAPTURE_RESULT's status field is always a status_codes value (OK/TIMEOUT/etc.), never STOPPED (an operation_state value) -- deterministic first-terminal-transition-wins semantics for the found/deadline/STOP race are specified in full in 002-wifi-service.md Sec 2.8.3, not in this machine data (this event's field shape itself, status:u8/pmkid_present:bool/pmkid:bytes_fixed16, was already correct and needed no change)."
+      "notes": "New rework 4. List B. T-WIFI-4 (honest blocker, 002-wifi-service.md Sec 2.8.3): M1ESP_OFF_PMKID_CAPTURE=0x0308 has no dispatch case anywhere in the pinned main.c read in full this session, and M1_FW_CAPS's own comment confirms M1_CAP_PMKID is 'intentionally omitted until implemented' -- reserved-but-unimplemented-anywhere, not dead-in-pinned-build like HANDSHAKE_CAP/BLE_INIT. compat_c3 is UNSUPPORTED (not SUPPORTED) because no wire shape can be evidenced. Rework 5 (contract review 5 item 2): stop_owner now names the real PMKID_CAPTURE_STOP opcode -- link-level CANCEL cannot stop an already-ACCEPTED asynchronous operation (002-canonical-core-contract.md Sec 4), so the prior 'n/a (self-terminating)' stop_owner was invalid, not merely incomplete. Corrected this rework (contract review 6 item 2): PMKID_CAPTURE_RESULT's status field is always a status_codes value (OK/TIMEOUT/etc.), never STOPPED (an operation_state value) -- deterministic first-terminal-transition-wins semantics for the found/deadline/STOP race are specified in full in 002-wifi-service.md Sec 2.8.3, not in this machine data (this event's field shape itself, status:u8/pmkid_present:bool/pmkid:bytes_fixed16, was already correct and needed no change)."
     },
     {
       "service": "0x0001",
@@ -3157,13 +3157,13 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNAVAILABLE",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": null
+        "compat_c3": null
       },
-      "notes": "New this rework (contract review 5 item 2). Clean-slate native-only opcode: no corresponding Bedge command exists at all (Bedge never dispatches PMKID capture, so it has no stop concept to mirror) -- bedge_c3 adapter_map is null and capability_state is UNSUPPORTED, not because evidence is missing but because there is genuinely nothing on that wire to map to. Owns PMKID_CAPTURE_START's cancellability (0x001E's lifecycle_meta.stop_owner)."
+      "notes": "New this rework (contract review 5 item 2). Clean-slate native-only opcode: no corresponding Mtek Compatibility command exists at all (Mtek Compatibility never dispatches PMKID capture, so it has no stop concept to mirror) -- compat_c3 adapter_map is null and capability_state is UNSUPPORTED, not because evidence is missing but because there is genuinely nothing on that wire to map to. Owns PMKID_CAPTURE_START's cancellability (0x001E's lifecycle_meta.stop_owner)."
     },
     {
       "service": "0x0001",
@@ -3241,13 +3241,13 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNAVAILABLE",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0309 M1ESP_OFF_KARMA_START"
+        "compat_c3": "0x0309 M1ESP_OFF_KARMA_START"
       },
-      "notes": "New this rework. List B. request shape matches Bedge's own confirmed [channel:1] exactly (handle_karma_start); no richer field exists on Bedge's wire. KARMA_PROBE_SEEN is a genuine canonical addition -- Bedge defines M1ESP_EVT_KARMA_PROBE 0xE030 for this purpose but it is not confirmed fired by any call site read this session (002-adapter-translation-matrix.md Sec 5.2)."
+      "notes": "New this rework. List B. request shape matches Mtek Compatibility's own confirmed [channel:1] exactly (handle_karma_start); no richer field exists on Mtek Compatibility's wire. KARMA_PROBE_SEEN is a genuine canonical addition -- Mtek Compatibility defines M1ESP_EVT_KARMA_PROBE 0xE030 for this purpose but it is not confirmed fired by any call site read this session (002-adapter-translation-matrix.md Sec 5.2)."
     },
     {
       "service": "0x0001",
@@ -3291,11 +3291,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNAVAILABLE",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x030A M1ESP_OFF_KARMA_STOP"
+        "compat_c3": "0x030A M1ESP_OFF_KARMA_STOP"
       }
     },
     {
@@ -3336,13 +3336,13 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNAVAILABLE",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x030C M1ESP_OFF_RAW_TX"
+        "compat_c3": "0x030C M1ESP_OFF_RAW_TX"
       },
-      "notes": "New this rework. List B. One-shot, matching Bedge's own confirmed one-shot handle_raw_tx (no background task). Minimum length (10-byte frame) derived from Bedge's own confirmed 'if (len < 11)' check. No operation token minted; this opcode never appears as a held lease, only a momentary one (002-wifi-service.md Sec 2.8.5)."
+      "notes": "New this rework. List B. One-shot, matching Mtek Compatibility's own confirmed one-shot handle_raw_tx (no background task). Minimum length (10-byte frame) derived from Mtek Compatibility's own confirmed 'if (len < 11)' check. No operation token minted; this opcode never appears as a held lease, only a momentary one (002-wifi-service.md Sec 2.8.5)."
     },
     {
       "service": "0x0001",
@@ -3422,13 +3422,13 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNAVAILABLE",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0316 M1ESP_OFF_CAPTIVE_START"
+        "compat_c3": "0x0316 M1ESP_OFF_CAPTIVE_START"
       },
-      "notes": "New rework 4. List B. Shares arbiter class SAP with SOFTAP_* -- a captive portal is, physically, a SoftAP plus a DNS/HTTP hijack layer on top (contract review 4 item 4's shared-class invitation). Request shape matches Bedge's own confirmed wifi_attack_captive_config_t/handle_captive_start exactly. Corrected this rework (contract review 6 item 4): CAPTIVE_PORTAL_READY changed from TERMINAL to LIFECYCLE kind; CAPTIVE_PORTAL_STOPPED added as the real terminal event."
+      "notes": "New rework 4. List B. Shares arbiter class SAP with SOFTAP_* -- a captive portal is, physically, a SoftAP plus a DNS/HTTP hijack layer on top (contract review 4 item 4's shared-class invitation). Request shape matches Mtek Compatibility's own confirmed wifi_attack_captive_config_t/handle_captive_start exactly. Corrected this rework (contract review 6 item 4): CAPTIVE_PORTAL_READY changed from TERMINAL to LIFECYCLE kind; CAPTIVE_PORTAL_STOPPED added as the real terminal event."
     },
     {
       "service": "0x0001",
@@ -3472,11 +3472,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNAVAILABLE",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0317 M1ESP_OFF_CAPTIVE_STOP"
+        "compat_c3": "0x0317 M1ESP_OFF_CAPTIVE_STOP"
       }
     },
     {
@@ -3539,13 +3539,13 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNAVAILABLE",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0318 M1ESP_OFF_CAPTIVE_CREDS"
+        "compat_c3": "0x0318 M1ESP_OFF_CAPTIVE_CREDS"
       },
-      "notes": "New this rework. bound matches Bedge's own confirmed static wifi_attack_credential_t creds[32] fixed buffer. Dedicated capture-retrieval operation (same category as HANDSHAKE_READ), not a violation of design input 11's outbound-credential-never-returned rule, which governs STA_CONNECT's own credential field, not a captured third party's (002-wifi-service.md Sec 2.8.6)."
+      "notes": "New this rework. bound matches Mtek Compatibility's own confirmed static wifi_attack_credential_t creds[32] fixed buffer. Dedicated capture-retrieval operation (same category as HANDSHAKE_READ), not a violation of design input 11's outbound-credential-never-returned rule, which governs STA_CONNECT's own credential field, not a captured third party's (002-wifi-service.md Sec 2.8.6)."
     },
     {
       "service": "0x0001",
@@ -3592,13 +3592,13 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNAVAILABLE",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0319 M1ESP_OFF_CAPTIVE_DIAG"
+        "compat_c3": "0x0319 M1ESP_OFF_CAPTIVE_DIAG"
       },
-      "notes": "New this rework. last_post_body is a genuine correction over the Bedge header's own comment: m1_esp_rpc.h documents only [dns_q:4][http_hits:4][clients:1], but the pinned handle_captive_diag (read in full this session) additionally appends a variable-length lastpost field (char lastpost[96]) the header comment never mentions -- a real header-comment-vs-implementation divergence, recorded rather than silently reproduced from the incomplete comment."
+      "notes": "New this rework. last_post_body is a genuine correction over the Mtek Compatibility header's own comment: m1_esp_rpc.h documents only [dns_q:4][http_hits:4][clients:1], but the pinned handle_captive_diag (read in full this session) additionally appends a variable-length lastpost field (char lastpost[96]) the header comment never mentions -- a real header-comment-vs-implementation divergence, recorded rather than silently reproduced from the incomplete comment."
     },
     {
       "service": "0x0001",
@@ -3648,13 +3648,13 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNAVAILABLE",
-        "bedge_c3": "DISABLED"
+        "compat_c3": "DISABLED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0100 M1_RPC_WIFI_GET_MODE (opcode defined, WiFi station 0x0100-0x01FF range; header carries no REQ/RESP shape comment at all for this specific opcode and no dispatch case exists in any pinned main.c read this session -- capability-reported DISABLED pending T-WIFI-5, not SUPPORTED, since the response shape itself is unevidenced, not merely unconfirmed live; corrected contract review 9 item 5)"
+        "compat_c3": "0x0100 M1_RPC_WIFI_GET_MODE (opcode defined, WiFi station 0x0100-0x01FF range; header carries no REQ/RESP shape comment at all for this specific opcode and no dispatch case exists in any pinned main.c read this session -- capability-reported DISABLED pending T-WIFI-5, not SUPPORTED, since the response shape itself is unevidenced, not merely unconfirmed live; corrected contract review 9 item 5)"
       },
-      "notes": "List B -- clean-slate platform utility, classified 2026-09-04 (User Classification Decision / contract review 8 item 3). WifiMode enum: OFF=0, STA=1, AP=2, APSTA=3 (this task's own canonical values; not evidenced as matching Bedge's unfired numbering, T-WIFI-5). effective_mode additionally reserves MONITOR=4 so an arbiter-controlled temporary transition into monitor mode for an active capture/scan feature (002-resource-arbiter.md) is always visible here even when baseline_mode (the caller's last WIFI_MODE_SET-configured value, or the boot default) still reads STA/AP/APSTA/OFF -- WIFI_MODE_SET itself can never write MONITOR (see WIFI_MODE_SET notes), so effective_mode is the only place a caller ever observes it. Side-effect-free, no_radio_lease:true, always callable regardless of arbiter state, matching STA_STATUS's own always-callable posture (002-wifi-service.md Sec 2.6). Corrected contract review 9 item 5: capability_state.bedge_c3 is DISABLED, not SUPPORTED -- GET_MODE and SET_MODE are header-defined but undispatched in every pinned build read this session, and this document does not claim a tested Bedge interoperability that does not exist; retain T-WIFI-5 as the closing gate. This is a conservative implementation-state claim, not a List A parity obligation -- GET_MODE/SET_MODE remain List B."
+      "notes": "List B -- clean-slate platform utility, classified 2026-09-04 (User Classification Decision / contract review 8 item 3). WifiMode enum: OFF=0, STA=1, AP=2, APSTA=3 (this task's own canonical values; not evidenced as matching Mtek Compatibility's unfired numbering, T-WIFI-5). effective_mode additionally reserves MONITOR=4 so an arbiter-controlled temporary transition into monitor mode for an active capture/scan feature (002-resource-arbiter.md) is always visible here even when baseline_mode (the caller's last WIFI_MODE_SET-configured value, or the boot default) still reads STA/AP/APSTA/OFF -- WIFI_MODE_SET itself can never write MONITOR (see WIFI_MODE_SET notes), so effective_mode is the only place a caller ever observes it. Side-effect-free, no_radio_lease:true, always callable regardless of arbiter state, matching STA_STATUS's own always-callable posture (002-wifi-service.md Sec 2.6). Corrected contract review 9 item 5: capability_state.compat_c3 is DISABLED, not SUPPORTED -- GET_MODE and SET_MODE are header-defined but undispatched in every pinned build read this session, and this document does not claim a tested Mtek Compatibility interoperability that does not exist; retain T-WIFI-5 as the closing gate. This is a conservative implementation-state claim, not a List A parity obligation -- GET_MODE/SET_MODE remain List B."
     },
     {
       "service": "0x0001",
@@ -3707,13 +3707,13 @@
       "capability_state": {
         "native": "DISABLED",
         "factory_uart": "UNAVAILABLE",
-        "bedge_c3": "DISABLED"
+        "compat_c3": "DISABLED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0101 M1_RPC_WIFI_SET_MODE (header REQ u8 mode; no dispatch case exists in any pinned main.c read this session and no enum-value table is defined anywhere in the pinned header for what a Bedge peer's own numeric 'mode' byte means -- capability-reported DISABLED pending T-WIFI-5, not SUPPORTED, independent of and in addition to the lab_controls_enabled gate below; canonical WifiMode numbering 0..3 above is this task's own clean-slate design, not assumed to match a Bedge peer's numbering without hardware confirmation)"
+        "compat_c3": "0x0101 M1_RPC_WIFI_SET_MODE (header REQ u8 mode; no dispatch case exists in any pinned main.c read this session and no enum-value table is defined anywhere in the pinned header for what a Mtek Compatibility peer's own numeric 'mode' byte means -- capability-reported DISABLED pending T-WIFI-5, not SUPPORTED, independent of and in addition to the lab_controls_enabled gate below; canonical WifiMode numbering 0..3 above is this task's own clean-slate design, not assumed to match a Mtek Compatibility peer's numbering without hardware confirmation)"
       },
-      "notes": "List B -- clean-slate platform utility, classified 2026-09-04 (User Classification Decision / contract review 8 item 3). Synchronous, nonpersistent (persistent_effects:none, always volatile) diagnostic control. Corrected contract review 9 item 4: authorization.level >= TRANSPORT_POSSESSION (0) alone is NOT lab authorization -- every Phase-1 session has TRANSPORT_POSSESSION by construction (schemas.json authorization_levels), so that check alone would make this operation universally callable, not lab-gated. A real lab gate requires both ordinary TRANSPORT_POSSESSION authorization AND the separate, explicit lab_controls_enabled policy gate (schemas.json top-level lab_controls_policy), which defaults to false in the universal customer/factory artifact and is enabled only by a separately identified lab build/profile or a future authenticated administrative policy -- never an unauthenticated runtime toggle. When lab_controls_enabled is false, the operation returns the legal wire status UNSUPPORTED with no side effect at all (mode left completely unchanged, no arbiter interaction attempted) -- DISABLED is a capability-discovery state only, never a wire status (contract review 10 item 5; status_outcomes above lists UNSUPPORTED, never DISABLED); this is why capability_state.native above is DISABLED for the universal build; the canonical opcode remains compiled into the universal image and is truthfully capability-reported as DISABLED there, never removed or hidden. A lab-enabled native build may report SUPPORTED for this opcode; capability_state.bedge_c3 remains DISABLED regardless of the lab gate, per its own adapter_map note above, since T-WIFI-5 is a wholly separate, unrelated gate that a lab-enabled Bedge build does not close (contract review 10 item 7 -- no lab-enabled Bedge build ever reports this opcode SUPPORTED while T-WIFI-5 remains open). When lab_controls_enabled is true: mode accepts only OFF=0/STA=1/AP=2/APSTA=3; MONITOR=4 is a recognized, named enum value that is unconditionally rejected UNSUPPORTED (never INVALID_ARGUMENT, distinguishing a known-but-forbidden value from a malformed byte, which remains INVALID_ARGUMENT for any value outside 0..4) -- this operation must never bypass a feature-owned monitor/raw-radio transition (002-resource-arbiter.md), which is why MONITOR can never be entered through it. Executes through the core resource arbiter under one atomic control lock: rechecks there is no active radio lease (any WMC/WS/BEACON/D/H/M/SAP/RAW class holder), no active STA connection, and no active SoftAP; if any of those holds, returns BUSY with no side effect at all (previous_mode/applied_mode both omitted from meaning -- response is the BUSY status alone, mode is left completely unchanged). On success returns {previous_mode, applied_mode} (applied_mode always equals the requested mode on OK); creates no new concurrency and acquires no lease of its own (no_radio_lease:true, momentary control-plane check only)."
+      "notes": "List B -- clean-slate platform utility, classified 2026-09-04 (User Classification Decision / contract review 8 item 3). Synchronous, nonpersistent (persistent_effects:none, always volatile) diagnostic control. Corrected contract review 9 item 4: authorization.level >= TRANSPORT_POSSESSION (0) alone is NOT lab authorization -- every Phase-1 session has TRANSPORT_POSSESSION by construction (schemas.json authorization_levels), so that check alone would make this operation universally callable, not lab-gated. A real lab gate requires both ordinary TRANSPORT_POSSESSION authorization AND the separate, explicit lab_controls_enabled policy gate (schemas.json top-level lab_controls_policy), which defaults to false in the universal customer/factory artifact and is enabled only by a separately identified lab build/profile or a future authenticated administrative policy -- never an unauthenticated runtime toggle. When lab_controls_enabled is false, the operation returns the legal wire status UNSUPPORTED with no side effect at all (mode left completely unchanged, no arbiter interaction attempted) -- DISABLED is a capability-discovery state only, never a wire status (contract review 10 item 5; status_outcomes above lists UNSUPPORTED, never DISABLED); this is why capability_state.native above is DISABLED for the universal build; the canonical opcode remains compiled into the universal image and is truthfully capability-reported as DISABLED there, never removed or hidden. A lab-enabled native build may report SUPPORTED for this opcode; capability_state.compat_c3 remains DISABLED regardless of the lab gate, per its own adapter_map note above, since T-WIFI-5 is a wholly separate, unrelated gate that a lab-enabled Mtek Compatibility build does not close (contract review 10 item 7 -- no lab-enabled Mtek Compatibility build ever reports this opcode SUPPORTED while T-WIFI-5 remains open). When lab_controls_enabled is true: mode accepts only OFF=0/STA=1/AP=2/APSTA=3; MONITOR=4 is a recognized, named enum value that is unconditionally rejected UNSUPPORTED (never INVALID_ARGUMENT, distinguishing a known-but-forbidden value from a malformed byte, which remains INVALID_ARGUMENT for any value outside 0..4) -- this operation must never bypass a feature-owned monitor/raw-radio transition (002-resource-arbiter.md), which is why MONITOR can never be entered through it. Executes through the core resource arbiter under one atomic control lock: rechecks there is no active radio lease (any WMC/WS/BEACON/D/H/M/SAP/RAW class holder), no active STA connection, and no active SoftAP; if any of those holds, returns BUSY with no side effect at all (previous_mode/applied_mode both omitted from meaning -- response is the BUSY status alone, mode is left completely unchanged). On success returns {previous_mode, applied_mode} (applied_mode always equals the requested mode on OK); creates no new concurrency and acquires no lease of its own (no_radio_lease:true, momentary control-plane check only)."
     },
     {
       "service": "0x0001",
@@ -3756,11 +3756,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNAVAILABLE",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0102 M1_RPC_WIFI_GET_MAC (header-evidenced exact shape: REQ u8 iface(0=sta,1=ap) -> RESP u8[6]; no dispatch case exists in any pinned main.c read this session, so the shape is design evidence only, not a confirmed live response -- named adapter test T-WIFI-5 covers the missing live confirmation, not the shape itself, which the header states unambiguously)"
+        "compat_c3": "0x0102 M1_RPC_WIFI_GET_MAC (header-evidenced exact shape: REQ u8 iface(0=sta,1=ap) -> RESP u8[6]; no dispatch case exists in any pinned main.c read this session, so the shape is design evidence only, not a confirmed live response -- named adapter test T-WIFI-5 covers the missing live confirmation, not the shape itself, which the header states unambiguously)"
       },
       "notes": "List B -- clean-slate platform utility, classified 2026-09-04 (User Classification Decision / contract review 8 item 3). Explicit interface selector iface: STA=0, AP=1 (matches the header comment's own '0=sta,1=ap' exactly); any other byte value is INVALID_ARGUMENT. Returns exactly one mac6, never both interfaces in one call. Side-effect-free, no_radio_lease:true, always callable."
     },
@@ -3866,11 +3866,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "scan / scan -p / scan -t / scan -n",
-        "bedge_c3": "0x0401 M1ESP_BLE_SCAN_START"
+        "compat_c3": "0x0401 M1ESP_BLE_SCAN_START"
       }
     },
     {
@@ -3915,11 +3915,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "stop",
-        "bedge_c3": null
+        "compat_c3": null
       }
     },
     {
@@ -3963,11 +3963,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNSUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": null
+        "compat_c3": null
       }
     },
     {
@@ -4044,11 +4044,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "list / list -d",
-        "bedge_c3": "0x0402 M1ESP_BLE_SCAN_RESULTS"
+        "compat_c3": "0x0402 M1ESP_BLE_SCAN_RESULTS"
       }
     },
     {
@@ -4136,11 +4136,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "list <id>",
-        "bedge_c3": null
+        "compat_c3": null
       },
       "notes": "raw_adv and raw_scan_rsp are each independently bounded 31B (rework 2 review item 11 correction from a shared 62B field, 002-ble-gatt-service.md Sec 1)."
     },
@@ -4197,11 +4197,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "advertise [-n name]",
-        "bedge_c3": "0x0403 M1ESP_BLE_ADV_START"
+        "compat_c3": "0x0403 M1ESP_BLE_ADV_START"
       }
     },
     {
@@ -4246,11 +4246,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "stop",
-        "bedge_c3": "0x0404 M1ESP_BLE_ADV_STOP"
+        "compat_c3": "0x0404 M1ESP_BLE_ADV_STOP"
       }
     },
     {
@@ -4304,11 +4304,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNSUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": null
+        "compat_c3": null
       }
     },
     {
@@ -4397,11 +4397,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "signal <id>",
-        "bedge_c3": null
+        "compat_c3": null
       }
     },
     {
@@ -4445,11 +4445,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "signal status",
-        "bedge_c3": null
+        "compat_c3": null
       }
     },
     {
@@ -4494,11 +4494,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "signal stop / stop",
-        "bedge_c3": null
+        "compat_c3": null
       }
     },
     {
@@ -4576,11 +4576,11 @@
       "capability_state": {
         "native": "DISABLED",
         "factory_uart": "DISABLED",
-        "bedge_c3": "DISABLED"
+        "compat_c3": "DISABLED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0405 M1ESP_BLE_HID_INIT"
+        "compat_c3": "0x0405 M1ESP_BLE_HID_INIT"
       },
       "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5 (contract review 5 item 1): stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B. DISABLED group gate (capability_id 0x1004, ble_compat_family) remains a separate, orthogonal fact from classification -- List B settles design freedom, not Phase 1 dispatch state."
     },
@@ -4629,11 +4629,11 @@
       "capability_state": {
         "native": "DISABLED",
         "factory_uart": "DISABLED",
-        "bedge_c3": "DISABLED"
+        "compat_c3": "DISABLED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0406 M1ESP_BLE_HID_KEY"
+        "compat_c3": "0x0406 M1ESP_BLE_HID_KEY"
       },
       "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5 (contract review 5 item 1): stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B (002-ble-gatt-service.md Sec 4, 002-compatibility-boundary-and-size-gate.md Sec 2)."
     },
@@ -4675,11 +4675,11 @@
       "capability_state": {
         "native": "DISABLED",
         "factory_uart": "DISABLED",
-        "bedge_c3": "DISABLED"
+        "compat_c3": "DISABLED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0407 M1ESP_BLE_HID_STRING"
+        "compat_c3": "0x0407 M1ESP_BLE_HID_STRING"
       },
       "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5 (contract review 5 item 1): stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B (002-ble-gatt-service.md Sec 4, 002-compatibility-boundary-and-size-gate.md Sec 2)."
     },
@@ -4721,11 +4721,11 @@
       "capability_state": {
         "native": "DISABLED",
         "factory_uart": "DISABLED",
-        "bedge_c3": "DISABLED"
+        "compat_c3": "DISABLED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0408 M1ESP_BLE_HID_SCRIPT"
+        "compat_c3": "0x0408 M1ESP_BLE_HID_SCRIPT"
       },
       "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5 (contract review 5 item 1): stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B (002-ble-gatt-service.md Sec 4, 002-compatibility-boundary-and-size-gate.md Sec 2)."
     },
@@ -4771,11 +4771,11 @@
       "capability_state": {
         "native": "DISABLED",
         "factory_uart": "DISABLED",
-        "bedge_c3": "DISABLED"
+        "compat_c3": "DISABLED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x040B M1ESP_BLE_HID_DEINIT"
+        "compat_c3": "0x040B M1ESP_BLE_HID_DEINIT"
       },
       "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5 (contract review 5 item 1): stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B (002-ble-gatt-service.md Sec 4, 002-compatibility-boundary-and-size-gate.md Sec 2)."
     },
@@ -4820,11 +4820,11 @@
       "capability_state": {
         "native": "DISABLED",
         "factory_uart": "DISABLED",
-        "bedge_c3": "DISABLED"
+        "compat_c3": "DISABLED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x040C M1ESP_BLE_HID_STATUS"
+        "compat_c3": "0x040C M1ESP_BLE_HID_STATUS"
       },
       "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5 (contract review 5 item 1): stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B (002-ble-gatt-service.md Sec 4, 002-compatibility-boundary-and-size-gate.md Sec 2)."
     },
@@ -4879,11 +4879,11 @@
       "capability_state": {
         "native": "DISABLED",
         "factory_uart": "DISABLED",
-        "bedge_c3": "DISABLED"
+        "compat_c3": "DISABLED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x040D M1ESP_BLE_SPAM_START"
+        "compat_c3": "0x040D M1ESP_BLE_SPAM_START"
       },
       "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5 (contract review 5 item 1): stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B (002-ble-gatt-service.md Sec 4, 002-compatibility-boundary-and-size-gate.md Sec 2)."
     },
@@ -4929,11 +4929,11 @@
       "capability_state": {
         "native": "DISABLED",
         "factory_uart": "DISABLED",
-        "bedge_c3": "DISABLED"
+        "compat_c3": "DISABLED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x040E M1ESP_BLE_SPAM_STOP"
+        "compat_c3": "0x040E M1ESP_BLE_SPAM_STOP"
       },
       "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5 (contract review 5 item 1): stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B (002-ble-gatt-service.md Sec 4, 002-compatibility-boundary-and-size-gate.md Sec 2)."
     },
@@ -5011,11 +5011,11 @@
       "capability_state": {
         "native": "DISABLED",
         "factory_uart": "DISABLED",
-        "bedge_c3": "DISABLED"
+        "compat_c3": "DISABLED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0411 M1ESP_BLE_BEACON_START"
+        "compat_c3": "0x0411 M1ESP_BLE_BEACON_START"
       },
       "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5 (contract review 5 item 1): stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B (002-ble-gatt-service.md Sec 4, 002-compatibility-boundary-and-size-gate.md Sec 2)."
     },
@@ -5061,11 +5061,11 @@
       "capability_state": {
         "native": "DISABLED",
         "factory_uart": "DISABLED",
-        "bedge_c3": "DISABLED"
+        "compat_c3": "DISABLED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0412 M1ESP_BLE_BEACON_STOP"
+        "compat_c3": "0x0412 M1ESP_BLE_BEACON_STOP"
       },
       "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5 (contract review 5 item 1): stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B (002-ble-gatt-service.md Sec 4, 002-compatibility-boundary-and-size-gate.md Sec 2)."
     },
@@ -5106,11 +5106,11 @@
       "capability_state": {
         "native": "DISABLED",
         "factory_uart": "DISABLED",
-        "bedge_c3": "DISABLED"
+        "compat_c3": "DISABLED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x040F M1ESP_BLE_RPC_ADV"
+        "compat_c3": "0x040F M1ESP_BLE_RPC_ADV"
       },
       "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5 (contract review 5 item 1): stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B (002-ble-gatt-service.md Sec 4, 002-compatibility-boundary-and-size-gate.md Sec 2)."
     },
@@ -5162,11 +5162,11 @@
       "capability_state": {
         "native": "DISABLED",
         "factory_uart": "DISABLED",
-        "bedge_c3": "DISABLED"
+        "compat_c3": "DISABLED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0410 M1ESP_BLE_STATE"
+        "compat_c3": "0x0410 M1ESP_BLE_STATE"
       },
       "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5 (contract review 5 item 1): stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B (002-ble-gatt-service.md Sec 4, 002-compatibility-boundary-and-size-gate.md Sec 2)."
     },
@@ -5227,13 +5227,13 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "connect <id>",
-        "bedge_c3": "0x0409 M1ESP_BLE_CONNECT (GAP lifecycle only, see notes)"
+        "compat_c3": "0x0409 M1ESP_BLE_CONNECT (GAP lifecycle only, see notes)"
       },
-      "notes": "Rework 2 review item 11: Bedge BLE_CONNECT supplies ONLY the GAP connection lifecycle (source-confirmed: handle_ble_connect calls ble_conn_connect(), a NimBLE central-connect call with no follow-on service/characteristic/descriptor discovery, read, write, or subscribe call anywhere in main.c's dispatch table). Its presence does not make GATT_DISCOVER/READ/WRITE/SUBSCRIBE/UNSUBSCRIBE appear supported for the Bedge/C3 profile -- those five opcodes are UNSUPPORTED for bedge_c3 individually (see their own capability_state below), independent of BLE_CONNECT's own SUPPORTED state."
+      "notes": "Rework 2 review item 11: Mtek Compatibility BLE_CONNECT supplies ONLY the GAP connection lifecycle (source-confirmed: handle_ble_connect calls ble_conn_connect(), a NimBLE central-connect call with no follow-on service/characteristic/descriptor discovery, read, write, or subscribe call anywhere in main.c's dispatch table). Its presence does not make GATT_DISCOVER/READ/WRITE/SUBSCRIBE/UNSUBSCRIBE appear supported for the Mtek Compatibility/C3 profile -- those five opcodes are UNSUPPORTED for compat_c3 individually (see their own capability_state below), independent of BLE_CONNECT's own SUPPORTED state."
     },
     {
       "service": "0x0003",
@@ -5267,11 +5267,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "disconnect",
-        "bedge_c3": "0x040A M1ESP_BLE_DISCONNECT"
+        "compat_c3": "0x040A M1ESP_BLE_DISCONNECT"
       }
     },
     {
@@ -5319,11 +5319,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "status",
-        "bedge_c3": null
+        "compat_c3": null
       }
     },
     {
@@ -5395,11 +5395,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "services",
-        "bedge_c3": null
+        "compat_c3": null
       }
     },
     {
@@ -5445,11 +5445,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "read <handle>",
-        "bedge_c3": null
+        "compat_c3": null
       }
     },
     {
@@ -5499,11 +5499,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "write/writenr + confirm/cancel (adapter-local staging)",
-        "bedge_c3": null
+        "compat_c3": null
       }
     },
     {
@@ -5587,11 +5587,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "subscribe <handle> / indicate <handle>",
-        "bedge_c3": null
+        "compat_c3": null
       },
       "notes": "Rework 2 review item 10: GATT_VALUE_EVENT deliberately has no visible_drop_count field of its own -- GATT_DROP_EVENT is the explicit, per-connection drop-accounting mechanism for this event stream (a more precise mechanism than the generic progress-queue coalescing counter), documented here as the event's specific, non-universal overflow behavior."
     },
@@ -5631,11 +5631,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "unsubscribe <handle>",
-        "bedge_c3": null
+        "compat_c3": null
       }
     },
     {
@@ -5743,11 +5743,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "PCAP_START (Unreleased Gate 0)",
-        "bedge_c3": "0x0300 M1ESP_OFF_MONITOR_START"
+        "compat_c3": "0x0300 M1ESP_OFF_MONITOR_START"
       },
       "notes": "List B (clean-slate lab design)."
     },
@@ -5802,11 +5802,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "in-band CAP_STOP (ASCII PCAP_STOP is advisory only)",
-        "bedge_c3": "0x0301 M1ESP_OFF_MONITOR_STOP"
+        "compat_c3": "0x0301 M1ESP_OFF_MONITOR_STOP"
       }
     },
     {
@@ -5862,11 +5862,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNSUPPORTED",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0314 M1ESP_OFF_MONITOR_STATS"
+        "compat_c3": "0x0314 M1ESP_OFF_MONITOR_STATS"
       }
     },
     {
@@ -5928,11 +5928,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNSUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": null
+        "compat_c3": null
       }
     },
     {
@@ -5984,11 +5984,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNSUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": null
+        "compat_c3": null
       }
     },
     {
@@ -6076,11 +6076,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNSUPPORTED",
-        "bedge_c3": "SUPPORTED"
+        "compat_c3": "SUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0315 M1ESP_OFF_MONITOR_READ (empty = zero-length RESP on Bedge's own wire, translated to tag=EMPTY)"
+        "compat_c3": "0x0315 M1ESP_OFF_MONITOR_READ (empty = zero-length RESP on Mtek Compatibility's own wire, translated to tag=EMPTY)"
       }
     },
     {
@@ -6130,11 +6130,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNSUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": null
+        "compat_c3": null
       }
     },
     {
@@ -6181,11 +6181,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNSUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": null
+        "compat_c3": null
       }
     },
     {
@@ -6243,11 +6243,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNSUPPORTED",
-        "bedge_c3": "UNSUPPORTED (heap_free/min map from 0x0004 M1ESP_SYS_GET_HEAP; the rest of this opcode's fields do not)"
+        "compat_c3": "UNSUPPORTED (heap_free/min map from 0x0004 M1ESP_SYS_GET_HEAP; the rest of this opcode's fields do not)"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": "0x0004 M1ESP_SYS_GET_HEAP (heap_free_bytes/heap_min_free_bytes fields only)"
+        "compat_c3": "0x0004 M1ESP_SYS_GET_HEAP (heap_free_bytes/heap_min_free_bytes fields only)"
       }
     },
     {
@@ -6289,11 +6289,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "UNSUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": null,
-        "bedge_c3": null
+        "compat_c3": null
       }
     },
     {
@@ -6377,11 +6377,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "services (nested [CHR] rows)",
-        "bedge_c3": null
+        "compat_c3": null
       },
       "notes": "RC8 independent audit P0-6 'BLE connection discovery lacks nested service/char/descriptor counts/listing': new, purely additive opcode (does not modify GATT_DISCOVER/any existing opcode's command ID or framing) enumerating characteristics of one already-discovered service's handle range. properties is the raw ATT/GATT properties octet (bit0=Broadcast,1=Read,2=WriteNoResp,3=Write,4=Notify,5=Indicate,6=AuthSignedWrite,7=ExtendedProps)."
     },
@@ -6458,11 +6458,11 @@
       "capability_state": {
         "native": "SUPPORTED",
         "factory_uart": "SUPPORTED",
-        "bedge_c3": "UNSUPPORTED"
+        "compat_c3": "UNSUPPORTED"
       },
       "adapter_map": {
         "factory_uart": "services (nested [DSC] rows)",
-        "bedge_c3": null
+        "compat_c3": null
       },
       "notes": "RC8 independent audit P0-6, companion to GATT_DISCOVER_CHARS: new, purely additive opcode enumerating descriptors of one already-discovered characteristic's handle range (val_handle+1 .. containing service's end_handle, matching gatt_subscribe's own established CCCD-search-range contract)."
     }
@@ -6495,7 +6495,7 @@
     ],
     "persistence_state_rework2": "DISABLED -- rework 2 review item 13: no partition-compatible at-rest key/encryption policy has been frozen anywhere in this task or its Task 001 evidence base, so PERSISTENT is marked DISABLED (not SUPPORTED-but-aspirational) until a dedicated settings-service task freezes that policy. VOLATILE remains the only supported persistence mode for STA_CONNECT in Phase 1 (002-wifi-service.md Sec 2.6.1)."
   },
-  "bedge_ledger_summary": {
+  "compat_ledger_summary": {
     "_note": "Full per-command/event ledger with source support, canonical owner, adapter policy, and gate lives in 002-adapter-translation-matrix.md Sec 5 (prose, not duplicated here as machine data). Counts below are a machine-checkable summary. Recomputed rework 4 (contract review 4 item 1): System 9 + WiFi-station 7 + WiFi-AP 3 + Offensive-WiFi 26 + BLE 19 + Zigbee 9 + ESP-NOW 6 + Screen/qMon 4 = 83 commands; 15 events (0xE001-0xE0FF). 13 commands (3 SoftAP + 2 probe + 1 PMKID + 2 karma + 1 raw TX + 4 captive portal) moved from unclassified_or_reserved into canonically_mapped that rework. Recomputed again this rework (User Classification Decision / contract review 8 items 2-3, 2026-09-04): SNTP_SYNC + WIFI_GET_MODE + WIFI_SET_MODE + WIFI_GET_MAC (4 commands) move from unclassified_or_reserved into canonically_mapped -- total command count (83) is unchanged (these four were already counted in the 83, only their disposition moves).",
     "total_m1esp_commands_0x00xx_through_0x07xx": 83,
     "total_m1esp_events_0xExxx": 15,
@@ -6510,10 +6510,10 @@
       "0x0101 M1_RPC_WIFI_SET_MODE",
       "0x0102 M1_RPC_WIFI_GET_MAC"
     ],
-    "defined_but_not_dispatched_note": "These three Wi-Fi mode/MAC opcodes are counted in canonically_mapped_commands above (they now have a real canonical owner), unlike the four HANDSHAKE_CAP/BLE_INIT/ZB_INIT/THREAD_SCAN entries above them, which remain dead/unmapped. Corrected contract review 9 item 5: 'canonically mapped' no longer implies bedge_c3 SUPPORTED for GET_MODE/SET_MODE specifically -- their capability_state.bedge_c3 is DISABLED pending T-WIFI-5, since no dispatch case or (for GET_MODE) even a response-shape comment exists in any pinned build read this session, and this document does not claim a tested Bedge interoperability that does not exist. GET_MAC alone reports bedge_c3 SUPPORTED, since its header-evidenced request/response shape is sufficient on its own; T-WIFI-5 for GET_MAC covers only the missing live-dispatch confirmation, not the shape. See WIFI_MODE_GET/WIFI_MODE_SET/WIFI_MAC_GET's own adapter_map notes in opcodes above."
+    "defined_but_not_dispatched_note": "These three Wi-Fi mode/MAC opcodes are counted in canonically_mapped_commands above (they now have a real canonical owner), unlike the four HANDSHAKE_CAP/BLE_INIT/ZB_INIT/THREAD_SCAN entries above them, which remain dead/unmapped. Corrected contract review 9 item 5: 'canonically mapped' no longer implies compat_c3 SUPPORTED for GET_MODE/SET_MODE specifically -- their capability_state.compat_c3 is DISABLED pending T-WIFI-5, since no dispatch case or (for GET_MODE) even a response-shape comment exists in any pinned build read this session, and this document does not claim a tested Mtek Compatibility interoperability that does not exist. GET_MAC alone reports compat_c3 SUPPORTED, since its header-evidenced request/response shape is sufficient on its own; T-WIFI-5 for GET_MAC covers only the missing live-dispatch confirmation, not the shape. See WIFI_MODE_GET/WIFI_MODE_SET/WIFI_MAC_GET's own adapter_map notes in opcodes above."
   },
   "list_b_consistency_assertion": {
-    "_note": "Rework 5, contract review 5 item 3: replaces rework 4's two parallel lists (matched only by list position) plus a substring-search validator check with ONE array of structured records, each naming its exact source_id_hex/source_id_name and its exact canonical_owner, plus an explicit disposition. The validator locates each record's canonical_owner by exact opcode-name equality (OPCODES_BY_NAME), then proves that opcode's adapter_map.bedge_c3 field begins with the exact 'source_id_hex source_id_name' pair (not a substring match anywhere in the whole opcode table) for disposition=mapped records, proves a null adapter_map.bedge_c3 + UNSUPPORTED capability_state for disposition=documented_exception_no_bedge_mapping and disposition=native_only_no_bedge_source records, and proves no two records share a source_id_hex or a canonical_owner.",
+    "_note": "Rework 5, contract review 5 item 3: replaces rework 4's two parallel lists (matched only by list position) plus a substring-search validator check with ONE array of structured records, each naming its exact source_id_hex/source_id_name and its exact canonical_owner, plus an explicit disposition. The validator locates each record's canonical_owner by exact opcode-name equality (OPCODES_BY_NAME), then proves that opcode's adapter_map.compat_c3 field begins with the exact 'source_id_hex source_id_name' pair (not a substring match anywhere in the whole opcode table) for disposition=mapped records, proves a null adapter_map.compat_c3 + UNSUPPORTED capability_state for disposition=documented_exception_no_compat_mapping and disposition=native_only_no_compat_source records, and proves no two records share a source_id_hex or a canonical_owner.",
     "records": [
       {
         "source_id_hex": "0x0200",
@@ -6549,7 +6549,7 @@
         "source_id_hex": "0x0308",
         "source_id_name": "M1ESP_OFF_PMKID_CAPTURE",
         "canonical_owner": "PMKID_CAPTURE_START",
-        "disposition": "documented_exception_no_bedge_mapping"
+        "disposition": "documented_exception_no_compat_mapping"
       },
       {
         "source_id_hex": "0x0309",
@@ -6597,7 +6597,7 @@
         "source_id_hex": null,
         "source_id_name": null,
         "canonical_owner": "PMKID_CAPTURE_STOP",
-        "disposition": "native_only_no_bedge_source"
+        "disposition": "native_only_no_compat_source"
       }
     ],
     "capability_only_reservations": [

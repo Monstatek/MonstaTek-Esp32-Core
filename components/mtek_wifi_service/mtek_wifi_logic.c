@@ -1171,7 +1171,7 @@ typedef struct {
      * depends on `ctx` (the argument) remaining valid a moment longer.
      * `sink.user` itself must still point to storage that outlives this
      * operation -- every adapter capable of originating an operation with
-     * a delayed HAL callback (native/Bedge SPI's persistent event_queue,
+     * a delayed HAL callback (native/Mtek Compatibility SPI's persistent event_queue,
      * or the UART REPL's persistent per-session capture, see
      * mtek_uart_adapter.c) is responsible for supplying that. */
     mtk_sink_t sink;
@@ -2051,7 +2051,7 @@ static void mtek_wifi_dispatch(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t 
         /* SOFTAP (0x0019-0x001B) and PMKID_CAPTURE (0x001E/0x0026):
          * SoftAP is a general reusable platform capability candidate for
          * canonical core (not a module -- docs/ARCHITECTURE.md), and
-         * PMKID_CAPTURE has no Bedge/M1-Compatibility mapping at all per
+         * PMKID_CAPTURE has no Mtek Compatibility/M1-Compatibility mapping at all per
          * the accepted contract; neither is module-gated. Both, plus
          * anything else reaching this point, are not implemented this
          * session -- see docs/PROVENANCE.md. Returns the same wire
@@ -2060,6 +2060,6 @@ static void mtek_wifi_dispatch(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t 
     }
 }
 
-void mtek_wifi_service_register(void) {
-    mtk_router_register(0x0001, mtek_wifi_dispatch);
+mtk_register_result_t mtek_wifi_service_register(void) {
+    return mtk_router_register(0x0001, mtek_wifi_dispatch);
 }

@@ -15,11 +15,16 @@ static unsigned s_service_count;
 
 void mtk_router_init(void) { s_service_count = 0; }
 
-void mtk_router_register(uint16_t service_id, mtk_service_dispatch_fn fn) {
-    if (s_service_count >= MTK_ROUTER_MAX_SERVICES) return;
+mtk_register_result_t mtk_router_register(uint16_t service_id, mtk_service_dispatch_fn fn) {
+    if (!fn) return MTK_REGISTER_INVALID_HANDLER;
+    for (unsigned i = 0; i < s_service_count; i++) {
+        if (s_services[i].service_id == service_id) return MTK_REGISTER_DUPLICATE;
+    }
+    if (s_service_count >= MTK_ROUTER_MAX_SERVICES) return MTK_REGISTER_FULL;
     s_services[s_service_count].service_id = service_id;
     s_services[s_service_count].fn = fn;
     s_service_count++;
+    return MTK_REGISTER_OK;
 }
 
 static mtk_service_dispatch_fn find_service(uint16_t service_id) {
@@ -35,7 +40,7 @@ static mtk_service_dispatch_fn find_service(uint16_t service_id) {
 static mtk_capability_state_t cap_for_profile(const mtk_opcode_entry_t *op, mtk_profile_t profile) {
     switch (profile) {
         case MTK_PROFILE_FACTORY_UART: return op->cap_factory_uart;
-        case MTK_PROFILE_BEDGE_C3_SPI: return op->cap_bedge_c3;
+        case MTK_PROFILE_COMPAT_C3_SPI: return op->cap_compat_c3;
         case MTK_PROFILE_NATIVE_SPI:
         case MTK_PROFILE_HOST_ADAPTER:
         default: return op->cap_native;
@@ -143,27 +148,11 @@ void mtk_router_dispatch(mtk_request_ctx_t *ctx, uint16_t service_id, uint16_t o
         return;
     }
 
-    /* Transport-aware async gating (RC5 independent audit P0: "UART
-     * asynchronous response lifetime is unsafe"): the factory UART adapter
-     * builds its response capture/sink on the calling function's own
-     * stack for every command (mtek_uart_adapter.c), matching its shipped
-     * synchronous command/response REPL model exactly -- it has no
-     * persistent, adapter-owned sink object an async worker could safely
-     * write into later (unlike native SPI v1 / M1 Compatibility SPI,
-     * which both use a boot-session-persistent event_queue precisely so
-     * they CAN be deferred safely). A single global async runner is
-     * registered once for the whole router regardless of which adapter
-     * happens to be active; without this profile check, any ACCEPTED_ASYNC
-     * opcode dispatched from a UART command would have its handler
-     * deferred to a background worker that later writes through a sink
-     * pointing at a stack frame the UART REPL task has already returned
-     * from and reused for its next command -- a genuine use-after-return.
-     * FACTORY_UART therefore always runs synchronously here, exactly
-     * matching its shipped behavior (every existing host test already
-     * observes this, since no host test registers an async runner at
-     * all), regardless of whether a runner is registered for the other
-     * transports sharing this same router instance. */
-    if (s_async_runner && op->lifecycle == MTK_LC_ACCEPTED_ASYNC && ctx->profile != MTK_PROFILE_FACTORY_UART) {
+    /* Only an explicitly persistent sink may be deferred. Adapters choose
+     * execution eligibility independently of their wire/capability profile;
+     * factory UART continues to select inline dispatch. */
+    if (s_async_runner && op->lifecycle == MTK_LC_ACCEPTED_ASYNC &&
+        ctx->dispatch_mode == MTK_DISPATCH_DEFER_ALLOWED) {
         if (req_len > MTK_ROUTER_ASYNC_MAX_PAYLOAD) {
             ctx->sink.emit_response(ctx->sink.user, ctx->correlation, MTK_STATUS_OVERFLOW, NULL, NULL);
             return;
