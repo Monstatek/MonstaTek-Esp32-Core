@@ -41,6 +41,13 @@ void mtek_wifi_service_set_lock(mtk_wifi_lock_fn lock, mtk_wifi_lock_fn unlock) 
 static void wifi_lock(void) { if (s_wifi_lock) s_wifi_lock(); }
 static void wifi_unlock(void) { if (s_wifi_unlock) s_wifi_unlock(); }
 
+/* M3 correction (independent review P0 "the D->H handoff uses a coherent
+ * but unstable snapshot and an unconditional release"): test-only pause
+ * seam -- see its own doc comment in mtek_wifi_service.h. Always NULL in
+ * production. */
+static mtk_wifi_dh_handoff_pause_hook_t s_dh_handoff_pause_hook;
+void mtek_wifi_set_dh_handoff_pause_hook(mtk_wifi_dh_handoff_pause_hook_t hook) { s_dh_handoff_pause_hook = hook; }
+
 /* RC8 independent audit "Run a supported ThreadSanitizer build": a real
  * TSan run found a genuine data race between a long-running loop's own
  * `while (!mtk_op_state_is_terminal(rec->state))` condition (a raw,
@@ -132,7 +139,13 @@ static void handle_ap_scan_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry_
         respond_empty(ctx, MTK_STATUS_PROTOCOL_ERROR); return;
     }
     if (req.band == 1 /* BAND_5GHZ */) { respond_empty(ctx, MTK_STATUS_UNSUPPORTED); return; }
-    if (mtk_arbiter_acquire(MTK_ARB_WS, 0) != MTK_ARB_GRANT_OK) { respond_empty(ctx, MTK_STATUS_BUSY); return; }
+    /* Diagnosed ownership-publication fix (TSan-exposed): admission is now
+     * held under the same lock that serializes mtk_core_bump_session_
+     * generation, from final session validation through arbiter ownership
+     * publication and the ACCEPTED response, so a peer-session reset can
+     * never observe a token-backed class owned by a not-yet-real token --
+     * see mtk_op_begin_admission_guard's own doc comment (mtek_core.h). */
+    if (!mtk_op_begin_admission_guard(ctx->session_generation)) { respond_empty(ctx, MTK_STATUS_NOT_READY); return; }
     int no_mem = 0;
     /* Release-tooling-round P0 correction (independent audit): the
      * identity is copied out atomically at mint time -- no raw record
@@ -140,12 +153,21 @@ static void handle_ap_scan_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry_
      * throughout this function's own already-established token/epoch-only
      * async continuation) are simply this identity's own fields. */
     mtk_op_id_t id = mtk_op_alloc_id(op->service_id, op->opcode, now_ms(), &no_mem);
-    if (id.token == 0) { mtk_arbiter_release(MTK_ARB_WS); respond_empty(ctx, MTK_STATUS_NO_MEMORY); return; }
-    mtk_arbiter_force_transfer(MTK_ARB_WS, id.token);
+    if (id.token == 0) { respond_empty(ctx, MTK_STATUS_NO_MEMORY); mtk_op_end_admission_guard(); return; }
+    /* Publishes the REAL token in the SAME arbiter call -- never
+     * acquire(class, 0) followed by a later force_transfer(class, token),
+     * exactly the half-published sequence this guard exists to close. */
+    if (mtk_arbiter_acquire(MTK_ARB_WS, id.token) != MTK_ARB_GRANT_OK) {
+        mtk_op_discard_unpublished(id.token, id.boot_epoch);
+        respond_empty(ctx, MTK_STATUS_BUSY);
+        mtk_op_end_admission_guard();
+        return;
+    }
     mtk_op_transition_by_token(id.token, id.boot_epoch, MTK_OPS_RUNNING, MTK_STATUS_OK, now_ms());
 
     mtk_ap_scan_start_resp_t r; r.operation_token = id.token;
     respond(ctx, MTK_STATUS_ACCEPTED, &r, &mtk_ap_scan_start_resp_t_desc);
+    mtk_op_end_admission_guard();
 
     mtk_hal_ap_record_t hal_out[WIFI_MAX_AP];
     uint8_t fixed_channel = (req.channel_plan.mode == 0) ? req.channel_plan.channel : 0;
@@ -406,7 +428,9 @@ static void handle_sta_scan_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry
         respond_empty(ctx, MTK_STATUS_PROTOCOL_ERROR); return;
     }
     if (req.channel < 1 || req.channel > 13) { respond_empty(ctx, MTK_STATUS_INVALID_ARGUMENT); return; }
-    if (mtk_arbiter_acquire(MTK_ARB_WS, 0) != MTK_ARB_GRANT_OK) { respond_empty(ctx, MTK_STATUS_BUSY); return; }
+    /* Diagnosed ownership-publication fix -- see handle_ap_scan_start's
+     * identical comment above. */
+    if (!mtk_op_begin_admission_guard(ctx->session_generation)) { respond_empty(ctx, MTK_STATUS_NOT_READY); return; }
     int no_mem = 0;
     /* Release-tooling-round P0 correction (independent audit): the
      * identity is copied out atomically at mint time -- no raw record
@@ -414,12 +438,18 @@ static void handle_sta_scan_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry
      * response and the (potentially long-running/deferred) sta_scan HAL
      * call below. */
     mtk_op_id_t id = mtk_op_alloc_id(op->service_id, op->opcode, now_ms(), &no_mem);
-    if (id.token == 0) { mtk_arbiter_release(MTK_ARB_WS); respond_empty(ctx, MTK_STATUS_NO_MEMORY); return; }
-    mtk_arbiter_force_transfer(MTK_ARB_WS, id.token);
+    if (id.token == 0) { respond_empty(ctx, MTK_STATUS_NO_MEMORY); mtk_op_end_admission_guard(); return; }
+    if (mtk_arbiter_acquire(MTK_ARB_WS, id.token) != MTK_ARB_GRANT_OK) {
+        mtk_op_discard_unpublished(id.token, id.boot_epoch);
+        respond_empty(ctx, MTK_STATUS_BUSY);
+        mtk_op_end_admission_guard();
+        return;
+    }
     mtk_op_transition_by_token(id.token, id.boot_epoch, MTK_OPS_RUNNING, MTK_STATUS_OK, now_ms());
 
     mtk_sta_scan_start_resp_t r; r.operation_token = id.token;
     respond(ctx, MTK_STATUS_ACCEPTED, &r, &mtk_sta_scan_start_resp_t_desc);
+    mtk_op_end_admission_guard();
 
     mtk_hal_station_record_t hal_out[WIFI_MAX_STA];
     mtk_hal_mac6_t hbssid = to_hal_mac(req.target_bssid);
@@ -658,8 +688,9 @@ static void handle_sta_connect(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t 
         respond_empty(ctx, MTK_STATUS_INVALID_ARGUMENT); return;
     }
     if (req.persistence == 1 /* PERSISTENT */) { respond_empty(ctx, MTK_STATUS_UNSUPPORTED); return; }
-    mtk_arbiter_grant_t g = mtk_arbiter_acquire(MTK_ARB_WMC, 0);
-    if (g != MTK_ARB_GRANT_OK) { respond_empty(ctx, MTK_STATUS_BUSY); return; }
+    /* Diagnosed ownership-publication fix -- see handle_ap_scan_start's
+     * identical comment above. */
+    if (!mtk_op_begin_admission_guard(ctx->session_generation)) { respond_empty(ctx, MTK_STATUS_NOT_READY); return; }
     int no_mem = 0;
     /* Release-tooling-round P0 correction (independent audit): the
      * identity is copied out atomically at mint time -- no raw record
@@ -667,12 +698,18 @@ static void handle_sta_connect(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t 
      * response and the (potentially long, up to connect_timeout_ms) HAL
      * connect call below. */
     mtk_op_id_t id = mtk_op_alloc_id(op->service_id, op->opcode, now_ms(), &no_mem);
-    if (id.token == 0) { mtk_arbiter_release(MTK_ARB_WMC); respond_empty(ctx, MTK_STATUS_NO_MEMORY); return; }
-    mtk_arbiter_force_transfer(MTK_ARB_WMC, id.token);
+    if (id.token == 0) { respond_empty(ctx, MTK_STATUS_NO_MEMORY); mtk_op_end_admission_guard(); return; }
+    if (mtk_arbiter_acquire(MTK_ARB_WMC, id.token) != MTK_ARB_GRANT_OK) {
+        mtk_op_discard_unpublished(id.token, id.boot_epoch);
+        respond_empty(ctx, MTK_STATUS_BUSY);
+        mtk_op_end_admission_guard();
+        return;
+    }
     mtk_op_transition_by_token(id.token, id.boot_epoch, MTK_OPS_RUNNING, MTK_STATUS_OK, now_ms());
 
     mtk_sta_connect_resp_t r; r.operation_token = id.token;
     respond(ctx, MTK_STATUS_ACCEPTED, &r, &mtk_sta_connect_resp_t_desc);
+    mtk_op_end_admission_guard();
 
     uint32_t timeout = req.connect_timeout_ms ? req.connect_timeout_ms : 15000;
     mtk_hal_connect_result_t cres = {0};
@@ -885,8 +922,17 @@ static void handle_deauth_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t
         ap_bssid = req.ap_bssid; channel = req.channel;
     } else { respond_empty(ctx, MTK_STATUS_INVALID_ARGUMENT); return; }
 
-    mtk_arbiter_grant_t g = mtk_arbiter_acquire(MTK_ARB_D, 0);
-    if (g == MTK_ARB_GRANT_BUSY) { respond_empty(ctx, MTK_STATUS_BUSY); return; }
+    /* Diagnosed ownership-publication fix -- see handle_ap_scan_start's
+     * identical comment above. MTK_ARB_D is GUARDED with MTK_ARB_H (the
+     * only class it is ever GUARDED against), but D->H is the ONLY
+     * direction 002-resource-arbiter.md Sec 3.1 actually permits a
+     * bounded stop-then-acquire handoff for -- see handle_handshake_
+     * start's own D->H handling. DEAUTH_START seeing H already active
+     * (the reverse direction) has no such contract: M3 correction
+     * (independent review P0 "reverse H->D direction is incorrectly
+     * treated as the permitted D->H handoff") -- GUARDED is now rejected
+     * exactly like BUSY, immediately below, never force-transferred. */
+    if (!mtk_op_begin_admission_guard(ctx->session_generation)) { respond_empty(ctx, MTK_STATUS_NOT_READY); return; }
     int no_mem = 0;
     /* Release-tooling-round P0 correction (independent audit): the
      * identity is copied out atomically at mint time -- no raw record
@@ -894,17 +940,48 @@ static void handle_deauth_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t
      * function's own already-established token/epoch-only convention for
      * its long-running send loop) are simply this identity's own fields. */
     mtk_op_id_t id = mtk_op_alloc_id(op->service_id, op->opcode, now_ms(), &no_mem);
-    if (id.token == 0) { if (g == MTK_ARB_GRANT_OK) mtk_arbiter_release(MTK_ARB_D); respond_empty(ctx, MTK_STATUS_NO_MEMORY); return; }
-    mtk_arbiter_force_transfer(MTK_ARB_D, id.token);
+    if (id.token == 0) { respond_empty(ctx, MTK_STATUS_NO_MEMORY); mtk_op_end_admission_guard(); return; }
+    /* M3 correction (independent review P0 "reverse H->D direction is
+     * incorrectly treated as the permitted D->H handoff"): 002-resource-
+     * arbiter.md Sec 3.1 and mtk_arbiter_grant_t's own doc comment name
+     * D->H as the ONLY guarded direction in Phase 1 -- the policy lookup
+     * for the {D, H} pair is symmetric, though, so DEAUTH_START seeing H
+     * already active ALSO receives MTK_ARB_GRANT_GUARDED here, exactly
+     * like H seeing D active. Treating that as permission to force_
+     * transfer would silently implement the forbidden reverse H->D
+     * takeover -- orphaning the live handshake's own radio state and
+     * operation record, which nothing would ever finalize. DEAUTH_START
+     * has no bounded-handoff contract for this direction at all, so a
+     * GUARDED result here is rejected exactly like BUSY: the arbiter has
+     * not granted, and H's own class/token/state are left completely
+     * untouched. */
+    mtk_arbiter_grant_t g = mtk_arbiter_acquire(MTK_ARB_D, id.token);
+    if (g == MTK_ARB_GRANT_BUSY || g == MTK_ARB_GRANT_GUARDED) {
+        mtk_op_discard_unpublished(id.token, id.boot_epoch);
+        respond_empty(ctx, MTK_STATUS_BUSY);
+        mtk_op_end_admission_guard();
+        return;
+    }
     mtk_op_transition_by_token(id.token, id.boot_epoch, MTK_OPS_RUNNING, MTK_STATUS_OK, now_ms());
 
-    mtk_deauth_start_resp_t r; r.operation_token = id.token;
-    respond(ctx, MTK_STATUS_ACCEPTED, &r, &mtk_deauth_start_resp_t_desc);
-
+    /* M2 independent-review correction (addendum P0 "cancellation-visible
+     * state is still published after the guard"): s_deauth's own token
+     * MUST be committed before ACCEPTED/before the guard unlocks -- a
+     * peer-session reset that acquires the guard immediately after
+     * mtk_op_end_admission_guard() (below) reads s_deauth at the coherent-
+     * reader sites (mtek_wifi_cancel_active_for_peer_reset,
+     * handle_get_wifi_recovery_state) to decide what to cancel/report; if
+     * that ran before this write, it would act on stale (zero/previous-
+     * session) s_deauth state while this worker then overwrote it with the
+     * now-canceled token's own identity moments later. */
     wifi_lock();
     memset(&s_deauth, 0, sizeof(s_deauth));
     s_deauth.token = id.token;
     wifi_unlock();
+
+    mtk_deauth_start_resp_t r; r.operation_token = id.token;
+    respond(ctx, MTK_STATUS_ACCEPTED, &r, &mtk_deauth_start_resp_t_desc);
+    mtk_op_end_admission_guard();
 
     /* total_sent counts HAL-confirmed successful transmissions only (the
      * HAL return value is checked, never discarded) -- a TX failure
@@ -1369,8 +1446,36 @@ static void handle_handshake_start(mtk_request_ctx_t *ctx, const mtk_opcode_entr
     if (mtk_decode(op->req_desc, &req, req_bytes, req_len, NULL) != MTK_CODEC_OK) { respond_empty(ctx, MTK_STATUS_PROTOCOL_ERROR); return; }
     if (req.channel < 1 || req.channel > 13) { respond_empty(ctx, MTK_STATUS_INVALID_ARGUMENT); return; }
 
+    /* M3 correction (independent review P0 "the D->H handoff uses a
+     * coherent but unstable snapshot and an unconditional release"): the
+     * admission guard now opens FIRST, before the D-ownership snapshot,
+     * and stays open through the handoff decision and release -- exactly
+     * like every other admission site in this tree. The previous ordering
+     * read D's ownership and force-released it entirely OUTSIDE any
+     * guard: a concurrent DEAUTH_STOP/deauth_finalize could legitimately
+     * release D on its own in that window, letting a brand-new operation
+     * install itself as the new arbiter owner before this function's own
+     * unconditional mtk_arbiter_force_release() ran -- which would then
+     * silently clear that NEW owner's lease, not D's. Opening the guard
+     * here serializes the whole decision against exactly the same
+     * concurrent admissions/session resets mtk_op_begin_admission_guard
+     * exists to serialize everywhere else. */
+    if (!mtk_op_begin_admission_guard(ctx->session_generation)) { respond_empty(ctx, MTK_STATUS_NOT_READY); return; }
+
     /* D->H guarded transition (002-resource-arbiter.md Sec 3.1). */
-    if (mtk_arbiter_active_class() == MTK_ARB_D) {
+    /* Coherent-reader fix: one snapshot instead of a separate class check
+     * and a separate token read -- a concurrent worker could otherwise
+     * change ownership between the two, e.g. this branch could enter on a
+     * genuinely-D class read and then read a token for whatever NEWER
+     * operation replaced it. */
+    mtk_arbiter_snapshot_t dh_snap = mtk_arbiter_snapshot();
+    if (dh_snap.cls == MTK_ARB_D) {
+        /* M3 correction: test-only pause seam, firing here -- right after
+         * the D snapshot, still holding the admission guard's pub_lock
+         * (never the arbiter lock) -- so a test can pause deterministically
+         * at exactly the point the independent review's own required race
+         * test targets. Always NULL (a true no-op) outside such a test. */
+        if (s_dh_handoff_pause_hook) s_dh_handoff_pause_hook();
         /* Release-tooling-round P0 correction (independent audit,
          * "operation-table pointer has a find/unlock/use ABA race"): never
          * retain a raw mtk_op_find() pointer across the transition call
@@ -1378,22 +1483,32 @@ static void handle_handshake_start(mtk_request_ctx_t *ctx, const mtk_opcode_entr
          * actually wrote, instead of an unsynchronized re-read through a
          * pointer whose slot a concurrent worker could have already
          * recycled for a different operation. */
-        uint32_t d_token = mtk_arbiter_active_token();
+        uint32_t d_token = dh_snap.token;
         mtk_operation_record_t d_snap;
         int d_found = mtk_op_snapshot(d_token, ctx->boot_epoch, &d_snap);
         if (d_found && !mtk_op_state_is_terminal(d_snap.state)) {
             mtk_op_transition_by_token(d_token, ctx->boot_epoch, MTK_OPS_STOPPED, MTK_STATUS_OK, now_ms());
             d_found = mtk_op_snapshot(d_token, ctx->boot_epoch, &d_snap);
         }
+        /* M3 correction: an atomic OWNER-CHECKED release of exactly
+         * (MTK_ARB_D, d_token) -- never mtk_arbiter_force_release(), which
+         * clears whatever class/token happens to be active right now
+         * regardless of whether it is still this exact D operation. Still
+         * inside the SAME admission guard opened above, so nothing else
+         * can install a different owner between this decision and this
+         * release. If d_token is no longer the active D owner by now (it
+         * already released itself through its own normal cleanup, e.g.
+         * deauth_finalize), this is a safe no-op -- exactly the case this
+         * correction closes. */
         if (d_found && mtk_op_state_is_terminal(d_snap.state)) {
-            mtk_arbiter_force_release();
+            mtk_arbiter_release_if_owner(MTK_ARB_D, d_token);
         } else {
-            mtk_arbiter_force_release();
+            mtk_arbiter_release_if_owner(MTK_ARB_D, d_token);
             if (d_found) mtk_op_transition_by_token(d_token, ctx->boot_epoch, MTK_OPS_FAILED, MTK_STATUS_TIMEOUT, now_ms());
+            mtk_op_end_admission_guard();
             respond_empty(ctx, MTK_STATUS_RADIO_CONFLICT); return;
         }
     }
-    if (mtk_arbiter_acquire(MTK_ARB_H, 0) != MTK_ARB_GRANT_OK) { respond_empty(ctx, MTK_STATUS_BUSY); return; }
     int no_mem = 0;
     /* Release-tooling-round P0 correction (independent audit): the
      * identity is copied out atomically at mint time -- no raw record
@@ -1401,18 +1516,29 @@ static void handle_handshake_start(mtk_request_ctx_t *ctx, const mtk_opcode_entr
      * response and the promisc_start call below (hs_frame_cb can start
      * firing before this function even returns). */
     mtk_op_id_t id = mtk_op_alloc_id(op->service_id, op->opcode, now_ms(), &no_mem);
-    if (id.token == 0) { mtk_arbiter_release(MTK_ARB_H); respond_empty(ctx, MTK_STATUS_NO_MEMORY); return; }
-    mtk_arbiter_force_transfer(MTK_ARB_H, id.token);
+    if (id.token == 0) { respond_empty(ctx, MTK_STATUS_NO_MEMORY); mtk_op_end_admission_guard(); return; }
+    if (mtk_arbiter_acquire(MTK_ARB_H, id.token) != MTK_ARB_GRANT_OK) {
+        mtk_op_discard_unpublished(id.token, id.boot_epoch);
+        respond_empty(ctx, MTK_STATUS_BUSY);
+        mtk_op_end_admission_guard();
+        return;
+    }
     mtk_op_transition_by_token(id.token, id.boot_epoch, MTK_OPS_RUNNING, MTK_STATUS_OK, now_ms());
 
-    mtk_handshake_start_resp_t r; r.operation_token = id.token;
-    respond(ctx, MTK_STATUS_ACCEPTED, &r, &mtk_handshake_start_resp_t_desc);
-
-    /* RC8 independent audit P0-3: locked -- hs_frame_cb can start firing
-     * (via hal->promisc_start below) before this function even returns,
-     * on a real target's own Wi-Fi driver task; every field it or a
-     * concurrent status/read query touches must be fully initialized as
-     * one atomic unit, not observed mid-write. */
+    /* M2 independent-review correction (addendum P0 "cancellation-visible
+     * state is still published after the guard"): s_hs's complete initial
+     * state -- including token/sink/boot_epoch/session_generation, which
+     * handshake_finish reads BEFORE any cleanup/publication -- must be
+     * committed before ACCEPTED/before the guard unlocks, for the same
+     * reason as s_deauth above: a peer-session reset that acquires the
+     * guard immediately after mtk_op_end_admission_guard() (below) can
+     * already see MTK_ARB_H/this token and call handshake_finish for it;
+     * that must never run against a stale or zero-initialized s_hs (a
+     * stale/uninitialized sink call, wrong-session output, or reading a
+     * PRIOR session's own leftover fields). Still moved here BEFORE
+     * hs_frame_cb can possibly start firing (hal->promisc_start, further
+     * below) -- RC8 independent audit P0-3's own "one atomic unit, never
+     * observed mid-write" requirement is unaffected by moving earlier. */
     wifi_lock();
     memset(&s_hs, 0, sizeof(s_hs));
     /* RC11 promiscuous-mode audit follow-up #3 "store the operation
@@ -1438,6 +1564,11 @@ static void handle_handshake_start(mtk_request_ctx_t *ctx, const mtk_opcode_entr
     s_hs.session_generation = ctx->session_generation;
     s_hs.target_bssid = req.target_bssid; s_hs.channel = req.channel;
     wifi_unlock();
+
+    mtk_handshake_start_resp_t r; r.operation_token = id.token;
+    respond(ctx, MTK_STATUS_ACCEPTED, &r, &mtk_handshake_start_resp_t_desc);
+    mtk_op_end_admission_guard();
+
     /* RC9 independent correction order P0 "handshake capture ignores
      * monitor-entry failure": promisc_start's return value was
      * previously discarded entirely -- if callback registration, channel
@@ -1554,11 +1685,15 @@ static void handle_handshake_stop(mtk_request_ctx_t *ctx, const mtk_opcode_entry
 
 static void handle_wifi_stop_all(mtk_request_ctx_t *ctx) {
     mtk_wifi_stop_all_resp_t r; memset(&r, 0, sizeof(r));
-    mtk_arbiter_class_t active = mtk_arbiter_active_class();
+    /* Coherent-reader fix: one snapshot instead of a separate class read
+     * (line below) and a separate token read -- the decision this
+     * function makes depends on both together. */
+    mtk_arbiter_snapshot_t snap = mtk_arbiter_snapshot();
+    mtk_arbiter_class_t active = snap.cls;
     if (active == MTK_ARB_WMC || active == MTK_ARB_WS || active == MTK_ARB_BEACON ||
         active == MTK_ARB_D || active == MTK_ARB_H || active == MTK_ARB_M ||
         active == MTK_ARB_SAP || active == MTK_ARB_RAW) {
-        uint32_t tok = mtk_arbiter_active_token();
+        uint32_t tok = snap.token;
 
         /* P0 correction (follow-up read-only audit, "final P0
          * concurrency-closure round", issue 3 "Correct ordinary STOP
@@ -1666,9 +1801,12 @@ mtk_op_id_t mtek_wifi_cancel_active_for_peer_reset(void) {
         wifi_lock(); s_sta_connected = 0; wifi_unlock();
     }
 
-    mtk_arbiter_class_t active = mtk_arbiter_active_class();
+    /* Coherent-reader fix: one snapshot instead of a separate class read
+     * and a separate token read. */
+    mtk_arbiter_snapshot_t snap = mtk_arbiter_snapshot();
+    mtk_arbiter_class_t active = snap.cls;
     if (active != MTK_ARB_D && active != MTK_ARB_H && active != MTK_ARB_WMC && active != MTK_ARB_WS) return id;
-    uint32_t tok = mtk_arbiter_active_token();
+    uint32_t tok = snap.token;
     uint32_t epoch = mtk_core_boot_epoch();
     switch (active) {
         case MTK_ARB_D:
@@ -1765,9 +1903,21 @@ mtk_op_id_t mtek_wifi_cancel_active_for_peer_reset(void) {
 
 static void handle_get_wifi_recovery_state(mtk_request_ctx_t *ctx) {
     mtk_get_wifi_recovery_state_resp_t r;
-    r.radio_owner = (uint8_t)mtk_arbiter_active_owner();
-    r.active_operation_count = (mtk_arbiter_active_class() == MTK_ARB_NONE) ? 0 : 1;
-    r.sta_mode_restored = (mtk_arbiter_active_class() == MTK_ARB_NONE) ? 1 : 0;
+    /* M3 correction (independent review P1 "GET_WIFI_RECOVERY_STATE still
+     * constructs a torn response"): the previous fix already made
+     * active_operation_count/sta_mode_restored coherent with each other
+     * via one snapshot, but radio_owner still came from a SEPARATE,
+     * independently-locked mtk_arbiter_active_owner() call taken before
+     * that snapshot -- a concurrent ownership transition between the two
+     * could still produce a radio_owner that disagrees with the other two
+     * fields. All three now come from the SAME single snapshot: radio_
+     * owner via the pure mtk_arbiter_owner_for_class(snap.cls) mapping
+     * (no second lock acquisition, no second read of shared arbiter
+     * state), never a second active-state read. */
+    mtk_arbiter_snapshot_t snap = mtk_arbiter_snapshot();
+    r.radio_owner = (uint8_t)mtk_arbiter_owner_for_class(snap.cls);
+    r.active_operation_count = (snap.cls == MTK_ARB_NONE) ? 0 : 1;
+    r.sta_mode_restored = (snap.cls == MTK_ARB_NONE) ? 1 : 0;
     respond(ctx, MTK_STATUS_OK, &r, &mtk_get_wifi_recovery_state_resp_t_desc);
 }
 

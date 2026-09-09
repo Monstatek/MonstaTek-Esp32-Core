@@ -69,6 +69,31 @@ mtk_arbiter_class_t mtk_arbiter_active_class(void);
 uint32_t mtk_arbiter_active_token(void);
 mtk_radio_owner_t mtk_arbiter_active_owner(void);
 
+/* Pure class->owner mapping: takes no lock and reads no shared arbiter
+ * state at all. A caller that already holds one coherent
+ * mtk_arbiter_snapshot_t (below) should derive radio_owner from THAT
+ * snapshot's own class through this helper, rather than a second,
+ * independently-locked mtk_arbiter_active_owner() call that could
+ * observe a different ownership moment -- see GET_WIFI_RECOVERY_STATE's
+ * own use in mtek_wifi_logic.c. */
+mtk_radio_owner_t mtk_arbiter_owner_for_class(mtk_arbiter_class_t cls);
+
+/* mtk_arbiter_active_class()/mtk_arbiter_active_token() are each their
+ * own independent lock acquisition -- a caller that needs BOTH fields to
+ * describe the SAME ownership moment (any decision made from the pair
+ * together, not just displaying each independently) calling them as two
+ * separate reads can observe a torn combination: class from one moment,
+ * token from a later one, after a concurrent worker changed ownership in
+ * between. mtk_arbiter_snapshot() returns both fields from ONE lock
+ * acquisition -- the only way to get a genuinely coherent pair. Prefer
+ * this over the two separate getters whenever the caller's own logic
+ * branches on, publishes, or compares both fields together. */
+typedef struct {
+    mtk_arbiter_class_t cls;
+    uint32_t token;
+} mtk_arbiter_snapshot_t;
+mtk_arbiter_snapshot_t mtk_arbiter_snapshot(void);
+
 #ifdef __cplusplus
 }
 #endif

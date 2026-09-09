@@ -424,8 +424,31 @@ static void handle_capture_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry_
         respond_empty(ctx, MTK_STATUS_NOT_READY); return;
     }
 
-    mtk_arbiter_grant_t g = mtk_arbiter_acquire(MTK_ARB_M, 0);
-    if (g != MTK_ARB_GRANT_OK) { respond_empty(ctx, MTK_STATUS_BUSY); return; }
+    /* Diagnosed ownership-publication fix (TSan-exposed): admission is now
+     * held under the same lock that serializes mtk_core_bump_session_
+     * generation, from final session validation through arbiter ownership
+     * publication and the ACCEPTED response, so a peer-session reset can
+     * never observe a token-backed class owned by a not-yet-real token --
+     * see mtk_op_begin_admission_guard's own doc comment (mtek_core.h).
+     *
+     * M3 lock-order correction (real, reproducible AB-BA deadlock caught
+     * by a full-suite ASan/UBSan run): this file's own global nested-lock
+     * order is `cap_action_lock -> pub_lock -> cap_lock` -- exactly
+     * mtek_capture_channel_hop_tick's own established order (cap_action_
+     * lock at its own top, mtk_op_begin_publish_guard i.e. pub_lock next,
+     * cap_lock innermost). The action lease is acquired HERE, before the
+     * admission guard even begins, so this call can never hold pub_lock
+     * while waiting for the action lease that a paused hop tick already
+     * holds -- the previous order (pub_lock first, action lease second)
+     * was the reverse of hop_tick's own and formed the deadlock's other
+     * half. See mtek_core.h's own admission-guard doc comment for the
+     * full nested-lock contract this establishes for every Core path. */
+    cap_action_lock();
+    if (!mtk_op_begin_admission_guard(ctx->session_generation)) {
+        cap_action_unlock();
+        respond_empty(ctx, MTK_STATUS_NOT_READY);
+        return;
+    }
     int no_mem = 0;
     /* Release-tooling-round P0 correction (independent audit): the
      * identity is copied out atomically at mint time -- no raw record
@@ -434,8 +457,22 @@ static void handle_capture_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry_
      * deliver frames via frame_cb on the fake HAL, or race a real target's
      * own callback). */
     mtk_op_id_t id = mtk_op_alloc_id(op->service_id, op->opcode, now_ms(), &no_mem);
-    if (id.token == 0) { mtk_arbiter_release(MTK_ARB_M); respond_empty(ctx, MTK_STATUS_NO_MEMORY); return; }
-    mtk_arbiter_force_transfer(MTK_ARB_M, id.token);
+    if (id.token == 0) {
+        respond_empty(ctx, MTK_STATUS_NO_MEMORY);
+        mtk_op_end_admission_guard();
+        cap_action_unlock();
+        return;
+    }
+    /* Publishes the REAL token in the SAME arbiter call -- never
+     * acquire(class, 0) followed by a later force_transfer(class, token),
+     * exactly the half-published sequence this guard exists to close. */
+    if (mtk_arbiter_acquire(MTK_ARB_M, id.token) != MTK_ARB_GRANT_OK) {
+        mtk_op_discard_unpublished(id.token, id.boot_epoch);
+        respond_empty(ctx, MTK_STATUS_BUSY);
+        mtk_op_end_admission_guard();
+        cap_action_unlock();
+        return;
+    }
     mtk_op_transition_by_token(id.token, id.boot_epoch, MTK_OPS_RUNNING, MTK_STATUS_OK, now_ms());
 
     /* RC8 independent audit P0-3 "synchronize service session state":
@@ -451,18 +488,19 @@ static void handle_capture_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry_
      * anything else can observe it. */
     uint8_t fixed_channel = (req.channel_plan.mode == 0) ? req.channel_plan.channel : 1;
     /* P0 correction (RC11 round 10, item 1 "close the capture-hop pre-HAL
-     * race completely"): acquired BEFORE the field-level cap_lock below,
-     * around the whole reinit -- if a hop tick for the session this call
-     * is about to replace is currently mid-action (already past its own
-     * final identity validation, about to call or still inside
-     * hal->set_channel()), this blocks here until that tick's own action
-     * fully completes (commits or discovers it is stale and bails) and
-     * releases the SAME lease, so this reinit can never race a HAL round-
-     * trip already in flight for the session being replaced. Released
-     * immediately after the reinit -- never held across the ACCEPTED
-     * response or this function's own later hal->promisc_start() call,
-     * neither of which need it. */
-    cap_action_lock();
+     * race completely"): the action lease (acquired above, before the
+     * admission guard) is what actually excludes a hop tick's own HAL
+     * action/commit for the whole span from here through cap_unlock below
+     * -- if a hop tick for the session this call is about to replace is
+     * currently mid-action (already past its own final identity
+     * validation, about to call or still inside hal->set_channel()), this
+     * reinit genuinely cannot proceed until that tick's own action fully
+     * completes (commits or discovers it is stale and bails) and releases
+     * the SAME lease, so this reinit can never race a HAL round-trip
+     * already in flight for the session being replaced. The lease is
+     * released right after cap_unlock below -- never held across the
+     * ACCEPTED response, mtk_op_end_admission_guard, or this function's
+     * own later hal->promisc_start() call, none of which need it. */
     cap_lock();
     memset(&s_cap, 0, sizeof(s_cap));
     s_cap.token = id.token; s_cap.boot_epoch = id.boot_epoch; s_cap.ctx = *ctx; s_cap.mode = req.mode; s_cap.snap_len = req.snap_len;
@@ -484,10 +522,20 @@ static void handle_capture_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry_
         s_cap.hop_last_switch_ms = now_ms();
     }
     cap_unlock();
+    /* Released here, still holding pub_lock (the admission guard) a
+     * moment longer -- releasing the OUTER lock (cap_action_lock) before
+     * the INNER one (pub_lock) is safe for deadlock-freedom (only
+     * ACQUISITION order can form a cycle, never release order) precisely
+     * because this function never re-acquires cap_action_lock afterward;
+     * any hop tick that acquires it the instant it is freed here can only
+     * ever block on pub_lock next, which this call unconditionally
+     * releases moments later via mtk_op_end_admission_guard below --
+     * never the other way around. */
     cap_action_unlock();
 
     mtk_capture_start_resp_t r; r.operation_token = id.token;
     respond(ctx, MTK_STATUS_ACCEPTED, &r, &mtk_capture_start_resp_t_desc);
+    mtk_op_end_admission_guard();
 
     /* RC8 independent audit P0-9 "Correct raw-radio channel and monitor-
      * mode entry behavior": the accept response above is already sent by
@@ -648,8 +696,14 @@ void mtek_capture_channel_hop_tick(uint64_t now) {
  * arbiter check and this call. */
 mtk_op_id_t mtek_capture_cancel_active_for_peer_reset(void) {
     mtk_op_id_t id = {0, 0};
-    if (mtk_arbiter_active_class() != MTK_ARB_M) return id;
-    uint32_t tok = mtk_arbiter_active_token();
+    /* Coherent-reader fix (diagnosed alongside the admission-guard fix):
+     * class and token read from ONE lock acquisition -- two separate
+     * mtk_arbiter_active_class()/mtk_arbiter_active_token() calls could
+     * observe a class from one ownership moment and a token from a later
+     * one if a concurrent worker changed ownership in between. */
+    mtk_arbiter_snapshot_t snap = mtk_arbiter_snapshot();
+    if (snap.cls != MTK_ARB_M) return id;
+    uint32_t tok = snap.token;
     uint32_t epoch = mtk_core_boot_epoch();
     capture_teardown(tok, epoch, 3 /* PEER_RESET -- distinct from USER_REQUEST=0/DURATION_ELAPSED=1/START_FAILED=2 */, MTK_STATUS_OK);
     id.token = tok; id.boot_epoch = epoch;
@@ -865,9 +919,13 @@ static void handle_get_transport_counters(mtk_request_ctx_t *ctx) {
 }
 static void handle_get_radio_resource_state(mtk_request_ctx_t *ctx) {
     mtk_get_radio_resource_state_resp_t r; memset(&r, 0, sizeof(r));
-    r.wifi_owner_class = (uint8_t)mtk_arbiter_active_class();
-    r.ble_owner_class = (uint8_t)mtk_arbiter_active_class();
-    if (mtk_arbiter_active_class() != MTK_ARB_NONE) { r.active_operation_tokens.count = 1; r.active_operation_tokens.items[0] = mtk_arbiter_active_token(); }
+    /* Coherent-reader fix: one snapshot instead of three separate class
+     * reads plus a separate token read -- resource-state output must
+     * never combine values from different ownership moments. */
+    mtk_arbiter_snapshot_t snap = mtk_arbiter_snapshot();
+    r.wifi_owner_class = (uint8_t)snap.cls;
+    r.ble_owner_class = (uint8_t)snap.cls;
+    if (snap.cls != MTK_ARB_NONE) { r.active_operation_tokens.count = 1; r.active_operation_tokens.items[0] = snap.token; }
     respond(ctx, MTK_STATUS_OK, &r, &mtk_get_radio_resource_state_resp_t_desc);
 }
 static void handle_get_queue_watermarks(mtk_request_ctx_t *ctx) {

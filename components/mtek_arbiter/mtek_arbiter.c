@@ -110,10 +110,27 @@ uint32_t mtk_arbiter_active_token(void) {
     return t;
 }
 
-mtk_radio_owner_t mtk_arbiter_active_owner(void) {
+mtk_arbiter_snapshot_t mtk_arbiter_snapshot(void) {
     arb_lock();
-    mtk_arbiter_class_t c = s_active;
+    mtk_arbiter_snapshot_t s = { s_active, s_active_token };
     arb_unlock();
-    if (c == MTK_ARB_NONE) return MTK_RADIO_OWNER_NONE;
-    return mtk_arbiter_owner[c];
+    return s;
+}
+
+/* M3 correction (independent review P1 "GET_WIFI_RECOVERY_STATE still
+ * constructs a torn response"): a PURE class->owner mapping -- takes no
+ * lock and reads no shared state at all, so a caller that already holds
+ * one coherent mtk_arbiter_snapshot_t can derive radio_owner from that
+ * SAME snapshot's own class, instead of a second, independently-locked
+ * mtk_arbiter_active_owner() call that could observe a DIFFERENT
+ * ownership moment than the rest of the response. mtk_arbiter_active_
+ * owner() below is now expressed in terms of this same helper, so there
+ * is exactly one class->owner mapping, not two that could drift apart. */
+mtk_radio_owner_t mtk_arbiter_owner_for_class(mtk_arbiter_class_t cls) {
+    if (cls == MTK_ARB_NONE) return MTK_RADIO_OWNER_NONE;
+    return mtk_arbiter_owner[cls];
+}
+
+mtk_radio_owner_t mtk_arbiter_active_owner(void) {
+    return mtk_arbiter_owner_for_class(mtk_arbiter_active_class());
 }

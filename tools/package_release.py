@@ -26,6 +26,8 @@ inputs, rather than reimplementing them a second time under drift risk.
 Usage: python3 tools/package_release.py --build-dir build --out <staging-dir>
 """
 import argparse
+import ctypes
+import errno
 import hashlib
 import json
 import os
@@ -34,6 +36,74 @@ import shutil
 import subprocess
 import sys
 import tempfile
+
+
+class NoClobberUnavailableError(OSError):
+    """Raised when this platform has no atomic no-clobber rename
+    primitive available. Callers must fail closed on this -- never
+    silently fall back to a check-then-os.replace pair, which is itself
+    the exact TOCTOU this class exists to close."""
+
+
+def atomic_noclobber_rename(src, dst):
+    """Installs src at dst with ONE OS-level atomic call that fails if
+    dst already exists (file, directory, or symlink -- dangling or not),
+    rather than a check-then-os.replace pair. That pair is itself a real
+    TOCTOU: another actor can create a file, empty directory, or symlink
+    at dst after a `lexists` check returns and before `os.replace` runs,
+    and os.replace would then clobber it despite a documented fail-
+    closed/no-overwrite contract -- exactly the bug this function exists
+    to close.
+
+    macOS: renamex_np(2) with RENAME_EXCL (0x4) -- exclusive rename,
+    fails with EEXIST if the destination exists.
+    Linux: renameat2(2) with RENAME_NOREPLACE (1) via AT_FDCWD -- same
+    semantics.
+
+    Raises OSError (errno EEXIST, typically) if dst already exists.
+    Raises NoClobberUnavailableError if no atomic no-clobber primitive is
+    available on this platform -- callers MUST treat that identically to
+    any other failure (fail closed, clean up, report clearly), never
+    silently retry with a non-atomic check-then-replace fallback."""
+    src_b = os.fsencode(src)
+    dst_b = os.fsencode(dst)
+
+    if sys.platform == "darwin":
+        RENAME_EXCL = 0x00000004
+        libc = ctypes.CDLL(None, use_errno=True)
+        try:
+            fn = libc.renamex_np
+        except AttributeError as e:
+            raise NoClobberUnavailableError(f"renamex_np not resolvable via libc on darwin: {e}") from e
+        fn.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+        fn.restype = ctypes.c_int
+        ctypes.set_errno(0)
+        rc = fn(src_b, dst_b, RENAME_EXCL)
+        if rc != 0:
+            err = ctypes.get_errno()
+            raise OSError(err, os.strerror(err), dst)
+        return
+
+    if sys.platform.startswith("linux"):
+        RENAME_NOREPLACE = 0x1
+        AT_FDCWD = -100
+        libc = ctypes.CDLL(None, use_errno=True)
+        try:
+            fn = libc.renameat2
+        except AttributeError as e:
+            raise NoClobberUnavailableError(f"renameat2 not resolvable via libc on linux: {e}") from e
+        fn.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+        fn.restype = ctypes.c_int
+        ctypes.set_errno(0)
+        rc = fn(AT_FDCWD, src_b, AT_FDCWD, dst_b, RENAME_NOREPLACE)
+        if rc != 0:
+            err = ctypes.get_errno()
+            raise OSError(err, os.strerror(err), dst)
+        return
+
+    raise NoClobberUnavailableError(
+        f"no atomic no-clobber rename primitive is implemented for platform {sys.platform!r} "
+        f"(only darwin/renamex_np and linux/renameat2 are supported)")
 
 
 def sh(cmd, **kw):
@@ -686,14 +756,17 @@ def main():
         print(f"  {root_err}")
         sys.exit(1)
 
-    # ---- Preflight: --out must not already exist -- as a file, a
-    # directory (empty or not), or a symlink (dangling or not). A release
-    # package always goes to a fresh path; this tool never merges into or
-    # overwrites an existing one, and never follows or deletes an existing
-    # symlink at that path. os.path.lexists (not os.path.exists) is
-    # required here specifically because it does NOT follow symlinks --
-    # exists() would silently treat a dangling symlink as "absent" and let
-    # the publish step below write through it. ----
+    # ---- Cheap early preflight: --out must not already exist -- as a
+    # file, a directory (empty or not), or a symlink (dangling or not).
+    # This is an early-exit convenience ONLY (skip the expensive build/
+    # validate work below when the destination is obviously already
+    # taken) -- it is NOT the safety guarantee. A plain check here, then
+    # acting on it later, is itself the exact TOCTOU
+    # atomic_noclobber_rename() below exists to close: another actor
+    # could create requested_out_dir between this check and the real
+    # publish. os.path.lexists (not os.path.exists) is required
+    # specifically because it does NOT follow symlinks -- exists() would
+    # silently treat a dangling symlink as "absent". ----
     if os.path.lexists(requested_out_dir):
         print("PACKAGING FAILED (--out already exists):")
         print(f"  A release package must be written to a new path; this tool never merges "
@@ -704,30 +777,42 @@ def main():
     # ---- Every write from here on lands in a private staging directory,
     # created as a SIBLING of requested_out_dir under its own parent (never
     # under a different filesystem, e.g. system /tmp) so the final publish
-    # below is one same-filesystem rename, not a per-file copy loop that
+    # below is a same-filesystem rename, not a per-file copy loop that
     # could be interrupted partway through. requested_out_dir itself is
-    # created only by that single rename, once every validation and the
-    # MD5 sidecar itself have already succeeded -- there is no window where
-    # a caller can observe it partially populated. ----
+    # created only by that final atomic no-clobber rename, once every
+    # validation and the MD5 sidecar itself have already succeeded -- there
+    # is no window where a caller can observe it partially populated, AND
+    # the rename itself is the actual safety guarantee against a
+    # concurrently-created destination (not merely the early check above). ----
     out_parent = os.path.dirname(requested_out_dir) or "."
     os.makedirs(out_parent, exist_ok=True)
     staging_dir = tempfile.mkdtemp(prefix=".mtek_package_staging_", dir=out_parent)
     published = False
     try:
         _package_into(root, build_dir, staging_dir, identity, args.hardware_tested)
-        # Re-check immediately before publish: the (possibly slow) work
-        # above gives a window for something else to have created
-        # requested_out_dir concurrently. Still fail closed rather than
-        # silently overwrite it -- this tool makes no atomicity claim
-        # about the check-then-rename pair as a whole, only that it never
-        # itself overwrites/merges into a path that existed at either
-        # check.
-        if os.path.lexists(requested_out_dir):
-            print("PACKAGING FAILED (--out was created concurrently during packaging):")
-            print("  Refusing to publish over it. No package was installed at --out.")
+        # The ONLY publish step: one OS-level atomic no-clobber rename.
+        # No lexists-then-os.replace pair here -- see atomic_noclobber_
+        # rename's own doc comment for exactly why that pair is unsafe.
+        # No silent fallback if the primitive is unavailable: fail closed.
+        try:
+            atomic_noclobber_rename(staging_dir, requested_out_dir)
+            published = True
+        except NoClobberUnavailableError as e:
+            print("PACKAGING FAILED (no atomic no-clobber rename primitive available):")
+            print(f"  {e}")
+            print("  Refusing to fall back to a non-atomic check-then-replace publish. "
+                  "No package was installed at --out.")
             sys.exit(1)
-        os.replace(staging_dir, requested_out_dir)  # one rename; atomic on the same filesystem
-        published = True
+        except OSError as e:
+            if e.errno == errno.EEXIST:
+                print("PACKAGING FAILED (--out already exists):")
+                print("  The destination was created concurrently (or already existed and the "
+                      "early check above raced it). Refusing to publish over it -- a release "
+                      "package must go to a new path. No package was installed at --out.")
+            else:
+                print("PACKAGING FAILED (atomic publish rename failed):")
+                print(f"  {e}")
+            sys.exit(1)
     finally:
         if not published:
             shutil.rmtree(staging_dir, ignore_errors=True)

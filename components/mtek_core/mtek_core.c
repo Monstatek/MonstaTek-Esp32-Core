@@ -98,6 +98,60 @@ void mtk_op_end_publish_guard(void) {
     pub_unlock();
 }
 
+/* Distinct test seam from s_op_won_hook -- see mtk_op_begin_admission_
+ * guard's own doc comment (mtek_core.h) for why the two must stay
+ * separate. */
+static mtk_op_won_hook_t s_admission_hook;
+void mtk_op_set_admission_hook(mtk_op_won_hook_t hook) { s_admission_hook = hook; }
+
+/* M2 TSan-harness-correction round: a SECOND, distinct test seam, firing
+ * at the opposite end of the same guard span -- mtk_op_begin_admission_
+ * guard's own hook fires the instant the guard is acquired (before the
+ * token even exists); this one fires in mtk_op_end_admission_guard,
+ * immediately before pub_unlock -- i.e. after every producer site has
+ * already minted the real token, published arbiter ownership, committed
+ * its complete cancellation-visible initial state, transitioned to
+ * RUNNING, and emitted its single synchronous result (ACCEPTED or a
+ * guarded allocation/acquisition/HAL failure), but while a concurrent
+ * mtk_core_bump_session_generation is still genuinely blocked on the same
+ * pub_lock. This is what lets a test assert "coherent expected class +
+ * nonzero token, the matching op identity/state, and the already-
+ * published response" deterministically, instead of guessing when a
+ * detached async worker might have reached that point. Still holds only
+ * pub_lock -- never the arbiter or core-table lock -- exactly like the
+ * begin-side hook; a test seam only, never used for any runtime
+ * decision. */
+static mtk_op_won_hook_t s_admission_prepublish_hook;
+void mtk_op_set_admission_prepublish_hook(mtk_op_won_hook_t hook) { s_admission_prepublish_hook = hook; }
+
+int mtk_op_begin_admission_guard(uint32_t session_generation) {
+    pub_lock();
+    if (session_generation != 0 && session_generation != mtk_core_session_generation()) {
+        pub_unlock();
+        return 0;
+    }
+    if (s_admission_hook) s_admission_hook(session_generation); /* test seam -- still holding pub_lock */
+    return 1; /* caller now owns the lock until it calls mtk_op_end_admission_guard() */
+}
+
+void mtk_op_end_admission_guard(void) {
+    if (s_admission_prepublish_hook) s_admission_prepublish_hook(mtk_core_session_generation()); /* test seam -- still holding pub_lock */
+    pub_unlock();
+}
+
+void mtk_op_discard_unpublished(uint32_t token, uint32_t boot_epoch) {
+    if (token == 0) return;
+    core_lock();
+    for (unsigned i = 0; i < MTK_BUDGET_MAX_OPERATION_TOKENS; i++) {
+        if (s_ops[i].token == token && s_ops[i].boot_epoch == boot_epoch) {
+            memset(&s_ops[i], 0, sizeof(s_ops[i]));
+            memset(&s_terminal[i], 0, sizeof(s_terminal[i]));
+            break;
+        }
+    }
+    core_unlock();
+}
+
 static uint32_t alloc_token(void) {
     uint32_t t;
     do {

@@ -73,6 +73,20 @@ void mtek_wifi_service_set_lock(mtk_wifi_lock_fn lock, mtk_wifi_lock_fn unlock);
  * reportable) -- {0,0} if nothing was cancelled. */
 mtk_op_id_t mtek_wifi_cancel_active_for_peer_reset(void);
 
+/* M3 correction (independent review P0 "the D->H handoff uses a coherent
+ * but unstable snapshot and an unconditional release"): test-only pause
+ * seam, called from handle_handshake_start immediately AFTER its own D-
+ * ownership snapshot is taken (still holding the admission guard's
+ * pub_lock, never the arbiter lock), letting a test pause deterministically
+ * at exactly the point a real race must be proven closed -- D's own
+ * natural finalization, and a completely independent admission installing
+ * a brand-new owner, both racing concurrently against this held snapshot
+ * before the guarded owner-checked release runs. Always NULL (a true
+ * no-op call) outside of a test that explicitly sets it -- never used for
+ * any runtime decision. */
+typedef void (*mtk_wifi_dh_handoff_pause_hook_t)(void);
+void mtek_wifi_set_dh_handoff_pause_hook(mtk_wifi_dh_handoff_pause_hook_t hook);
+
 #ifdef __cplusplus
 }
 #endif

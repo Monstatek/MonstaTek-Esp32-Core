@@ -292,9 +292,13 @@ static void feed_request(const mtk_opcode_entry_t *op, const void *req, uint32_t
     mtk_spi_native_header_t resp_hdr; uint8_t resp_payload[MTK_SPI_NATIVE_MAX_PAYLOAD]; uint16_t resp_len = 0;
     mtek_spi_native_dispatch_feed_cell(&dctx, &hdr, blen ? buf : NULL, blen, &resp_hdr, resp_payload, &resp_len);
 }
+/* Diagnosed-fix update: waits for a nonzero token in the SAME snapshot as
+ * the class match, not class alone -- see test_p0_session_publication_
+ * closure_round7.c's identical helper for the full rationale. */
 static int wait_for_arbiter_class(mtk_arbiter_class_t cls) {
     for (int i = 0; i < 20000; i++) {
-        if (mtk_arbiter_active_class() == cls) return 1;
+        mtk_arbiter_snapshot_t snap = mtk_arbiter_snapshot();
+        if (snap.cls == cls && snap.token != 0) return 1;
         usleep(500);
     }
     return 0;

@@ -1,6 +1,30 @@
 # RC12 engineering status
 
-## Reviewed application identity
+## Current candidate identity: see the generated manifest, not this file
+
+This file's own "Reviewed application identity" table and the hashes in
+"Clean-source verification" below describe a **specific prior commit**
+(`9dedbb12cdbd4f977693858e917f37c50ba14a48`), not whatever commit is
+currently at the tip of this repository. A further correction round (see
+"Correction history" item 5 below) has added more source changes since
+that commit was built and reviewed; because ESP-IDF embeds a Git-derived
+version string in the application image itself (see the "Application
+SHA-256 changes whenever..." paragraph below), a tracked file cannot
+safely predict the hash a not-yet-built later commit will produce, and a
+post-build tracked documentation commit describing it would itself change
+the embedded version string and invalidate the exact package-to-commit
+binding it was trying to record.
+
+**For the exact identity of whatever candidate you are actually holding,
+read the generated `PACKAGING_MANIFEST.md` inside that specific package**
+(produced by `tools/package_release.py`, never hand-edited) -- it records
+the real source commit, dirty/clean status, and merged-image/application
+hashes for that exact build, out of tree, at packaging time. This file is
+retained as historical engineering evidence for the commit named in its
+own table, not as a live status record.
+
+## Reviewed application identity (historical -- commit
+`9dedbb12cdbd4f977693858e917f37c50ba14a48` only)
 
 | Field | Value |
 | --- | --- |
@@ -71,6 +95,25 @@ correct build of an earlier, incompletely-synced state of this repository.
    and re-verified artifact hashes below. This is a documentation-only
    change; see "Clean-source verification" for the exact one-file diff
    this update itself makes relative to the reviewed source commit.
+5. A further, later correction round fixed a real, reproducible lock-
+   order deadlock (a capture channel-hop tick and a concurrent capture
+   restart could each hold the resource the other was waiting for),
+   corrected the arbiter-mediated deauth/handshake ownership handoff (the
+   allowed direction now runs entirely inside the same admission guard
+   used elsewhere, with an atomic owner-checked release instead of an
+   unconditional one; the disallowed reverse direction is now rejected
+   instead of silently permitted), made a Wi-Fi recovery-state query
+   derive every field from one coherent ownership snapshot, closed a
+   packaging finalization TOCTOU by replacing a check-then-replace publish
+   with a single OS-level atomic no-clobber rename, and replaced several
+   scheduling-sleep-based test proofs with real, bounded mutex/condition-
+   variable rendezvous (including one genuine data race in a test fixture
+   that a required 100-run ThreadSanitizer stress repetition caught and a
+   focused diagnosis-then-fix pass closed). This correction's own exact
+   resulting source commit, and the application/merged-package hashes it
+   produces, are recorded only in that build's own generated
+   PACKAGING_MANIFEST.md -- see "Current candidate identity" above for why
+   this file does not, and safely cannot, restate them.
 
 See `docs/DECISION_LOG.md` for the itemized technical history. No List A
 behavior, protocol value, identifier, or opcode changed at any point in
@@ -132,5 +175,6 @@ updater package. It does not validate hardware behavior.
 - Community compatibility is limited to implemented and verified interfaces; adapter inclusion alone does not establish compatibility with every community application.
 - Publication hygiene must be rechecked after any later file or release change.
 - Existing local staging directories are not automatically approved release packages.
+- This entire file describes commit `9dedbb12cdbd4f977693858e917f37c50ba14a48` specifically, not the current repository tip -- see "Current candidate identity" at the top of this file.
 
 Update this status only with evidence identifying the exact artifact tested. Record hardware results and merged-package identity separately.

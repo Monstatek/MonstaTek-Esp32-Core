@@ -204,6 +204,114 @@ void mtk_op_set_publish_lock(mtk_core_lock_fn lock, mtk_core_lock_fn unlock);
 typedef void (*mtk_op_won_hook_t)(uint32_t token);
 void mtk_op_set_won_hook(mtk_op_won_hook_t hook);
 
+/* Session-admission guard: the SAME mutual-exclusion property as the
+ * publish guard above (backed by the identical lock also acquired by
+ * mtk_core_bump_session_generation()), but for the OPPOSITE end of a
+ * token-backed producer's lifecycle -- admission, not publish. Diagnosed
+ * gap this closes: a producer handler previously acquired its arbiter
+ * class with a placeholder token 0, minted the real operation token
+ * afterward, then replaced the placeholder via mtk_arbiter_force_
+ * transfer() -- a real, externally-observable window in which the
+ * arbiter reports an active, token-backed class owned by token 0, no
+ * operation record for it exists yet, and a peer-session reset landing
+ * in that exact window can neither reject the request as stale (it
+ * already appears admitted) nor cancel it by token (none has been
+ * minted yet). Serializing admission against mtk_core_bump_session_
+ * generation() the same way publish already is closes both halves: a
+ * reset now either completes strictly before admission begins (so the
+ * caller's own final session-generation check below sees it and refuses
+ * the request as stale) or strictly after the real token is fully
+ * published and the ACCEPTED response sent (so it can cancel that exact
+ * token instead).
+ *
+ * Usage: a handler calls mtk_op_begin_admission_guard(ctx->session_
+ * generation) BEFORE acquiring its arbiter class. If it returns 0, the
+ * request's own originating session has already been superseded by a
+ * reset -- respond MTK_STATUS_NOT_READY and return; nothing has been
+ * allocated or acquired yet, so there is nothing to unwind. If it
+ * returns 1, the caller holds the guard through: minting the operation
+ * token (mtk_op_alloc_id), publishing arbiter ownership under the REAL
+ * token in the SAME arbiter call (mtk_arbiter_acquire(class, id.token) --
+ * never acquire(class, 0) followed by a later force_transfer, which is
+ * exactly the half-published sequence this guard exists to close; see
+ * mtk_op_discard_unpublished below for the rejected-acquisition case),
+ * the initial RUNNING transition, committing that operation's COMPLETE
+ * cancellation-visible initial state (whatever a peer-reset canceller or
+ * a STATUS query reads about it -- e.g. deauth's s_deauth, handshake's
+ * s_hs -- under that service's own existing field lock; never partially
+ * initialized), and the single synchronous result (ACCEPTED, or a guarded
+ * allocation/acquisition/immediate-HAL-failure response) -- then calls
+ * mtk_op_end_admission_guard(). Never anything slow or blocking in
+ * between (the same discipline mtk_op_begin_publish_guard's own doc
+ * comment requires), and never call this while already holding the
+ * publish guard or vice versa (same lock, non-recursive). Every path that
+ * successfully opened the guard, including a rejection, must publish its
+ * one result INSIDE the guard, before calling mtk_op_end_admission_guard
+ * -- releasing the guard first would let a HELLO blocked on the same lock
+ * proceed, clear native-transport pending/queue state, and only then see
+ * this worker's response land as a stale, unmatched arrival.
+ *
+ * Nested-lock rule (M3 correction, following a real, reproducible AB-BA
+ * deadlock a full-suite ASan/UBSan run caught between mtek_capture_
+ * logic.c's own admission and channel-hop-tick paths): this guard's lock
+ * (pub_lock, the SAME lock mtk_op_begin_publish_guard and
+ * mtk_core_bump_session_generation share) is never the OUTERMOST lock in
+ * a call that also needs a service's own action/lease lock (e.g.
+ * mtek_capture_logic.c's cap_action_lock). Any handler that may need both
+ * must acquire its own service lock FIRST, then this guard, exactly
+ * mirroring the corresponding periodic-tick/background path's own order
+ * (e.g. mtek_capture_channel_hop_tick: cap_action_lock, then this guard's
+ * lock via mtk_op_begin_publish_guard, then the service's field lock).
+ * Reversing that order in only one of the two paths -- this guard first,
+ * the service lock second -- creates exactly the cycle this correction
+ * closes. A handler with no such service action/lease lock is unaffected
+ * and needs no reordering.
+ *
+ * Deliberately does NOT invoke mtk_op_set_won_hook's hook -- that seam is
+ * specific to the publish guard's own purpose (proving a bump blocks
+ * across an open PUBLISH), and reusing it here would conflate two
+ * distinct guarded regions under one signal. Use mtk_op_set_admission_
+ * hook/mtk_op_set_admission_prepublish_hook (below) to pause
+ * deterministically inside THIS guard instead. */
+int mtk_op_begin_admission_guard(uint32_t session_generation);
+void mtk_op_end_admission_guard(void);
+
+/* Test-only synchronization seam for the admission guard above, distinct
+ * from mtk_op_set_won_hook (see mtk_op_begin_admission_guard's own doc
+ * comment for why these must not be conflated). Called right before
+ * mtk_op_begin_admission_guard returns 1, still holding the guard's
+ * lock -- i.e. before the token even exists ("pre-publication"). */
+void mtk_op_set_admission_hook(mtk_op_won_hook_t hook);
+
+/* A second, distinct test-only seam at the OPPOSITE end of the same guard
+ * span ("post-publication, pre-unlock"): called at the top of
+ * mtk_op_end_admission_guard, after the caller has already minted the
+ * token, published arbiter ownership, committed cancellation-visible
+ * state, and emitted its one synchronous result, but still holding
+ * pub_lock (never the arbiter or core-table lock). Lets a test assert a
+ * coherent snapshot, matching op identity/state, and the already-
+ * published response deterministically, instead of guessing when a
+ * detached async worker reaches that point. */
+void mtk_op_set_admission_prepublish_hook(mtk_op_won_hook_t hook);
+
+/* Frees an operation record's slot immediately, without requiring it to
+ * first reach a terminal state (mtk_op_evict's own normal precondition,
+ * below) -- the one deliberate exception to that rule. Valid ONLY for a
+ * record that has never been exposed beyond the calling thread: never
+ * published as an arbiter owner, never included in an ACCEPTED response,
+ * never observable by any other worker. This is exactly the shape of a
+ * record minted by mtk_op_alloc_id inside an open admission guard whose
+ * following mtk_arbiter_acquire(class, id.token) call was then rejected
+ * (MTK_ARB_GRANT_BUSY/GUARDED-not-taken) -- the token was minted but the
+ * arbiter never published it, so nothing outside this call stack can
+ * possibly know it exists yet, and it is safe to reclaim the slot
+ * immediately rather than leaving a live, never-terminal record sitting
+ * in the table until a future GC pass. Callers must still hold the same
+ * admission guard under which the record was minted when calling this
+ * (never after mtk_op_end_admission_guard() has already released it).
+ * No-op if token is 0 or the record cannot be found. */
+void mtk_op_discard_unpublished(uint32_t token, uint32_t boot_epoch);
+
 /* Mints a new nonzero token and an ACCEPTED-state record, or NULL with
  * *out_no_memory=1 if the 8-token budget is exhausted and no terminal
  * record is available to evict (Sec 4.2.1). */

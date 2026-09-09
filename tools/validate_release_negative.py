@@ -16,6 +16,7 @@ validate_sidecar functions -- the SAME logic packaging itself hard-fails
 on, not a second, independently-drifting reimplementation of it.
 """
 import argparse
+import errno
 import hashlib
 import json
 import os
@@ -23,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import package_release as pr  # noqa: E402
@@ -95,6 +97,211 @@ def audited_regions_from(good_merged_bytes):
     bootloader_bytes = good_merged_bytes[0:BOOTLOADER_REGION_LEN]
     pt_bytes = good_merged_bytes[0x8000:0x8000 + PARTITION_TABLE_REGION_LEN]
     return bootloader_bytes, pt_bytes
+
+
+def run_atomic_noclobber_rename_toctou_tests(tmp):
+    """Deterministic proof that tools/package_release.py's atomic_
+    noclobber_rename genuinely closes the finalization-boundary TOCTOU
+    race a plain `os.path.lexists(dst)` preflight check followed by a
+    later os.replace/os.rename could lose: a destination that comes into
+    existence AFTER that early check ran -- whether it was already there
+    by the time the real publish step executes, or is created by a
+    concurrent actor racing directly against the publish call itself --
+    must never be silently replaced, and the losing side (whichever one
+    loses) must be left completely untouched: never partially moved,
+    merged, or corrupted, and never silently consumed."""
+    failures = []
+
+    # Case A: destination already exists before atomic_noclobber_rename is
+    # ever called -- the simplest instance of the race, exactly what the
+    # early os.path.lexists() convenience check in main() is meant to
+    # catch, but exercised here directly against the real safety
+    # guarantee (the atomic primitive itself), independent of that
+    # earlier, merely-cosmetic check. Independent-review addendum P1
+    # "direct no-clobber proof covers only directories": extended to all
+    # four destination kinds a real --out path could already be --
+    # directory, plain file, a non-dangling symlink (must not be followed
+    # into, and its target's own content must survive untouched), and a
+    # DANGLING symlink (the exact case a naive os.path.exists() check
+    # would miss entirely, since it follows symlinks and would report
+    # "absent" for one whose target does not exist -- os.path.lexists()/
+    # the real rename primitives operate on the directory entry itself,
+    # regardless of what it points to, so this proves the fix actually
+    # rejects that case too).
+    def make_destination(case_dir, kind):
+        """Creates a pre-existing destination of `kind` at case_dir/out.
+        Returns (dst_path, verify_fn); verify_fn() returns a list of
+        failure strings (empty if the destination's own exact content/
+        link target survived a rejected rename untouched)."""
+        dst = os.path.join(case_dir, "out")
+        if kind == "directory":
+            os.makedirs(dst)
+            with open(os.path.join(dst, "marker.txt"), "w") as f:
+                f.write("pre-existing, must survive\n")
+
+            def verify():
+                if not os.path.isdir(dst) or os.path.islink(dst):
+                    return ["destination directory was replaced or is no longer a plain directory"]
+                if not os.path.isfile(os.path.join(dst, "marker.txt")) or \
+                        open(os.path.join(dst, "marker.txt")).read() != "pre-existing, must survive\n":
+                    return ["destination directory's own content was modified"]
+                return []
+            return dst, verify
+        if kind == "file":
+            with open(dst, "w") as f:
+                f.write("pre-existing file content, must survive\n")
+
+            def verify():
+                if not os.path.isfile(dst) or os.path.islink(dst):
+                    return ["destination file was replaced or is no longer a plain file"]
+                if open(dst).read() != "pre-existing file content, must survive\n":
+                    return ["destination file's own content was modified"]
+                return []
+            return dst, verify
+        if kind == "symlink_valid":
+            target_dir = os.path.join(case_dir, "symlink_target")
+            os.makedirs(target_dir)
+            with open(os.path.join(target_dir, "must_not_change.txt"), "w") as f:
+                f.write("target content, must survive\n")
+            os.symlink(target_dir, dst)
+
+            def verify():
+                if not os.path.islink(dst) or os.readlink(dst) != target_dir:
+                    return ["non-dangling symlink destination was replaced or repointed"]
+                if not os.path.isfile(os.path.join(target_dir, "must_not_change.txt")) or \
+                        open(os.path.join(target_dir, "must_not_change.txt")).read() != "target content, must survive\n":
+                    return ["non-dangling symlink's own target content was modified -- it must never be followed into"]
+                return []
+            return dst, verify
+        if kind == "symlink_dangling":
+            dangling_target = os.path.join(case_dir, "does_not_exist_target")
+            os.symlink(dangling_target, dst)
+
+            def verify():
+                errs = []
+                if not os.path.islink(dst) or os.readlink(dst) != dangling_target:
+                    errs.append("dangling symlink destination was replaced or repointed")
+                if os.path.exists(dangling_target):
+                    errs.append("dangling symlink's own (nonexistent) target unexpectedly now exists")
+                return errs
+            return dst, verify
+        raise ValueError(kind)
+
+    for kind in ("directory", "file", "symlink_valid", "symlink_dangling"):
+        for trial in range(5):
+            case_dir = os.path.join(tmp, f"toctou_pre_{kind}_{trial}")
+            os.makedirs(case_dir)
+            dst, verify = make_destination(case_dir, kind)
+            src = os.path.join(case_dir, "staging")
+            os.makedirs(src)
+            with open(os.path.join(src, "payload.txt"), "w") as f:
+                f.write("staged package content\n")
+
+            try:
+                pr.atomic_noclobber_rename(src, dst)
+                failures.append(f"toctou pre-existing case ({kind}, trial {trial}): "
+                                 f"atomic_noclobber_rename clobbered a pre-existing "
+                                 f"{kind} destination instead of raising")
+                continue
+            except OSError as e:
+                if e.errno != errno.EEXIST:
+                    failures.append(f"toctou pre-existing case ({kind}, trial {trial}): "
+                                     f"unexpected errno {e.errno} (expected EEXIST)")
+            failures.extend(f"toctou pre-existing case ({kind}, trial {trial}): {msg}" for msg in verify())
+            if not os.path.isdir(src) or not os.path.isfile(os.path.join(src, "payload.txt")):
+                failures.append(f"toctou pre-existing case ({kind}, trial {trial}): the staging "
+                                 f"directory was consumed/removed despite the rename being "
+                                 f"rejected -- it must be left in place for the caller to clean up")
+
+    # Case B: destination is created by a CONCURRENT actor racing directly
+    # against atomic_noclobber_rename itself -- the actual finalization-
+    # boundary window a check-then-os.replace pair cannot close (the
+    # earlier check can genuinely pass, then this exact race lands before
+    # the replace runs). A barrier lines the two threads up as tightly as
+    # the scheduler allows; both do real blocking OS calls (os.makedirs /
+    # the renamex_np-or-renameat2-backed atomic_noclobber_rename), which
+    # release the GIL, so this is a genuine concurrent race, not one
+    # serialized by the interpreter. Repeated across many trials so the
+    # race is actually exercised rather than incidentally won by
+    # whichever thread the scheduler happens to run first every time --
+    # though the OS-level atomicity guarantee being proved holds
+    # regardless of ordering, which is exactly the point.
+    for trial in range(50):
+        case_dir = os.path.join(tmp, f"toctou_race_{trial}")
+        os.makedirs(case_dir)
+        dst = os.path.join(case_dir, "out")
+        src = os.path.join(case_dir, "staging")
+        os.makedirs(src)
+        with open(os.path.join(src, "payload.txt"), "w") as f:
+            f.write("staged package content\n")
+
+        if os.path.lexists(dst):
+            failures.append(f"toctou race case {trial}: test setup invalid -- dst already "
+                             f"exists before the race even starts")
+            continue
+
+        barrier = threading.Barrier(2)
+        injector_result = {}
+        rename_result = {}
+
+        def injector():
+            barrier.wait()
+            try:
+                os.makedirs(dst)
+                with open(os.path.join(dst, "marker.txt"), "w") as f:
+                    f.write("concurrently-created destination\n")
+                injector_result["ok"] = True
+            except OSError as e:
+                injector_result["ok"] = False
+                injector_result["errno"] = e.errno
+
+        def renamer():
+            barrier.wait()
+            try:
+                pr.atomic_noclobber_rename(src, dst)
+                rename_result["ok"] = True
+            except OSError as e:
+                rename_result["ok"] = False
+                rename_result["errno"] = e.errno
+
+        t1 = threading.Thread(target=injector)
+        t2 = threading.Thread(target=renamer)
+        t1.start(); t2.start()
+        t1.join(); t2.join()
+
+        injector_won = injector_result.get("ok") is True
+        rename_won = rename_result.get("ok") is True
+
+        if injector_won == rename_won:
+            failures.append(f"toctou race case {trial}: exactly one side must win the race -- "
+                             f"got injector_ok={injector_won} rename_ok={rename_won}")
+            continue
+
+        if rename_won:
+            if injector_result.get("errno") != errno.EEXIST:
+                failures.append(f"toctou race case {trial}: rename won but the injector's own "
+                                 f"os.makedirs did not fail with EEXIST ({injector_result})")
+            if os.path.isdir(src):
+                failures.append(f"toctou race case {trial}: rename reported success but its "
+                                 f"own staging directory was not actually consumed")
+            if not os.path.isfile(os.path.join(dst, "payload.txt")):
+                failures.append(f"toctou race case {trial}: rename reported success but dst "
+                                 f"does not contain the staged payload")
+        else:
+            if rename_result.get("errno") != errno.EEXIST:
+                failures.append(f"toctou race case {trial}: injector won but "
+                                 f"atomic_noclobber_rename did not fail with EEXIST "
+                                 f"({rename_result})")
+            if not os.path.isdir(dst) or not os.path.isfile(os.path.join(dst, "marker.txt")) or \
+                    open(os.path.join(dst, "marker.txt")).read() != "concurrently-created destination\n":
+                failures.append(f"toctou race case {trial}: the concurrently-created "
+                                 f"destination was clobbered or corrupted by the losing rename")
+            if not os.path.isdir(src) or not os.path.isfile(os.path.join(src, "payload.txt")):
+                failures.append(f"toctou race case {trial}: the losing rename's own staging "
+                                 f"directory was consumed/removed despite losing the race -- it "
+                                 f"must be left in place for the caller to clean up")
+
+    return failures
 
 
 def make_valid_map(merged_bytes, app_offset, audited_app_bytes=None, chip="esp32c6"):
@@ -710,23 +917,41 @@ def main():
                                  f"(stdout/stderr: {(proc.stdout + proc.stderr)[:400]!r})")
 
         # ---- atomic, fail-closed --out publish (main()'s single
-        # os.replace, replacing the prior per-entry shutil.move loop). A
-        # source-level check always runs (no toolchain needed); the
-        # end-to-end file/directory/symlink refusal and stale-extras
+        # atomic_noclobber_rename call -- an OS-level atomic no-clobber
+        # rename, replacing both the original per-entry shutil.move loop
+        # AND a later, still-TOCTOU-vulnerable lexists-then-os.replace
+        # pair). A source-level check always runs (no toolchain needed);
+        # the end-to-end file/directory/symlink refusal and stale-extras
         # checks additionally need a REAL build directory (flasher_args.json
         # + real ESP images) to reach the actual publish step, so they run
         # only when one can be found -- consistent with this file's own
-        # existing esptool_available() gating convention. ----
+        # existing esptool_available() gating convention. The dedicated
+        # TOCTOU-race tests below (Case A/B) exercise the real primitive
+        # directly and need no build directory at all. ----
         pr_source = open(pr.__file__).read()
         if "shutil.move(os.path.join(staging_dir" in pr_source:
             failures.append("package_release.py's main() still contains a per-entry "
-                             "shutil.move finalization loop; expected a single os.replace")
-        if pr_source.count("os.replace(staging_dir, requested_out_dir)") != 1:
+                             "shutil.move finalization loop; expected a single "
+                             "atomic_noclobber_rename call")
+        if "os.replace(staging_dir, requested_out_dir)" in pr_source:
+            failures.append("package_release.py's main() still finalizes via a bare "
+                             "os.replace(staging_dir, requested_out_dir) -- a check-then-replace "
+                             "TOCTOU; expected atomic_noclobber_rename")
+        if pr_source.count("atomic_noclobber_rename(staging_dir, requested_out_dir)") != 1:
             failures.append("package_release.py's main() does not install the staged package "
-                             "via exactly one os.replace(staging_dir, requested_out_dir) call")
+                             "via exactly one atomic_noclobber_rename(staging_dir, "
+                             "requested_out_dir) call")
         if "os.path.lexists(requested_out_dir)" not in pr_source:
             failures.append("package_release.py's main() does not guard --out with "
                              "os.path.lexists (required to refuse a symlink without following it)")
+
+        # Deterministic proof (owner-approved sanitizer-fix round: "add a
+        # deterministic test that injects creation of the destination at
+        # the finalization boundary and proves the pre-existing file/
+        # directory/symlink is not replaced") that atomic_noclobber_rename
+        # itself -- the real safety guarantee, not merely the early
+        # convenience check above -- actually closes the race.
+        failures.extend(run_atomic_noclobber_rename_toctou_tests(tmp))
 
         real_build_dir = os.environ.get("MTK_TEST_REAL_BUILD_DIR")
         if not real_build_dir:

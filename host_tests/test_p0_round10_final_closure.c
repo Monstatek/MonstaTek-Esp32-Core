@@ -105,11 +105,87 @@ static pthread_mutex_t s_ble_mutex = PTHREAD_MUTEX_INITIALIZER;
 static void ble_lock_fn(void) { pthread_mutex_lock(&s_ble_mutex); }
 static void ble_unlock_fn(void) { pthread_mutex_unlock(&s_ble_mutex); }
 
+/* M3 correction: a shared helper for every bounded, condition-variable-
+ * based wait below -- computes an absolute CLOCK_REALTIME deadline
+ * `timeout_ms` from now, for use with pthread_cond_timedwait. */
+static void abstime_after_ms(struct timespec *ts, long timeout_ms) {
+    clock_gettime(CLOCK_REALTIME, ts);
+    ts->tv_sec += timeout_ms / 1000;
+    ts->tv_nsec += (timeout_ms % 1000) * 1000000L;
+    if (ts->tv_nsec >= 1000000000L) { ts->tv_nsec -= 1000000000L; ts->tv_sec += 1; }
+}
+
 /* P0 correction (RC11 round 10, item 1): the capture channel-hop action
- * lease -- genuinely distinct from s_cap_mutex above. */
+ * lease -- genuinely distinct from s_cap_mutex above.
+ *
+ * M3 correction (diagnosis "strengthen test_capture_channel_hop_pre_hal_
+ * race_closed... replace the usleep(100000) scheduling guess with a
+ * mutex/condition or another real happens-before mechanism"): this
+ * file's own registered cap_action_lock implementation -- NOT production
+ * code -- now signals every attempt to acquire it, BEFORE actually
+ * blocking on the real mutex, exactly mirroring test_p0_session_
+ * publication_closure_round7.c's own pub_lock_fn instrumentation. Lets a
+ * test bounded-wait for genuine proof that a specific worker (the
+ * replacement CAPTURE_START below) has actually reached the point of
+ * attempting this exact lease, instead of a scheduling usleep(). */
 static pthread_mutex_t s_cap_action_mutex = PTHREAD_MUTEX_INITIALIZER;
-static void cap_action_lock_fn(void) { pthread_mutex_lock(&s_cap_action_mutex); }
+static pthread_mutex_t s_cap_action_attempts_m = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t s_cap_action_attempts_cv = PTHREAD_COND_INITIALIZER;
+static unsigned s_cap_action_attempts;
+static unsigned cap_action_attempts_snapshot(void) {
+    pthread_mutex_lock(&s_cap_action_attempts_m);
+    unsigned n = s_cap_action_attempts;
+    pthread_mutex_unlock(&s_cap_action_attempts_m);
+    return n;
+}
+static int wait_for_cap_action_attempt_past(unsigned baseline, long timeout_ms) {
+    struct timespec deadline; abstime_after_ms(&deadline, timeout_ms);
+    pthread_mutex_lock(&s_cap_action_attempts_m);
+    while (s_cap_action_attempts <= baseline) {
+        if (pthread_cond_timedwait(&s_cap_action_attempts_cv, &s_cap_action_attempts_m, &deadline) != 0) break;
+    }
+    int advanced = (s_cap_action_attempts > baseline);
+    pthread_mutex_unlock(&s_cap_action_attempts_m);
+    return advanced;
+}
+static void cap_action_lock_fn(void) {
+    pthread_mutex_lock(&s_cap_action_attempts_m);
+    s_cap_action_attempts++;
+    pthread_cond_broadcast(&s_cap_action_attempts_cv);
+    pthread_mutex_unlock(&s_cap_action_attempts_m);
+    pthread_mutex_lock(&s_cap_action_mutex);
+}
 static void cap_action_unlock_fn(void) { pthread_mutex_unlock(&s_cap_action_mutex); }
+
+/* M3 correction: a bounded completion signal for a spawned trigger
+ * thread, replacing an unbounded pthread_join with no prior proof --
+ * "bound every wait so a lock-order regression fails instead of hanging
+ * the entire suite." Each concurrent trigger below gets its OWN instance
+ * (never shared), since two trigger threads run concurrently in this
+ * test. */
+typedef struct { pthread_mutex_t m; pthread_cond_t cv; int done; } done_flag_t;
+#define DONE_FLAG_INIT { PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, 0 }
+static void done_flag_reset(done_flag_t *d) {
+    pthread_mutex_lock(&d->m);
+    d->done = 0;
+    pthread_mutex_unlock(&d->m);
+}
+static void done_flag_set(done_flag_t *d) {
+    pthread_mutex_lock(&d->m);
+    d->done = 1;
+    pthread_cond_broadcast(&d->cv);
+    pthread_mutex_unlock(&d->m);
+}
+static int done_flag_wait(done_flag_t *d, long timeout_ms) {
+    struct timespec deadline; abstime_after_ms(&deadline, timeout_ms);
+    pthread_mutex_lock(&d->m);
+    while (!d->done) {
+        if (pthread_cond_timedwait(&d->cv, &d->m, &deadline) != 0) break;
+    }
+    int done = d->done;
+    pthread_mutex_unlock(&d->m);
+    return done;
+}
 
 /* P0 correction (RC11 round 10, item 2): the GATT operation lease --
  * genuinely distinct from s_ble_mutex above. */
@@ -166,16 +242,24 @@ static int wait_for_workers_idle(void) {
 }
 
 /* ---- generic pause rendezvous -- identical mechanism to
- * test_p0_round9_final_closure.c's own. ---- */
+ * test_p0_round9_final_closure.c's own.
+ *
+ * M3 correction (independent review P1 "synchronization objects are
+ * reinitialized"): statically initialized exactly once
+ * (PTHREAD_MUTEX_INITIALIZER/PTHREAD_COND_INITIALIZER); pause_reset()
+ * only clears the predicate fields, under the lock -- never
+ * pthread_mutex_init/pthread_cond_init on a possibly-already-initialized
+ * object again, which is undefined by POSIX. ---- */
 typedef struct {
     pthread_mutex_t m; pthread_cond_t cv;
     int arrived; int release;
 } pause_rv_t;
-static pause_rv_t s_pause;
+static pause_rv_t s_pause = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, 0, 0 };
 static void pause_reset(void) {
-    memset(&s_pause, 0, sizeof(s_pause));
-    pthread_mutex_init(&s_pause.m, NULL);
-    pthread_cond_init(&s_pause.cv, NULL);
+    pthread_mutex_lock(&s_pause.m);
+    s_pause.arrived = 0;
+    s_pause.release = 0;
+    pthread_mutex_unlock(&s_pause.m);
 }
 static void pause_block(void) {
     pthread_mutex_lock(&s_pause.m);
@@ -251,9 +335,13 @@ static void feed_request(const mtk_opcode_entry_t *op, const void *req, uint32_t
     mtk_spi_native_header_t resp_hdr; uint8_t resp_payload[MTK_SPI_NATIVE_MAX_PAYLOAD]; uint16_t resp_len = 0;
     mtek_spi_native_dispatch_feed_cell(&dctx, &hdr, blen ? buf : NULL, blen, &resp_hdr, resp_payload, &resp_len);
 }
+/* Diagnosed-fix update: waits for a nonzero token in the SAME snapshot as
+ * the class match, not class alone -- see test_p0_session_publication_
+ * closure_round7.c's identical helper for the full rationale. */
 static int wait_for_arbiter_class(mtk_arbiter_class_t cls) {
     for (int i = 0; i < 20000; i++) {
-        if (mtk_arbiter_active_class() == cls) return 1;
+        mtk_arbiter_snapshot_t snap = mtk_arbiter_snapshot();
+        if (snap.cls == cls && snap.token != 0) return 1;
         usleep(500);
     }
     return 0;
@@ -426,8 +514,10 @@ static void one_time_setup(void) {
 /* ==== A. Capture channel-hop PRE-HAL race, fully closed (item 1). ======= */
 
 static uint64_t s_hop_tick_now;
+static done_flag_t s_hop_tick_done = DONE_FLAG_INIT;
 static void trigger_hop_tick(void) {
     mtek_capture_channel_hop_tick(s_hop_tick_now);
+    done_flag_set(&s_hop_tick_done);
 }
 
 /* Non-blocking replacement-START trigger: dispatches a brand-new hop-mode
@@ -440,11 +530,13 @@ static void trigger_hop_tick(void) {
  * "no response yet" on start_b_sink. */
 static mtk_fake_sink_state_t s_start_b_sink;
 static mtk_capture_start_req_t s_start_b_req;
+static done_flag_t s_start_b_done = DONE_FLAG_INIT;
 static void trigger_capture_start_b(void) {
     const mtk_opcode_entry_t *start_op = mtk_test_find_op("CAPTURE_START");
     mtk_fake_sink_reset(&s_start_b_sink);
     mtk_request_ctx_t ctx = mtk_test_ctx(&s_start_b_sink, 8887);
     mtk_test_call(&ctx, start_op, &s_start_b_req);
+    done_flag_set(&s_start_b_done);
 }
 
 static void test_capture_channel_hop_pre_hal_race_closed(void) {
@@ -467,6 +559,7 @@ static void test_capture_channel_hop_pre_hal_race_closed(void) {
     s_hop_tick_now = mtk_test_now_ms();
 
     pause_reset();
+    done_flag_reset(&s_hop_tick_done);
     mtek_capture_set_hop_tick_pause_hook(hop_tick_pause_hook);
     pthread_t trig_tid = spawn_trigger(trigger_hop_tick);
     /* This invocation has passed its own final identity re-validation
@@ -488,6 +581,12 @@ static void test_capture_channel_hop_pre_hal_race_closed(void) {
     MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_NONE);
     mtk_async_queue_reset(&dctx.event_queue); /* drain STOP's own real CAPTURE_STOPPED event -- irrelevant to this test's own claim */
 
+    /* Old session's own terminal record, captured here (after STOP, while
+     * the tick is still paused) so the assertion below can prove the
+     * replacement's own blocked attempt did not mutate it further. */
+    mtk_operation_record_t old_snap_before;
+    int old_found_before = mtk_op_snapshot(old_token, MTK_TEST_BOOT_EPOCH, &old_snap_before);
+
     /* "Attempt/start a replacement": a brand-new hop-mode CAPTURE_START,
      * dispatched on its own background thread since it will genuinely
      * BLOCK -- handle_capture_start's own reinit acquires the SAME action
@@ -499,15 +598,62 @@ static void test_capture_channel_hop_pre_hal_race_closed(void) {
     memset(&s_start_b_req, 0, sizeof(s_start_b_req));
     s_start_b_req.mode = 0; s_start_b_req.snap_len = 64;
     s_start_b_req.channel_plan.mode = 1; s_start_b_req.channel_plan.channel = 1; s_start_b_req.channel_plan.hop_dwell_ms = 60000;
+    done_flag_reset(&s_start_b_done);
+    unsigned cap_action_baseline = cap_action_attempts_snapshot();
     pthread_t start_b_tid = spawn_trigger(trigger_capture_start_b);
 
-    usleep(100000); /* let the worker genuinely reach (and block on) the action lease */
+    /* M3 correction (diagnosis "replace the usleep(100000) scheduling
+     * guess with a mutex/condition or another real happens-before
+     * mechanism"): a real, bounded proof that B's own worker has
+     * genuinely ATTEMPTED to acquire cap_action_lock -- the paused tick
+     * already holds it throughout this window, so no thread other than
+     * B's own worker can be the source of an attempt observed here. */
+    MTK_CHECK(wait_for_cap_action_attempt_past(cap_action_baseline, 5000));
+
+    /* mtk_test_call (trigger_capture_start_b's own dispatch call) routes
+     * through mtk_router_dispatch, which -- CAPTURE_START being
+     * MTK_LC_ACCEPTED_ASYNC with a real async runner registered -- only
+     * enqueues the work and spawns the REAL worker thread, then returns
+     * immediately; it does not wait for that worker. So by the time the
+     * real worker's own attempt was observed above, start_b_tid (the
+     * dispatching thread only) has necessarily already finished; join it
+     * here, exactly mirroring test_p0_session_publication_closure_
+     * round7.c's own "join the dispatching trigger while the real worker
+     * is still paused" correction. s_start_b_done (set at the end of
+     * trigger_capture_start_b) reflects DISPATCH completion, not the real
+     * worker's -- bounding this specific join, nothing more. */
+    MTK_CHECK(done_flag_wait(&s_start_b_done, 5000));
+    pthread_join(start_b_tid, NULL);
+
+    /* While the old hop remains paused (still holding the action lease):
+     * the replacement has emitted no response, published no new arbiter
+     * owner/token, and has not mutated the old (already-stopped)
+     * session's own terminal record. The real worker is a SEPARATE,
+     * still-running thread (spawned by the now-joined dispatching thread
+     * above) -- s_start_b_sink.response.set is the correct, race-free
+     * proof it has not yet responded, since only that worker ever writes
+     * it and it is still genuinely blocked on cap_action_lock. */
     mtk_fake_sink_lock();
     int start_b_done_early = s_start_b_sink.response.set;
     mtk_fake_sink_unlock();
     MTK_CHECK(!start_b_done_early); /* genuinely still blocked -- cannot reinit while the paused tick holds the lease */
+    MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_NONE); /* no new owner published yet */
+    mtk_operation_record_t old_snap_during;
+    int old_found_during = mtk_op_snapshot(old_token, MTK_TEST_BOOT_EPOCH, &old_snap_during);
+    MTK_CHECK_EQ(old_found_during, old_found_before);
+    if (old_found_before && old_found_during) {
+        MTK_CHECK_EQ(old_snap_during.state, old_snap_before.state);
+        MTK_CHECK_EQ(old_snap_during.final_status, old_snap_before.final_status);
+    }
 
     pause_release(); /* the old tick resumes: calls hal->set_channel() for A (harmless -- A has no replacement yet), then its own post-HAL re-check sees hop_active==0 (cleared by STOP) and bails without commit/emit */
+    /* M3 correction (diagnosis "bound every wait so a lock-order
+     * regression fails instead of hanging the entire suite"): a bounded
+     * completion signal, not an unbounded join with no prior proof -- a
+     * regression now reports a controlled test FAILURE instead of
+     * hanging the whole ctest process, exactly the failure mode that
+     * triggered this correction round. */
+    MTK_CHECK(done_flag_wait(&s_hop_tick_done, 5000));
     pthread_join(trig_tid, NULL);
     mtek_capture_set_hop_tick_pause_hook(NULL);
 
@@ -517,8 +663,11 @@ static void test_capture_channel_hop_pre_hal_race_closed(void) {
     MTK_CHECK_EQ(mtk_async_queue_count(&dctx.event_queue), 0u);
 
     /* Now that the tick has released the action lease, B's own blocked
-     * reinit finally proceeds. */
-    pthread_join(start_b_tid, NULL);
+     * reinit finally proceeds. start_b_tid (the dispatching thread) was
+     * already joined above; poll_for_op_token is this file's own
+     * pre-existing BOUNDED (up to 10s) wait for the real worker's actual
+     * response -- the correct synchronized-completion mechanism for a
+     * thread this test never directly joins. */
     uint32_t new_token = poll_for_op_token(&s_start_b_sink);
     MTK_CHECK(new_token != 0);
     MTK_CHECK(new_token != old_token);

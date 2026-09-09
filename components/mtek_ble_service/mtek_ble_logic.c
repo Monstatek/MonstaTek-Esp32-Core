@@ -102,19 +102,31 @@ static void handle_ble_scan_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry
                                    const uint8_t *req_bytes, size_t req_len) {
     mtk_ble_scan_start_req_t req; memset(&req, 0, sizeof(req));
     if (mtk_decode(op->req_desc, &req, req_bytes, req_len, NULL) != MTK_CODEC_OK) { respond_empty(ctx, MTK_STATUS_PROTOCOL_ERROR); return; }
-    if (mtk_arbiter_acquire(MTK_ARB_BS, 0) != MTK_ARB_GRANT_OK) { respond_empty(ctx, MTK_STATUS_BUSY); return; }
+    /* Diagnosed ownership-publication fix -- see handle_gatt_connect's
+     * identical comment above. MTK_ARB_BS is GUARDED with MTK_ARB_GC in
+     * the arbiter policy table, but neither side's current admission code
+     * treats GUARDED as anything other than BUSY (this `!= GRANT_OK`
+     * check is unchanged from before), so that behavior is preserved
+     * exactly as-is. */
+    if (!mtk_op_begin_admission_guard(ctx->session_generation)) { respond_empty(ctx, MTK_STATUS_NOT_READY); return; }
     int no_mem = 0;
     /* Release-tooling-round P0 correction (independent audit): the
      * identity is copied out atomically at mint time -- no raw record
      * pointer is retained past this point, including across the ACCEPTED
      * response and the (potentially HAL-synchronous) scan call below. */
     mtk_op_id_t id = mtk_op_alloc_id(op->service_id, op->opcode, now_ms(), &no_mem);
-    if (id.token == 0) { mtk_arbiter_release(MTK_ARB_BS); respond_empty(ctx, MTK_STATUS_NO_MEMORY); return; }
-    mtk_arbiter_force_transfer(MTK_ARB_BS, id.token);
+    if (id.token == 0) { respond_empty(ctx, MTK_STATUS_NO_MEMORY); mtk_op_end_admission_guard(); return; }
+    if (mtk_arbiter_acquire(MTK_ARB_BS, id.token) != MTK_ARB_GRANT_OK) {
+        mtk_op_discard_unpublished(id.token, id.boot_epoch);
+        respond_empty(ctx, MTK_STATUS_BUSY);
+        mtk_op_end_admission_guard();
+        return;
+    }
     mtk_op_transition_by_token(id.token, id.boot_epoch, MTK_OPS_RUNNING, MTK_STATUS_OK, now_ms());
 
     mtk_ble_scan_start_resp_t r; r.operation_token = id.token;
     respond(ctx, MTK_STATUS_ACCEPTED, &r, &mtk_ble_scan_start_resp_t_desc);
+    mtk_op_end_admission_guard();
 
     char namebuf[33]; memset(namebuf, 0, sizeof(namebuf));
     if (req.name_filter.len) memcpy(namebuf, req.name_filter.data, req.name_filter.len);
@@ -270,14 +282,43 @@ static void handle_ble_adv_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry_
                                   const uint8_t *req_bytes, size_t req_len) {
     mtk_ble_adv_start_req_t req; memset(&req, 0, sizeof(req));
     if (mtk_decode(op->req_desc, &req, req_bytes, req_len, NULL) != MTK_CODEC_OK) { respond_empty(ctx, MTK_STATUS_PROTOCOL_ERROR); return; }
-    if (mtk_arbiter_acquire(MTK_ARB_BA, 0) != MTK_ARB_GRANT_OK) { respond_empty(ctx, MTK_STATUS_BUSY); return; }
+    /* Diagnosed ownership-publication fix -- see handle_gatt_connect's
+     * identical comment above.
+     *
+     * M2 independent-review addendum ("BLE advertising's target HAL call
+     * needs explicit boundedness justification, not just 'stays inside
+     * the guard'"): adv_start() below (esp32_ble_adv_start,
+     * mtek_ble_hal_esp32.c) calls exactly two NimBLE host API functions --
+     * ble_gap_adv_set_fields() (a local, synchronous write into the
+     * host's own outgoing-advertisement-data buffers; no radio I/O, no
+     * wait) and ble_gap_adv_start() called with a NULL completion
+     * callback (per NimBLE's own documented ble_gap_adv_start contract: it
+     * arms the advertising state machine and returns immediately with a
+     * status code -- passing a NULL callback here means this call does
+     * not even register for, let alone block on, any later advertising
+     * event; the BLE controller then advertises asynchronously in the
+     * background, entirely independent of this call's own return). Both
+     * calls are therefore genuinely non-blocking/bounded by construction
+     * (no semaphore wait, no timeout, no queue drain), unlike e.g.
+     * gatt_connect's real up-to-30s blocking round trip -- adv_start
+     * safely stays inside the admission guard along with the rest of
+     * this handler's own already-fast admission work, and its immediate
+     * IO_ERROR response below (on ble_gap_adv_set_fields/ble_gap_adv_
+     * start returning nonzero) remains truthful: a genuine synchronous
+     * failure, not a guess made before the real outcome is known. */
+    if (!mtk_op_begin_admission_guard(ctx->session_generation)) { respond_empty(ctx, MTK_STATUS_NOT_READY); return; }
     int no_mem = 0;
     /* Release-tooling-round P0 correction (independent audit): the
      * identity is copied out atomically at mint time -- no raw record
      * pointer is retained past this point. */
     mtk_op_id_t id = mtk_op_alloc_id(op->service_id, op->opcode, now_ms(), &no_mem);
-    if (id.token == 0) { mtk_arbiter_release(MTK_ARB_BA); respond_empty(ctx, MTK_STATUS_NO_MEMORY); return; }
-    mtk_arbiter_force_transfer(MTK_ARB_BA, id.token);
+    if (id.token == 0) { respond_empty(ctx, MTK_STATUS_NO_MEMORY); mtk_op_end_admission_guard(); return; }
+    if (mtk_arbiter_acquire(MTK_ARB_BA, id.token) != MTK_ARB_GRANT_OK) {
+        mtk_op_discard_unpublished(id.token, id.boot_epoch);
+        respond_empty(ctx, MTK_STATUS_BUSY);
+        mtk_op_end_admission_guard();
+        return;
+    }
     const uint8_t *name = req.name.len ? req.name.data : (const uint8_t *)"M1-BLE";
     uint8_t name_len = req.name.len ? (uint8_t)req.name.len : 6;
     if (name_len > 31) name_len = 31;
@@ -287,11 +328,13 @@ static void handle_ble_adv_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry_
         mtk_op_transition_by_token(id.token, id.boot_epoch, MTK_OPS_FAILED, MTK_STATUS_IO_ERROR, now_ms());
         mtk_arbiter_release(MTK_ARB_BA);
         respond_empty(ctx, MTK_STATUS_IO_ERROR);
+        mtk_op_end_admission_guard();
         return;
     }
     mtk_op_transition_by_token(id.token, id.boot_epoch, MTK_OPS_RUNNING, MTK_STATUS_OK, now_ms());
     mtk_ble_adv_start_resp_t r; r.operation_token = id.token;
     respond(ctx, MTK_STATUS_ACCEPTED, &r, &mtk_ble_adv_start_resp_t_desc);
+    mtk_op_end_admission_guard();
 }
 
 static void handle_ble_adv_stop(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t *op,
@@ -404,7 +447,12 @@ static void handle_signal_meter_start(mtk_request_ctx_t *ctx, const mtk_opcode_e
      * called from main/app_main.c's own ble_tick_task -- refuse honestly,
      * before acquiring any resource, if that task never started. */
     if (!s_tick_task_ready) { respond_empty(ctx, MTK_STATUS_NOT_READY); return; }
-    if (mtk_arbiter_acquire(MTK_ARB_SM, 0) != MTK_ARB_GRANT_OK) { respond_empty(ctx, MTK_STATUS_BUSY); return; }
+    /* Diagnosed ownership-publication fix -- see handle_gatt_connect's
+     * identical comment above. The guard ends right after the ACCEPTED
+     * response, BEFORE mtek_ble_signal_meter_tick() below -- that call
+     * makes a real, unguarded HAL round-trip (see its own doc comment)
+     * and must never run while this lock is held. */
+    if (!mtk_op_begin_admission_guard(ctx->session_generation)) { respond_empty(ctx, MTK_STATUS_NOT_READY); return; }
     int no_mem = 0;
     /* Release-tooling-round P0 correction (independent audit): the
      * identity is copied out atomically at mint time -- no raw record
@@ -413,8 +461,13 @@ static void handle_signal_meter_start(mtk_request_ctx_t *ctx, const mtk_opcode_e
      * below (which itself re-resolves s_sig.token via a fresh locked
      * snapshot, never a pointer). */
     mtk_op_id_t id = mtk_op_alloc_id(op->service_id, op->opcode, now_ms(), &no_mem);
-    if (id.token == 0) { mtk_arbiter_release(MTK_ARB_SM); respond_empty(ctx, MTK_STATUS_NO_MEMORY); return; }
-    mtk_arbiter_force_transfer(MTK_ARB_SM, id.token);
+    if (id.token == 0) { respond_empty(ctx, MTK_STATUS_NO_MEMORY); mtk_op_end_admission_guard(); return; }
+    if (mtk_arbiter_acquire(MTK_ARB_SM, id.token) != MTK_ARB_GRANT_OK) {
+        mtk_op_discard_unpublished(id.token, id.boot_epoch);
+        respond_empty(ctx, MTK_STATUS_BUSY);
+        mtk_op_end_admission_guard();
+        return;
+    }
     mtk_op_transition_by_token(id.token, id.boot_epoch, MTK_OPS_RUNNING, MTK_STATUS_OK, now_ms());
     ble_lock();
     memset(&s_sig, 0, sizeof(s_sig));
@@ -424,6 +477,7 @@ static void handle_signal_meter_start(mtk_request_ctx_t *ctx, const mtk_opcode_e
     ble_unlock();
     mtk_signal_meter_start_resp_t r; r.operation_token = id.token;
     respond(ctx, MTK_STATUS_ACCEPTED, &r, &mtk_signal_meter_start_resp_t_desc);
+    mtk_op_end_admission_guard();
     mtek_ble_signal_meter_tick(); /* first sample immediately, matching field-parity "[BLE:SIG:START]" then first reading */
 }
 
@@ -691,7 +745,13 @@ static void handle_gatt_connect(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t
                                  const uint8_t *req_bytes, size_t req_len) {
     mtk_gatt_connect_req_t req; memset(&req, 0, sizeof(req));
     if (mtk_decode(op->req_desc, &req, req_bytes, req_len, NULL) != MTK_CODEC_OK) { respond_empty(ctx, MTK_STATUS_PROTOCOL_ERROR); return; }
-    if (mtk_arbiter_acquire(MTK_ARB_GC, 0) != MTK_ARB_GRANT_OK) { respond_empty(ctx, MTK_STATUS_BUSY); return; }
+    /* Diagnosed ownership-publication fix (TSan-exposed): admission is now
+     * held under the same lock that serializes mtk_core_bump_session_
+     * generation, from final session validation through arbiter ownership
+     * publication and the ACCEPTED response, so a peer-session reset can
+     * never observe MTK_ARB_GC owned by a not-yet-real token -- see
+     * mtk_op_begin_admission_guard's own doc comment (mtek_core.h). */
+    if (!mtk_op_begin_admission_guard(ctx->session_generation)) { respond_empty(ctx, MTK_STATUS_NOT_READY); return; }
     int no_mem = 0;
     /* Release-tooling-round P0 correction (independent audit): the
      * identity is copied out atomically at mint time -- no raw record
@@ -699,11 +759,20 @@ static void handle_gatt_connect(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t
      * response and the (potentially slow/blocking) gatt_connect HAL call
      * below. */
     mtk_op_id_t id = mtk_op_alloc_id(op->service_id, op->opcode, now_ms(), &no_mem);
-    if (id.token == 0) { mtk_arbiter_release(MTK_ARB_GC); respond_empty(ctx, MTK_STATUS_NO_MEMORY); return; }
-    mtk_arbiter_force_transfer(MTK_ARB_GC, id.token);
+    if (id.token == 0) { respond_empty(ctx, MTK_STATUS_NO_MEMORY); mtk_op_end_admission_guard(); return; }
+    /* Publishes the REAL token in the SAME arbiter call -- never the
+     * acquire(class, 0) + later force_transfer(class, token) sequence
+     * that let the arbiter observably report MTK_ARB_GC owned by token 0. */
+    if (mtk_arbiter_acquire(MTK_ARB_GC, id.token) != MTK_ARB_GRANT_OK) {
+        mtk_op_discard_unpublished(id.token, id.boot_epoch);
+        respond_empty(ctx, MTK_STATUS_BUSY);
+        mtk_op_end_admission_guard();
+        return;
+    }
     mtk_op_transition_by_token(id.token, id.boot_epoch, MTK_OPS_RUNNING, MTK_STATUS_OK, now_ms());
     mtk_gatt_connect_resp_t r; r.operation_token = id.token;
     respond(ctx, MTK_STATUS_ACCEPTED, &r, &mtk_gatt_connect_resp_t_desc);
+    mtk_op_end_admission_guard();
 
     uint16_t vh = 0;
     int rc = s_hal && s_hal->gatt_connect ? s_hal->gatt_connect(to_hal_mac(req.target.addr), req.target.addr_type, 30000, &vh) : -1;
@@ -753,6 +822,27 @@ static void handle_gatt_connect(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t
      * transition already happened and must not be undone; the
      * connected_now/final_state teardown logic below is unaffected). */
     int won = mtk_op_transition_by_token(id.token, id.boot_epoch, final_state, final_status, now_ms());
+    /* M3 correction (nested-lock audit, following the real capture-service
+     * AB-BA deadlock): gatt_op_lease_lock must be acquired BEFORE
+     * mtk_op_begin_publish_guard (pub_lock), never after -- the same
+     * global nested-lock order mtek_capture_logic.c's handle_capture_
+     * start/mtek_capture_channel_hop_tick now establish for cap_action_
+     * lock. Acquiring it AFTER the guard opens (the previous shape here)
+     * is exactly the hazardous pattern that deadlocked handle_capture_
+     * start against mtek_capture_channel_hop_tick: a path that already
+     * holds pub_lock and blocks waiting for the lease, racing a path that
+     * already holds the lease and blocks waiting for pub_lock. No such
+     * reverse-order path exists for gatt_op_lease_lock today (mtek_ble_
+     * gatt_tick never acquires it), so this was not yet a live deadlock
+     * -- but it violated the established order and was a latent hazard
+     * against any future path that acquires the lease before pub_lock.
+     * Acquired unconditionally whenever this call could reach the one
+     * branch that ever needs it (won && connected_now) -- harmless to
+     * hold briefly and release unused on any other path below -- and
+     * released the instant the guarded section ends, never held across
+     * the emit_event call. */
+    int need_lease = won && connected_now;
+    if (need_lease) gatt_op_lease_lock();
     int guard_open = won && mtk_op_begin_publish_guard(ctx->session_generation);
     if (guard_open) {
         mtk_gatt_connect_complete_ev_t ev = {0}; ev.operation_token = id.token;
@@ -767,25 +857,22 @@ static void handle_gatt_connect(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t
              * validate against (that tick has no request ctx of its own).
              *
              * P0 correction (RC11 round 10, item 2 "close stale GATT
-             * physical side effects"): gatt_op_lease_lock acquired BEFORE
-             * ble_lock, around the whole reinit -- if some OTHER, still-
-             * live operation for the connection this reinit is about to
-             * replace is currently mid-flight (already past its own final
-             * identity validation, blocked inside or just returned from a
-             * blocking HAL call), this blocks here until that operation
-             * fully completes (commits, or discovers it is stale and
-             * bails) and releases the SAME lease, so this reinit can never
-             * land while a HAL round-trip using the SAME (about to be
-             * reused) vendor_handle is still genuinely in flight. Released
-             * immediately after the reinit -- never held across the
-             * GATT_CONNECT_COMPLETE emit below. */
-            gatt_op_lease_lock();
+             * physical side effects"): the gatt_op_lease_lock lease
+             * (acquired above, before the publish guard) is what actually
+             * excludes some OTHER, still-live operation for the
+             * connection this reinit is about to replace -- if it is
+             * currently mid-flight (already past its own final identity
+             * validation, blocked inside or just returned from a blocking
+             * HAL call), this reinit genuinely cannot proceed until that
+             * operation fully completes (commits, or discovers it is
+             * stale and bails) and releases the SAME lease, so it can
+             * never land while a HAL round-trip using the SAME (about to
+             * be reused) vendor_handle is still genuinely in flight. */
             ble_lock();
             memset(&s_gatt, 0, sizeof(s_gatt));
             s_gatt.connection_token = id.token; s_gatt.vendor_handle = vh; s_gatt.connected = 1; s_gatt.ctx = *ctx;
             s_gatt.session_generation = ctx->session_generation;
             ble_unlock();
-            gatt_op_lease_unlock();
             ev.status = MTK_STATUS_OK; ev.connection_token = id.token;
         } else {
             ev.status = MTK_STATUS_TIMEOUT;
@@ -809,6 +896,7 @@ static void handle_gatt_connect(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t
         if (connected_now && s_hal && s_hal->gatt_disconnect) s_hal->gatt_disconnect(vh);
         mtk_arbiter_release_if_owner(MTK_ARB_GC, id.token);
     }
+    if (need_lease) gatt_op_lease_unlock();
 }
 
 static void handle_gatt_disconnect(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t *op,
@@ -1382,9 +1470,12 @@ void mtek_ble_gatt_tick(void) {
  * resource itself (vendor handle, arbiter lease) needs releasing. */
 mtk_op_id_t mtek_ble_cancel_active_for_peer_reset(void) {
     mtk_op_id_t id = {0, 0};
-    mtk_arbiter_class_t active = mtk_arbiter_active_class();
+    /* Coherent-reader fix: one snapshot instead of a separate class read
+     * and a separate token read. */
+    mtk_arbiter_snapshot_t snap = mtk_arbiter_snapshot();
+    mtk_arbiter_class_t active = snap.cls;
     if (active != MTK_ARB_BS && active != MTK_ARB_BA && active != MTK_ARB_SM && active != MTK_ARB_GC) return id;
-    uint32_t tok = mtk_arbiter_active_token();
+    uint32_t tok = snap.token;
     uint32_t epoch = mtk_core_boot_epoch();
     switch (active) {
         case MTK_ARB_BS:
