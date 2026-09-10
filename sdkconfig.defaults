@@ -1,0 +1,37 @@
+# MonstaTek M1 ESP32-C6 universal build defaults.
+CONFIG_IDF_TARGET="esp32c6"
+
+# Partition layout: frozen per RELEASE_DELIVERABLE_CONTRACT.md.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+
+# Bluetooth: NimBLE host (ESP32-C6 supports NimBLE only, not Bluedroid).
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+
+# Wi-Fi: station + AP-capable (SoftAP/raw-TX opcodes reuse the same
+# esp_wifi driver instance).
+CONFIG_ESP_WIFI_ENABLED=y
+
+# Universal build: all three transport adapters compiled in by default
+# (main/Kconfig.projbuild).
+CONFIG_MTEK_ADAPTER_FACTORY_UART=y
+CONFIG_MTEK_ADAPTER_NATIVE_SPI=y
+CONFIG_MTEK_ADAPTER_COMPAT_SPI=y
+CONFIG_MTEK_LAB_CONTROLS_ENABLED=n
+
+# RC7 independent audit P1 "Release identity is not reproducible": ESP-IDF's
+# own dedicated, officially-supported mechanism for exactly this -- strips
+# compile date/time from esp_app_desc_t (CONFIG_APP_COMPILE_TIME_DATE=n,
+# implied) and remaps every build-directory/project-directory/component-
+# directory/toolchain absolute path embedded in debug info to a fixed
+# placeholder string (-fdebug-prefix-map, tools/cmake/prefix_map.cmake),
+# so two builds from an identical source tree in DIFFERENT build
+# directories embed identical paths. Verified this round: two clean
+# `idf.py build` runs from independent build directories (`build/` and
+# `build2/`) produced byte-identical `mtkcore.bin` output -- see
+# docs/DECISION_LOG.md for the exact command and hash comparison.
+CONFIG_APP_REPRODUCIBLE_BUILD=y

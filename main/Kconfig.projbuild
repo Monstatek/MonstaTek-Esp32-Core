@@ -1,0 +1,91 @@
+menu "MonstaTek M1 Firmware"
+
+    menu "Transport adapters"
+        comment "RC7 independent audit P0 'The release artifact starts the wrong transport for shipped M1 compatibility': every adapter enabled below now starts its own physical loop unconditionally at boot (no build-time primary-transport pick, which the audit found contradicts SPI_PROTOCOL_V1.md's own 'Runtime transport selection' requirement). Real cross-transport AUTO selection (mtk_transport_claim_try, mtek_transport_select.h) decides at runtime which ONE adapter actually reaches the canonical router for a given boot session, the first time it sees genuine protocol traffic on its own bus -- every other compiled adapter's physical loop keeps running (never wedging its own peer) but only ever answers neutral/IDLE from that point on. Disable an adapter here only for a product-specific build whose target hardware is never wired to that bus at all."
+
+        config MTEK_ADAPTER_FACTORY_UART
+            bool "Factory M1 UART compatibility adapter"
+            default y
+            help
+                Legacy ASCII REPL over UART0, 115200 8N1. Runs
+                concurrently with any enabled SPI adapter(s) below;
+                real AUTO selection (see this menu's own comment)
+                decides exclusivity at runtime, not this option. Disable
+                only for a product-specific build that never ships with
+                the factory STM32 harness's UART header.
+
+        config MTEK_ADAPTER_NATIVE_SPI
+            bool "Native M1 SPI v1 adapter"
+            default y
+            help
+                The 1024-byte-cell native protocol (SPI_PROTOCOL_V1.md).
+                Shares one physical spi_slave peripheral with M1
+                Legacy SPI Compatibility below (already runtime-AUTO-discovered
+                between those two specifically, main/mtek_spi_runtime.c);
+                see this menu's own comment for the separate cross-bus
+                (UART vs. SPI) race.
+
+        config MTEK_ADAPTER_COMPAT_SPI
+            bool "Legacy SPI Compatibility"
+            default y
+            help
+                Independently implemented, optional translation layer
+                from a legacy SPI wire protocol (real m1_link
+                frame codec and canonical dispatch for all 44
+                capability-SUPPORTED opcodes for this profile) into the
+                canonical core API -- not the canonical transport itself
+                (see "Native M1 SPI v1" above, and docs/ARCHITECTURE.md
+                for the full module-boundary policy). Two opcodes
+                (HANDSHAKE_READ, GATT_CONNECT) are explicit, cited
+                translation-facts blockers -- see docs/PROVENANCE.md.
+                Legacy-protocol wire-format citations for this module
+                live in docs/COMPATIBILITY_LEDGER.md, not in
+                canonical-core documentation.
+    endmenu
+
+    menu "Optional capability modules (legacy-protocol conveniences, not canonical core)"
+        comment "These are optional, compile-time-selectable modules that must not define or bloat the canonical core. Disabling one here means the canonical service layer answers UNSUPPORTED for its opcodes regardless of any adapter's own capability-state table, per docs/ARCHITECTURE.md's module-boundary policy. None of these opcodes' canonical service (radio-behavior) logic is implemented yet this session (docs/PROVENANCE.md) -- these flags establish the compile-time boundary now, ready for whichever module is implemented first, independently of the others."
+
+        config MTEK_MODULE_KARMA
+            bool "Karma auto-responder (KARMA_START/STOP)"
+            default y
+            help
+                Legacy-protocol attack convenience, not a shipped List
+                A/required-List-B feature. Optional module.
+
+        config MTEK_MODULE_PROBE_FLOOD
+            bool "Probe-request flood (PROBE_FLOOD_START/STOP)"
+            default y
+            help
+                Legacy-protocol attack convenience, not a shipped List
+                A/required-List-B feature. Optional module.
+
+        config MTEK_MODULE_CAPTIVE_PORTAL
+            bool "Captive portal (CAPTIVE_PORTAL_START/STOP/GET_CREDENTIALS/GET_DIAGNOSTICS)"
+            default y
+            help
+                Legacy-protocol attack convenience, not a shipped List
+                A/required-List-B feature. Optional module.
+
+        config MTEK_MODULE_BEACON_VARIANTS
+            bool "Wi-Fi beacon flood (BEACON_START/STOP)"
+            default y
+            help
+                Legacy-protocol attack convenience, not a shipped List
+                A/required-List-B feature. Optional module. Distinct from
+                the required List B deauth/handshake/MonstaShark features,
+                which are always compiled in and are never gated by any
+                module flag in this menu.
+    endmenu
+
+    config MTEK_LAB_CONTROLS_ENABLED
+        bool "Enable lab-only diagnostic controls (WIFI_MODE_SET)"
+        default n
+        help
+            schemas.json lab_controls_policy: WIFI_MODE_SET is
+            capability-DISABLED in the universal customer/factory artifact
+            by default. Enabling this is a separate, explicit build
+            configuration for a lab/diagnostic image only -- never an
+            unauthenticated runtime toggle.
+
+endmenu
