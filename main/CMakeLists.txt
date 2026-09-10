@@ -55,10 +55,13 @@ idf_component_register(
 # family validation landed since rc11 was set; bumped to "rc12" so the
 # GET_VERSION-exposed identity matches the tree this candidate is
 # packaged from (a stale rc11 here would misidentify the binary).
-set(MTK_RELEASE_CANDIDATE "rc12-pcap1" CACHE STRING
+# RC13 provenance correction: rc12 was used for more than one historical
+# source identity.  Keep those historical references untouched and use a new,
+# immutable candidate name for the source revision built and tagged here.
+set(MTK_RELEASE_CANDIDATE "rc13" CACHE STRING
     "Release candidate identifier embedded in the firmware's own GET_VERSION response; bump alongside release/RELEASE_NOTES.md for each new candidate")
-set(MTK_RELEASE_EPOCH_S "1788998400" CACHE STRING
-    "Fixed SOURCE_DATE_EPOCH-style release epoch (Unix seconds UTC, 2026-09-10T00:00:00Z -- the date this candidate's source was finalized) for this candidate -- bump by hand alongside MTK_RELEASE_CANDIDATE, never derived from wall-clock build time")
+set(MTK_RELEASE_EPOCH_S "1789041600" CACHE STRING
+    "Fixed SOURCE_DATE_EPOCH-style release epoch (Unix seconds UTC, 2026-09-10T12:00:00Z -- the date this candidate's source was finalized) for this candidate -- bump by hand alongside MTK_RELEASE_CANDIDATE, never derived from wall-clock build time")
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
     MTK_BUILD_ID="${MTK_RELEASE_CANDIDATE}"
     MTK_BUILD_EPOCH_S=${MTK_RELEASE_EPOCH_S}

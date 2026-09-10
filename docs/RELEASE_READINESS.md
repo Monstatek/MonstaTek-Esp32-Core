@@ -31,6 +31,12 @@ Its merged-image SHA-256 is
 `A29179F49972B11F958E0C50D8617F0FC6686963E0EC036F6C7C5F0247C48756`.
 It must retain that identity. It is not an artifact of the new initial commit.
 
+The organization-repository candidate previously labeled `rc12-pcap1` at
+`9e65d5e28c6b7bb23cdd2dc166a5fec11aba8338` is likewise superseded for release
+identity purposes. The immutable `rc13` tag and its package manifest are the
+authoritative source and artifact identity for the next hardware-validation
+round.
+
 ## Publication
 
 Prepare the source and metadata before changing repository visibility. A public

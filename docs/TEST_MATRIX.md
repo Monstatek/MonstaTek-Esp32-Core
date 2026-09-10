@@ -11,7 +11,7 @@ Current source-only host verification:
 - 73/73 host tests pass under ASan+UBSan.
 - 73/73 host tests pass under TSan with no reported races.
 
-The `rc12-pcap1` candidate adds a factory-UART MonstaShark compatibility test
+The `rc13` candidate includes a factory-UART MonstaShark compatibility test
 covering exact command parsing and recognition, the literal `PCAP ACK`, the
 115200-to-3,000,000-baud transition order, `CAP_READY`, 32,768-byte credit
 handling and over-credit prevention, a byte-exact `CAP_FRAME_BATCH` golden

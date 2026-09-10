@@ -77,5 +77,6 @@ small translation endpoint: it recognizes `PCAP_START <channel> <duration_ms>`,
 uses the canonical capture service for radio ownership and frame collection,
 and emits the exact version-1 COBS/CRC32C credit-controlled stream expected by
 the STM32. This is an adapter correction, not a second capture engine. Candidate
-identity `rc12-pcap1` distinguishes the hardware-test binary from RC12; it is
-not a release until complete-device validation passes.
+identity `rc13` distinguishes this immutable hardware-test candidate from the
+ambiguous historical RC12 identities; it is not a release until complete-device
+validation passes.
