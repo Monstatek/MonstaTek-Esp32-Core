@@ -4,7 +4,7 @@ MonstaTek Core is ESP32-C6 firmware for the MonstaTek M1. It provides a shared s
 
 The implementation separates portable service and lifecycle logic from transport translation and ESP-IDF hardware interfaces. Host tests cover portable behavior; hardware validation establishes behavior on a complete M1.
 
-The current source passes host verification and a clean ESP32-C6 build check. Release-package identity and hardware-validation status are recorded separately for each exact artifact; source verification alone does not establish hardware compatibility.
+Release preparation is in progress. Source verification and hardware-validation results must identify the exact revision and artifact tested. See [Release readiness](docs/RELEASE_READINESS.md) for the remaining gates.
 
 Development prerequisites, verified build commands, testing distinctions, and known tooling constraints are described in [Development](docs/DEVELOPMENT.md). The exact files intentionally included and excluded are listed in [Source scope](docs/SOURCE_SCOPE.md).
 
@@ -25,3 +25,10 @@ An application-only binary is not an M1 updater package. Follow the [release-pac
 ## License
 
 GPL-3.0-only. See [LICENSE](LICENSE).
+
+## Contributing and reporting issues
+
+Read [Contributing](CONTRIBUTING.md) before submitting changes. Report reproducible
+problems through this repository's Issues tab, including firmware identity and
+observed behavior. Remove credentials, personal data, and captured network data
+from public reports.
