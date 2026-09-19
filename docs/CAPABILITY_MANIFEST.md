@@ -55,8 +55,22 @@ capture, MonstaShark capture.
 
 SoftAP, raw-TX, and monitor-mode canonical opcodes are not module-gated
 (candidates for canonical-core "general reusable platform capability"
-status per `docs/ARCHITECTURE.md`) but are also not yet implemented at
-the service-logic layer this session (`docs/PROVENANCE.md`).
+status per `docs/ARCHITECTURE.md`).
+
+**Correction (raw-TX/monitor-mode foundation audit, 2026-09-19):** the
+line above previously claimed all three were "not yet implemented at
+the service-logic layer" -- true today only for **SoftAP**
+(`SOFTAP_START/STOP/STA_LIST` fall through to `mtek_wifi_dispatch`'s
+default `UNSUPPORTED` case, `mtek_wifi_service/mtek_wifi_logic.c`).
+**Raw-TX** (`RAW_TX_SEND`) and **monitor-mode** (`mtek_capture_service`'s
+`CAPTURE_START/STOP/STATUS/SESSION_INFO/STATS/POLL_READ`) are real,
+audited, `GET_CAPABILITIES`-truthful implementations -- `cap_for`
+(`mtek_system_logic.c`) does not include either in its
+unimplemented-module downgrade list, and dispatch backs that up (real
+`esp_wifi_80211_tx`/`esp_wifi_set_promiscuous` calls, arbiter classes
+`RAW`/`M`, bounded 32-slot capture ring, `capture_teardown`/
+`mtek_wifi_restore_and_release` cleanup on every exit path). See
+`docs/ARCHITECTURE.md`'s own matching correction for the full evidence.
 
 ## Release artifact naming (owner-approved, coordinated change)
 

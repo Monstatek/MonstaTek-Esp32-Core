@@ -51,8 +51,26 @@ boundary and must never define or bloat the canonical core.
   SoftAP, raw-TX, and monitor-mode primitives live in canonical core
   because they are general, reusable platform capabilities (a station-
   mode radio can always be put into AP or monitor mode; that is not a
-  community-specific behavior) even though their full request/response
-  logic is not yet implemented this session (`docs/PROVENANCE.md`).
+  community-specific behavior).
+
+  **Correction (raw-TX/monitor-mode foundation audit, 2026-09-19):**
+  raw-TX and monitor-mode are no longer scaffolding-only -- both have
+  real, canonical, arbiter-mediated request/response logic, confirmed
+  present and audited at this correction's own commit: `RAW_TX_SEND`
+  (`handle_raw_tx_send`, `mtek_wifi_service/mtek_wifi_logic.c`, class
+  `RAW`) transmits via `esp_wifi_80211_tx`; monitor-mode entry/exit,
+  bounded frame delivery, and cancellation/cleanup live in
+  `mtek_capture_service` (`CAPTURE_START/STOP/STATUS/SESSION_INFO/
+  STATS/POLL_READ`, class `M`) via `esp_wifi_set_promiscuous`. Both are
+  reachable identically from every transport that declares them
+  `SUPPORTED` (native SPI and Mtek Compatibility/C3; `RAW_TX_SEND` is
+  `UNAVAILABLE` on factory UART, `CAPTURE_START` is available there too),
+  through the same `mtk_router_dispatch` path every other canonical
+  opcode uses -- no parallel or transport-embedded implementation exists.
+  **SoftAP remains scaffolding-only** -- its opcodes fall through to the
+  default `UNSUPPORTED` case in `mtek_wifi_dispatch`
+  (`mtek_wifi_service/mtek_wifi_logic.c`); its full request/response
+  logic is not yet implemented (`docs/PROVENANCE.md`).
 
 ### Transport adapters (three, boot-exclusive, `SPI_PROTOCOL_V1.md`
 "Runtime transport selection")

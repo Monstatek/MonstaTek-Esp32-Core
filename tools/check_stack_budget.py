@@ -94,6 +94,97 @@ CHAINS = [
         ],
     },
     {
+        # Step 1 raw-TX/monitor-mode foundation audit (2026-09-19): every
+        # existing native-SPI/Mtek-Compatibility chain above stops at this
+        # transport's own request-decode wrapper (dispatch_complete_message)
+        # and never follows its own, real, unconditional
+        # `mtk_router_dispatch(...)` call (mtek_spi_native_dispatch.c's own
+        # synchronous-lifecycle branch) on into the canonical service
+        # dispatch/handler/HAL frames every opcode actually reaches --
+        # previously an unmeasured gap, not a documented exclusion. Audited
+        # here for RAW_TX_SEND specifically: its own decoded
+        # mtk_raw_tx_send_req_t local (1,489-byte frame buffer) makes
+        # handle_raw_tx_send's real frame (1,536 bytes) the single largest
+        # canonical opcode handler reachable from native SPI, so this is
+        # the binding case for "does the canonical dispatch tail, once
+        # actually included, still fit" -- it does (native SPI's own
+        # dispatch_complete_message synchronous branch never also holds
+        # try_deliver_frame/stage_cell's own frames at the same time; those
+        # run strictly after mtk_router_dispatch already returned, on the
+        # ACCEPTED_ASYNC branch only -- confirmed by reading
+        # dispatch_complete_message's own source, not assumed).
+        "task": "spi_runtime_task (native SPI v1: RAW_TX_SEND canonical dispatch tail)",
+        "stack_bytes": 12288,
+        "margin": 0.60,
+        "members": [
+            ("main/mtek_spi_runtime.c", "spi_runtime_task"),
+            ("components/mtek_transport_spi_native/mtek_spi_native_dispatch.c", "mtek_spi_native_dispatch_feed_cell"),
+            ("components/mtek_transport_spi_native/mtek_spi_native_dispatch.c", "dispatch_complete_message"),
+            ("components/mtek_router/mtek_router.c", "mtk_router_dispatch"),
+            ("components/mtek_wifi_service/mtek_wifi_logic.c", "mtek_wifi_dispatch"),
+            ("components/mtek_wifi_service/mtek_wifi_logic.c", "handle_raw_tx_send"),
+            ("components/mtek_wifi_service/mtek_wifi_hal_esp32.c", "esp32_raw_tx"),
+        ],
+    },
+    {
+        # Same gap as above, Mtek Compatibility/C3 transport: the existing
+        # "Mtek Compatibility/C3 worst path" chain measures only
+        # mtek_compat_dispatch_request's own translation wrapper
+        # (handle_raw_tx, mtek_compat_dispatch.c) in isolation -- that
+        # wrapper's real, unconditional `router_call(...)` ->
+        # `mtk_router_dispatch(...)` call (confirmed by reading its own
+        # source) reaches this exact same canonical handle_raw_tx_send tail,
+        # never previously included.
+        "task": "spi_runtime_task (Mtek Compatibility/C3: RAW_TX_SEND canonical dispatch tail)",
+        "stack_bytes": 12288,
+        "margin": 0.60,
+        "members": [
+            ("main/mtek_spi_runtime.c", "spi_runtime_task"),
+            ("components/mtek_transport_spi_compat/mtek_compat_dispatch.c", "mtek_compat_dispatch_request"),
+            ("components/mtek_transport_spi_compat/mtek_compat_dispatch.c", "handle_raw_tx"),
+            ("components/mtek_router/mtek_router.c", "mtk_router_dispatch"),
+            ("components/mtek_wifi_service/mtek_wifi_logic.c", "mtek_wifi_dispatch"),
+            ("components/mtek_wifi_service/mtek_wifi_logic.c", "handle_raw_tx_send"),
+            ("components/mtek_wifi_service/mtek_wifi_hal_esp32.c", "esp32_raw_tx"),
+        ],
+    },
+    {
+        # Same class of gap, the general-purpose monitor-mode/capture
+        # service's own largest handler (handle_capture_poll_read's own
+        # 1,026-byte `out[]` wire-encode buffer, service 0x0004 opcode
+        # 0x0006): reachable from native SPI via the exact same
+        # dispatch_complete_message synchronous-lifecycle tail as above.
+        "task": "spi_runtime_task (native SPI v1: CAPTURE_POLL_READ canonical dispatch tail)",
+        "stack_bytes": 12288,
+        "margin": 0.60,
+        "members": [
+            ("main/mtek_spi_runtime.c", "spi_runtime_task"),
+            ("components/mtek_transport_spi_native/mtek_spi_native_dispatch.c", "mtek_spi_native_dispatch_feed_cell"),
+            ("components/mtek_transport_spi_native/mtek_spi_native_dispatch.c", "dispatch_complete_message"),
+            ("components/mtek_router/mtek_router.c", "mtk_router_dispatch"),
+            ("components/mtek_capture_service/mtek_capture_logic.c", "mtek_capture_dispatch"),
+            ("components/mtek_capture_service/mtek_capture_logic.c", "handle_capture_poll_read"),
+        ],
+    },
+    {
+        # Mtek Compatibility/C3's own CAPTURE_POLL_READ case (0x0315) is
+        # handled inline inside mtek_compat_dispatch_request itself (no
+        # separate wrapper function the way RAW_TX has one) -- its own
+        # locals are already folded into that function's own measured
+        # frame below, so only the canonical tail past mtk_router_dispatch
+        # is new here.
+        "task": "spi_runtime_task (Mtek Compatibility/C3: CAPTURE_POLL_READ canonical dispatch tail)",
+        "stack_bytes": 12288,
+        "margin": 0.60,
+        "members": [
+            ("main/mtek_spi_runtime.c", "spi_runtime_task"),
+            ("components/mtek_transport_spi_compat/mtek_compat_dispatch.c", "mtek_compat_dispatch_request"),
+            ("components/mtek_router/mtek_router.c", "mtk_router_dispatch"),
+            ("components/mtek_capture_service/mtek_capture_logic.c", "mtek_capture_dispatch"),
+            ("components/mtek_capture_service/mtek_capture_logic.c", "handle_capture_poll_read"),
+        ],
+    },
+    {
         "task": "uart_repl_task (worst UART command-formatting path)",
         "stack_bytes": 12288,
         "margin": 0.60,
