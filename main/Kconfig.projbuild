@@ -78,6 +78,18 @@ menu "MonstaTek M1 Firmware"
                 module flag in this menu.
     endmenu
 
+
+    config MTEK_IEEE802154_ENABLED
+        bool "IEEE 802.15.4 radio service (dedicated 802.15.4 variant only)"
+        default n
+        help
+            Compiles the IEEE 802.15.4 radio service and its ESP32-C6 HAL into
+            the image. Off by default: measured evidence shows the 802.15.4
+            radio does not fit alongside the full Wi-Fi/BLE universal image
+            within the documented free-DIRAM floor. Enable it only in the
+            dedicated 802.15.4 build variant, which compiles the Bluetooth
+            controller out to reclaim the memory. See docs/BUILD_VARIANTS.md.
+
     config MTEK_LAB_CONTROLS_ENABLED
         bool "Enable lab-only diagnostic controls (WIFI_MODE_SET)"
         default n

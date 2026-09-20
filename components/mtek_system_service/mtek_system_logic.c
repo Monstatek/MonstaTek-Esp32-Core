@@ -149,7 +149,24 @@ static int opcode_is_unimplemented_optional_wifi_module(uint16_t service_id, uin
  * exists. No cap_for OVERLAY is needed for this -- the generated registry field
  * itself now carries the honest value, so cap_for returns it directly like every
  * other opcode. */
+/* Capability reporting must describe what THIS image actually provides, not
+ * what the schema declares in general. The IEEE 802.15.4 service is compiled
+ * only into the dedicated 802.15.4 variant (CONFIG_MTEK_IEEE802154_ENABLED);
+ * in the universal image its service is never registered, so every one of its
+ * opcodes is reported UNAVAILABLE rather than advertising a service the image
+ * would refuse. This is what lets a host negotiate on capabilities instead of
+ * inferring features from a variant name. */
+static int opcode_is_absent_in_this_image(uint16_t service_id) {
+#if CONFIG_MTEK_IEEE802154_ENABLED
+    (void)service_id;
+    return 0;
+#else
+    return service_id == 0x0007;
+#endif
+}
+
 static mtk_capability_state_t cap_for(const mtk_opcode_entry_t *op, mtk_profile_t profile) {
+    if (opcode_is_absent_in_this_image(op->service_id)) return MTK_CAP_UNAVAILABLE;
     if (opcode_is_unimplemented_optional_wifi_module(op->service_id, op->opcode)) return MTK_CAP_UNSUPPORTED;
     switch (profile) {
         case MTK_PROFILE_FACTORY_UART: return op->cap_factory_uart;

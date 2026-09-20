@@ -1,0 +1,26 @@
+# mtkcore-154: dedicated IEEE 802.15.4 build variant.
+#
+# Used together with sdkconfig.defaults:
+#   idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.154" build
+#
+# The ESP32-C6 cannot hold the full Wi-Fi/BLE universal image and the
+# 802.15.4 radio at once inside the documented 100,000-byte free-DIRAM floor:
+# measured, the radio alone costs ~12.9KB and OpenThread RCP a further ~9.6KB
+# against ~1.2KB of headroom. This variant reclaims the memory by compiling
+# the Bluetooth controller out, which is what makes 802.15.4 fit with margin.
+#
+# Everything else -- Wi-Fi, ESP-NOW, SoftAP, captive portal, capture, the
+# three transports -- is unchanged from the universal image.
+
+# Reclaim: the Bluetooth controller and host are not built.
+CONFIG_BT_ENABLED=n
+
+# The 802.15.4 radio service and its ESP32-C6 HAL.
+CONFIG_MTEK_IEEE802154_ENABLED=y
+CONFIG_IEEE802154_ENABLED=y
+
+# OpenThread in Radio Co-Processor mode: the C6 is the radio, the host runs
+# the Thread stack over Spinel. The full Thread application stack is
+# deliberately NOT built into Core.
+CONFIG_OPENTHREAD_ENABLED=y
+CONFIG_OPENTHREAD_RADIO=y

@@ -50,6 +50,9 @@
 #endif
 #include "mtek_capture_service.h"
 #include "mtek_espnow_hal.h"
+#if CONFIG_MTEK_IEEE802154_ENABLED
+#include "mtek_ieee802154_hal.h"
+#endif
 #include <stdlib.h>
 
 #if CONFIG_MTEK_ADAPTER_FACTORY_UART
@@ -592,6 +595,9 @@ static void wifi_promisc_tick_task(void *arg) {
     while (1) {
         mtek_wifi_service_tick();
         mtek_espnow_service_tick();
+#if CONFIG_MTEK_IEEE802154_ENABLED
+        mtek_ieee802154_service_tick();
+#endif
         uint32_t overflow_count = mtek_wifi_hal_esp32_promisc_queue_overflow_count();
         if (overflow_count != s_last_overflow_count) {
             ESP_LOGW(TAG, "promiscuous deferred-queue overflow: %u frame(s) dropped total (was %u)",
@@ -846,6 +852,11 @@ void app_main(void) {
     mtek_ble_service_init(now_ms);
     mtek_capture_service_init(now_ms);
     mtek_espnow_service_init(now_ms);
+#if CONFIG_MTEK_IEEE802154_ENABLED
+    mtek_ieee802154_service_init(now_ms);
+    /* Shares the Wi-Fi lock domain: one radio, arbiter-serialized. */
+    mtek_ieee802154_set_lock(shared_lock_v, shared_unlock_v);
+#endif
     /* Shares the Wi-Fi service's lock domain: ESP-NOW and Wi-Fi contend for
      * one radio and are serialized by the arbiter, never run concurrently. */
     mtek_espnow_set_lock(shared_lock_v, shared_unlock_v);
@@ -858,13 +869,21 @@ void app_main(void) {
 #endif
     if (mtek_espnow_hal_esp32_init() == 0) mtek_espnow_set_hal(mtek_espnow_hal_esp32_get());
     else ESP_LOGE(TAG, "ESP-NOW HAL init failed -- ESP-NOW opcodes will refuse");
+#if CONFIG_MTEK_IEEE802154_ENABLED
+    if (mtek_ieee802154_hal_esp32_init() == 0) mtek_ieee802154_set_hal(mtek_ieee802154_hal_esp32_get());
+    else ESP_LOGE(TAG, "802.15.4 HAL init failed -- its opcodes will refuse");
+#endif
     mtek_system_set_sta_query(mtek_wifi_is_sta_connected);
 
     if (mtek_system_service_register() != MTK_REGISTER_OK ||
         mtek_wifi_service_register() != MTK_REGISTER_OK ||
         mtek_ble_service_register() != MTK_REGISTER_OK ||
         mtek_capture_service_register() != MTK_REGISTER_OK ||
-        mtek_espnow_service_register() != MTK_REGISTER_OK) {
+        mtek_espnow_service_register() != MTK_REGISTER_OK ||
+#if CONFIG_MTEK_IEEE802154_ENABLED
+        mtek_ieee802154_service_register() != MTK_REGISTER_OK ||
+#endif
+        0) {
         mtek_enter_safe_failure_state("service registration failed");
         return;
     }

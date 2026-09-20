@@ -44,6 +44,7 @@ import sys
 CHAINS = [
     {
         "task": "ble_tick_task (blocking signal sample)",
+        "requires_sdkconfig": "CONFIG_BT_ENABLED",
         "stack_bytes": 4096,
         "margin": 0.60,
         "members": [
@@ -54,6 +55,7 @@ CHAINS = [
     },
     {
         "task": "periodic_delivery_task (GATT delivery)",
+        "requires_sdkconfig": "CONFIG_BT_ENABLED",
         "stack_bytes": 4096,
         "margin": 0.60,
         "members": [
@@ -202,6 +204,7 @@ CHAINS = [
         # (RC8's own "audit every task/callback entry path... not just
         # the 3 named functions" instruction).
         "task": "uart_repl_task (BLE list-detail worst path)",
+        "requires_sdkconfig": "CONFIG_BT_ENABLED",
         "stack_bytes": 12288,
         "margin": 0.60,
         "members": [
@@ -217,6 +220,7 @@ CHAINS = [
         # are a new stack frame added -- audited here for the
         # same reason as the entry above.
         "task": "uart_repl_task (BLE nested GATT discovery worst path)",
+        "requires_sdkconfig": "CONFIG_BT_ENABLED",
         "stack_bytes": 12288,
         "margin": 0.60,
         "members": [
@@ -302,6 +306,22 @@ CHAINS = [
 ]
 
 
+
+def sdkconfig_has(build_dir, option):
+    """True if `option` is set to y in the build's own generated sdkconfig.
+    A chain may declare requires_sdkconfig so that a build variant which
+    deliberately compiles a subsystem out skips that chain instead of
+    reporting CHAIN_FAILURE. A symbol missing while its option IS enabled
+    still fails loud, which is the behaviour that catches a real rename."""
+    # The build directory's own generated header is authoritative per build.
+    # The project-level sdkconfig reflects whichever variant was configured
+    # last, so it must not be used to judge a specific build directory.
+    header = os.path.join(build_dir, "config", "sdkconfig.h")
+    if os.path.isfile(header):
+        with open(header) as f:
+            return f"#define {option} 1" in f.read()
+    return True   # cannot tell: assume present so nothing is silently skipped
+
 def find_compile_command(compile_commands, rel_path):
     needle = rel_path.replace("\\", "/")
     for entry in compile_commands:
@@ -361,7 +381,12 @@ def main():
         return 2
 
     overall_ok = True
+    skipped = []
     for chain in CHAINS:
+        req = chain.get("requires_sdkconfig")
+        if req and not sdkconfig_has(build_dir, req):
+            skipped.append((chain["task"], req))
+            continue
         total = 0
         rows = []
         chain_ok = True
@@ -400,6 +425,11 @@ def main():
         else:
             print(f"  OK -- under the {limit:.0f}-byte ({chain['margin']*100:.0f}%) safety margin")
 
+    # Skipped chains are always reported: a variant losing coverage silently
+    # is the failure this tool exists to prevent.
+    for task, req in skipped:
+        print(f"check_stack_budget: SKIPPED -- '{task}': {req} is not enabled in this build")
+    print(f"check_stack_budget: {len(CHAINS) - len(skipped)} chain(s) measured, {len(skipped)} skipped")
     return 0 if overall_ok else 1
 
 

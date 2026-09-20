@@ -12,7 +12,7 @@ idf_component_register(
         mtek_schema mtek_core mtek_arbiter mtek_router mtek_hal_common
         mtek_system_service mtek_wifi_service mtek_ble_service mtek_capture_service
         mtek_transport_uart mtek_transport_spi_native mtek_transport_spi_compat mtek_transport_select
-        mtek_espnow_service
+        mtek_espnow_service mtek_ieee802154_service
     PRIV_REQUIRES esp_wifi esp_netif esp_event nvs_flash esp_driver_uart esp_driver_spi esp_driver_gpio esp_timer
 )
 
