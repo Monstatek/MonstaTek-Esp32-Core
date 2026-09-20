@@ -1,14 +1,12 @@
-/* RC9 independent correction order P0 "strict List A UART parity is
- * still knowingly incomplete": byte-exact golden test for the boot
- * banner + `help` command block, both required to print the identical
- * text this test's own EXPECTED array reconstructs independently (not
- * shared code with mtek_uart_adapter.c's own MTK_HELP_BLOCK_LINES) from
- * the accepted factory image's own raw rodata bytes -- see
- * mtek_uart_adapter.c's own doc comment on MTK_HELP_BLOCK_LINES for the
- * clean-room observable-interface-reimplementation rationale. Never
- * copies the factory .bin into this tree; this test only embeds the
- * text strings themselves, exactly as any other golden-transcript test
- * in this suite already embeds expected UART output. */
+/* Byte-exact golden test for the boot banner + `help` command block, both
+ * required to print the identical text this test's own EXPECTED array
+ * reconstructs independently (not shared code with mtek_uart_adapter.c's own
+ * MTK_HELP_BLOCK_LINES) from the accepted factory image's own raw rodata bytes
+ * -- see mtek_uart_adapter.c's own doc comment on MTK_HELP_BLOCK_LINES for the
+ * clean-room observable-interface-reimplementation rationale. Never copies the
+ * factory.bin into this tree; this test only embeds the text strings themselves,
+ * exactly as any other golden-transcript test in this suite already embeds
+ * expected UART output. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtek_uart_adapter.h"

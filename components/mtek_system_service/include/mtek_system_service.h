@@ -1,4 +1,4 @@
-/* Clean-room implementation from MonstaTek contract (002-system-service.md). */
+/* Clean-room implementation from MonstaTek contract. */
 #pragma once
 #include "mtek_router.h"
 

@@ -1,41 +1,35 @@
-/* RC9 independent correction order P1 "release validation can pass
- * without validating the actual release pair": this test previously (a)
- * only validated the MD5 SIDECAR'S OWN TEXT FORMAT (32 uppercase hex
- * characters) -- it never actually hashed `MtkCore.bin` at all, so a
- * stale or simply wrong sidecar passed as long as it merely looked like
- * an MD5 string; (b) resolved the release directory via a hard-coded
- * `../../release` relative path, which silently resolves to the wrong
- * location (or nowhere) whenever ctest's own working directory isn't
- * exactly two levels under the project root -- an out-of-tree build
- * directory made this gate trivially (and silently) skip, "passing"
- * without validating anything. Both are fixed: the release directory is
- * now resolved via (in priority order) an `MTK_RELEASE_DIR` environment
- * variable, a build-time-baked absolute project root
+/* This test previously (a) only validated the MD5 SIDECAR'S OWN TEXT FORMAT (32
+ * uppercase hex characters) -- it never actually hashed `MtkCore.bin` at all, so
+ * a stale or simply wrong sidecar passed as long as it merely looked like an MD5
+ * string; (b) resolved the release directory via a hard-coded `../../release`
+ * relative path, which silently resolves to the wrong location (or nowhere)
+ * whenever ctest's own working directory isn't exactly two levels under the
+ * project root -- an out-of-tree build directory made this gate trivially (and
+ * silently) skip, "passing" without validating anything. Both are fixed: the
+ * release directory is now resolved via (in priority order) an `MTK_RELEASE_DIR`
+ * environment variable, a build-time-baked absolute project root
  * (`MTK_PROJECT_ROOT`, set by host_tests/CMakeLists.txt from CMake's own
- * `CMAKE_SOURCE_DIR` -- correct regardless of where the build directory
- * actually lives), or the historical relative path as a last resort
- * (kept only for a plain `cc` compile with neither of the above); and a
- * real, self-contained MD5 (RFC 1321 -- no external command, no OpenSSL
- * link dependency, matching this whole suite's own dependency-free
- * design) is computed over the actual bytes of `MtkCore.bin` and
- * compared byte-for-byte against the actual sidecar text. A prior stale
- * `release/MtkCore.bin` left over from an earlier candidate therefore
- * cannot make this gate look current: either its own real MD5 already
- * matches its own sidecar (nothing to catch -- this test cannot know
- * intent, only byte-consistency) or, far more usefully, a NEWLY
- * regenerated `.bin` with the OLD sidecar left in place is caught
- * immediately as a mismatch. */
+ * `CMAKE_SOURCE_DIR` -- correct regardless of where the build directory actually
+ * lives), or the historical relative path as a last resort (kept only for a
+ * plain `cc` compile with neither of the above); and a real, self-contained MD5
+ * (RFC 1321 -- no external command, no OpenSSL link dependency, matching this
+ * whole suite's own dependency-free design) is computed over the actual bytes of
+ * `MtkCore.bin` and compared byte-for-byte against the actual sidecar text. A
+ * prior stale `release/MtkCore.bin` left over from an earlier candidate
+ * therefore cannot make this gate look current: either its own real MD5 already
+ * matches its own sidecar (nothing to catch -- this test cannot know intent,
+ * only byte-consistency) or, far more usefully, a NEWLY regenerated `.bin` with
+ * the OLD sidecar left in place is caught immediately as a mismatch. */
 #include "mtk_test.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 
-/* ---- RFC 1321 MD5, compact reference implementation (public domain
- * algorithm; written directly against the RFC's own pseudocode, not
- * copied from any existing codebase) -- verified below against the
- * RFC's own test vectors before this test trusts it on the real
- * artifact. */
+/* RFC 1321 MD5, compact reference implementation (public domain algorithm;
+ * written directly against the RFC's own pseudocode, not copied from any
+ * existing codebase) -- verified below against the RFC's own test vectors before
+ * this test trusts it on the real artifact. */
 typedef struct { uint32_t a, b, c, d; uint64_t len; uint8_t buf[64]; unsigned buf_len; } md5_ctx_t;
 
 static uint32_t md5_left_rotate(uint32_t x, uint32_t c) { return (x << c) | (x >> (32 - c)); }
@@ -132,13 +126,13 @@ static void md5_hex_of(const uint8_t *data, size_t len, char out[33]) {
     md5_hex_upper(digest, out);
 }
 
-/* ---- RFC 6234 SHA-256, compact reference implementation (public domain
- * algorithm; written directly against the RFC's own pseudocode, not
- * copied from any existing codebase) -- verified below against the RFC's
- * own test vectors before this test trusts it on the real artifact.
- * Needed for RC11's own "compare... by SHA-256" and "stale map" hard-
- * fail requirements: merged_image_map.json records a whole-file SHA-256
- * this test must independently re-derive, not merely re-read. */
+/* RFC 6234 SHA-256, compact reference implementation (public domain algorithm;
+ * written directly against the RFC's own pseudocode, not copied from any
+ * existing codebase) -- verified below against the RFC's own test vectors before
+ * this test trusts it on the real artifact. Needed for RC11's own "compare... by
+ * SHA-256" and "stale map" hard- fail requirements: merged_image_map.json
+ * records a whole-file SHA-256 this test must independently re-derive, not
+ * merely re-read. */
 typedef struct { uint32_t h[8]; uint64_t len; uint8_t buf[64]; unsigned buf_len; } sha256_ctx_t;
 
 static const uint32_t SHA256_K[64] = {
@@ -260,9 +254,8 @@ static int find_json_hex_field(const uint8_t *buf, long size, const char *field_
 }
 
 /* Same idea as find_json_hex_field, for a plain unquoted JSON integer
- * field (`"field_name": 12345`). RC11 release-finalization correction
- * (independent audit) "strengthen merged-image-map validation...
- * application size": app_size_bytes is this test's own independent,
+ * field (`"field_name": 12345`). Strengthens merged-image-map validation
+ * against the application size: app_size_bytes is this test's own independent,
  * C-side cross-check of the same field tools/package_release.py's own
  * Python-side validate_map_against_bin already enforces -- an
  * independent reimplementation catching a bug the same code checking
@@ -326,9 +319,9 @@ static char *resolve_release_dir(void) {
 }
 
 int main(void) {
-    /* ---- Self-check: this test's own MD5 implementation must match the
-     * RFC 1321 test vectors before it is trusted on the real artifact --
-     * a bug here would silently make every comparison below meaningless. */
+    /* Self-check: this test's own MD5 implementation must match the RFC 1321
+     * test vectors before it is trusted on the real artifact -- a bug here would
+     * silently make every comparison below meaningless. */
     {
         char hex[33];
         md5_hex_of((const uint8_t *)"", 0, hex);
@@ -337,8 +330,8 @@ int main(void) {
         md5_hex_of((const uint8_t *)"abc", 3, hex);
         MTK_CHECK(strcmp(hex, "900150983CD24FB0D6963F7D28E17F72") == 0);
     }
-    /* ---- Same self-check for the SHA-256 implementation, against the
-     * RFC 6234 / FIPS 180-4 published test vectors. ---- */
+    /* Same self-check for the SHA-256 implementation, against the RFC 6234 /
+     * FIPS 180-4 published test vectors. -- */
     {
         char hex[65];
         sha256_hex_of((const uint8_t *)"", 0, hex);
@@ -357,7 +350,7 @@ int main(void) {
     snprintf(manifest_path, sizeof(manifest_path), "%s/PACKAGING_MANIFEST.md", release_dir);
     printf("test_release_artifact: resolved release directory: %s\n", release_dir);
 
-    /* RC11 release-finalization correction (independent audit): "In
+    /* "In
      * the final release-artifact test configuration, missing MtkCore.bin,
      * MtkCore.md5, merged_image_map.json, partitions.csv, or PACKAGING_
      * MANIFEST.md must fail. Do not return success with a NOTE. If a
@@ -458,23 +451,21 @@ int main(void) {
         free(md5file);
     }
 
-    /* RC11 "release validation must hard-fail for: ... missing map,
-     * stale map, application bytes differing from the audited build":
-     * the whole-file MD5 check above only proves MtkCore.bin matches
-     * MtkCore.md5 -- both could be a stale pair, still internally
-     * consistent with each other. A THIRD, independently-generated
-     * artifact (merged_image_map.json, written by tools/package_
-     * release.py at packaging time) records the whole-file SHA-256 and a
-     * separate MD5 of ONLY the application segment
-     * (application_offset..EOF); both are re-verified here against the
-     * actual current .bin bytes, so an attacker or mistake would have to
-     * tamper with the map too, not just the .bin+.md5 pair, to go
-     * undetected. Previously a missing map, or one missing the
-     * app_md5_uppercase_hex field, was only a NOTE (a forward-looking
-     * gate that did not yet apply to an existing pre-fix artifact) --
-     * now that a real, current release/merged_image_map.json always
-     * carries these fields (tools/package_release.py always writes them),
-     * their absence is itself a hard failure: a missing map is exactly as
+    /* RC11 "release validation must hard-fail for:... missing map, stale map,
+     * application bytes differing from the audited build": the whole-file MD5
+     * check above only proves MtkCore.bin matches MtkCore.md5 -- both could be a
+     * stale pair, still internally consistent with each other. A THIRD,
+     * independently-generated artifact (merged_image_map.json, written by
+     * tools/package_ release.py at packaging time) records the whole-file
+     * SHA-256 and a separate MD5 of ONLY the application segment
+     * (application_offset..EOF); both are re-verified here against the actual
+     * current.bin bytes, so an attacker or mistake would have to tamper with the
+     * map too, not just the.bin+.md5 pair, to go undetected. Previously a
+     * missing map, or one missing the app_md5_uppercase_hex field, was only a
+     * NOTE (a forward-looking gate that did not yet apply to an existing pre-fix
+     * artifact) -- now that a real, current release/merged_image_map.json always
+     * carries these fields (tools/package_release.py always writes them), their
+     * absence is itself a hard failure: a missing map is exactly as
      * unbound/unverifiable as a missing sidecar. */
     {
         char map_path[1024];
@@ -518,7 +509,7 @@ int main(void) {
                 }
             }
 
-            /* RC11 release-finalization correction (independent audit) "strengthen merged-image-map validation... require
+            /* "strengthen merged-image-map validation... require
              * and verify... application size": independent C-side
              * cross-check of app_size_bytes against the real merged
              * binary's own application segment length. */

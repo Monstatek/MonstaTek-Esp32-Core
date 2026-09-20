@@ -1,18 +1,17 @@
 /* Clean-room implementation from MonstaTek contract (schemas.json field
- * vocabulary, 002-canonical-core-contract.md Sec 1 type table).
+ * vocabulary, type table).
  *
- * Generic, data-driven wire codec: every request/response/event body in
- * this firmware is encoded/decoded by walking a struct's mtk_struct_desc_t
- * field table rather than by a hand-written per-message function or by
- * casting a wire buffer onto a native struct. This matches the native SPI
- * v1 protocol's own explicit-load/store requirement and, as a side effect,
- * gives every one of the 91 canonical opcodes an encoder/decoder for free
- * from the same generated table used for host-test introspection.
+ * Generic, data-driven wire codec: every request/response/event body in this
+ * firmware is encoded/decoded by walking a struct's mtk_struct_desc_t field
+ * table rather than by a hand-written per-message function or by casting a wire
+ * buffer onto a native struct. This matches the native SPI v1 protocol's own
+ * explicit-load/store requirement and, as a side effect, gives every one of the
+ * 91 canonical opcodes an encoder/decoder for free from the same generated table
+ * used for host-test introspection.
  *
- * Wire rule (002-canonical-core-contract.md Sec 1): multi-byte integers are
- * little-endian; bool is strictly 0x00/0x01; mac6 and ipv4 are opaque byte
- * sequences copied verbatim (ipv4 is already network-byte-order in memory).
- */
+ * Wire rule: multi-byte integers are little-endian; bool is strictly 0x00/0x01;
+ * mac6 and ipv4 are opaque byte sequences copied verbatim (ipv4 is already
+ * network-byte-order in memory). */
 #include "mtek_codec_api.h"
 #include <string.h>
 
@@ -133,8 +132,20 @@ static int encode_field(mtk_writer_t *w, const mtk_field_desc_t *f, const uint8_
                 } else if (f->elem_type == MTK_F_IPV4) {
                     rc = w_put(w, item, 4);
                 } else if (f->elem_type == MTK_F_BYTES) {
+                    /* An array element of byte-string type is laid out as
+                     * { uint16_t len; uint8_t data[capacity]; }, so its writable
+                     * capacity is the element stride minus that length field.
+                     * `max` on the array field bounds the element COUNT, never
+                     * an individual element's byte length, so the capacity must
+                     * be derived here. Refused rather than truncated: the wire
+                     * length prefix for an array element is a single byte, and
+                     * silently narrowing a wider in-memory length would emit a
+                     * frame whose declared length disagrees with its payload. */
+                    if (f->elem_size < 2) return MTK_CODEC_PROTOCOL_ERROR;
+                    uint16_t elem_cap = (uint16_t)(f->elem_size - 2);
                     uint16_t blen;
                     memcpy(&blen, item, sizeof(blen));
+                    if (blen > elem_cap || blen > 0xFF) return MTK_CODEC_OVERFLOW;
                     rc = w_u8(w, (uint8_t)blen);
                     if (rc == MTK_CODEC_OK) rc = w_put(w, item + 2, blen);
                 } else {
@@ -191,13 +202,27 @@ static int decode_field(mtk_reader_t *r, const mtk_field_desc_t *f, uint8_t *bas
                 } else if (f->elem_type == MTK_F_IPV4) {
                     rc = r_get(r, item, 4);
                 } else if (f->elem_type == MTK_F_BYTES) {
+                    /* Element layout is { uint16_t len; uint8_t data[capacity]; },
+                     * so the writable capacity is the element stride minus that
+                     * length field. This bound is required and cannot come from
+                     * `max`, which bounds the element COUNT for an array field,
+                     * not any single element's byte length: the wire length
+                     * prefix here is a full byte (0..255) while a typical
+                     * element holds far less, so an unchecked length writes past
+                     * the element and, for the final element, past the decoded
+                     * object itself. Validated before any store to the
+                     * destination, matching this codec's contract that a
+                     * malformed message is never partially applied. */
+                    if (f->elem_size < 2) return MTK_CODEC_PROTOCOL_ERROR;
+                    uint16_t elem_cap = (uint16_t)(f->elem_size - 2);
                     uint64_t blenv;
                     rc = r_uint(r, &blenv, 1);
-                    if (rc == MTK_CODEC_OK) {
-                        uint16_t blen = (uint16_t)blenv;
-                        memcpy(item, &blen, sizeof(blen));
-                        rc = r_get(r, item + 2, blen);
-                    }
+                    if (rc != MTK_CODEC_OK) return rc;
+                    if (blenv > elem_cap) return MTK_CODEC_OVERFLOW;
+                    uint16_t blen = (uint16_t)blenv;
+                    rc = r_get(r, item + 2, blen);
+                    if (rc != MTK_CODEC_OK) return rc;
+                    memcpy(item, &blen, sizeof(blen));
                 } else {
                     rc = decode_prim(r, f->elem_type, item);
                 }

@@ -1,14 +1,12 @@
-/* RC9 independent correction order P0 "handshake capture ignores
- * monitor-entry failure": promisc_start's return value was previously
- * discarded entirely -- a callback/channel/promiscuous-mode failure on
- * the real HAL left the operation RUNNING forever with no cleanup, and
- * the initiating deauth burst still fired regardless. Proves the fix:
- * a monitor-entry failure transitions to a terminal IO-error state
- * exactly once, runs full cleanup (promisc_stop already never armed,
- * restore_sta_mode, arbiter release) exactly once, emits
- * HANDSHAKE_STOPPED, and never sends a single deauth frame. Also proves
- * a genuine concurrent STOP racing a slow, eventually-failing
- * promisc_start resolves to exactly one cleanup either way. */
+/* promisc_start's return value was previously discarded entirely -- a
+ * callback/channel/promiscuous-mode failure on the real HAL left the operation
+ * RUNNING forever with no cleanup, and the initiating deauth burst still fired
+ * regardless. Proves the fix: a monitor-entry failure transitions to a terminal
+ * IO-error state exactly once, runs full cleanup (promisc_stop already never
+ * armed, restore_sta_mode, arbiter release) exactly once, emits
+ * HANDSHAKE_STOPPED, and never sends a single deauth frame. Also proves a
+ * genuine concurrent STOP racing a slow, eventually-failing promisc_start
+ * resolves to exactly one cleanup either way. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtek_schema_message_descs.h"
@@ -43,19 +41,19 @@ MTK_TEST_MAIN_BEGIN
     mtk_router_set_lock(router_lock, router_unlock);
     mtek_wifi_service_set_lock(router_lock, router_unlock);
     mtk_fake_wifi_set_lock(router_lock, router_unlock);
-    /* RC9 independent correction order verification sweep: a real TSan run
-     * caught this test's own polling reads of a stack-local fake sink
-     * racing the async worker thread's own writes into it (Part 2 below)
-     * -- see mtk_fake_sink.h's own doc comment on mtk_fake_sink_set_lock. */
+    /* Verification sweep: a real TSan run caught this test's own polling reads
+     * of a stack-local fake sink racing the async worker thread's own writes
+     * into it (Part 2 below) -- see mtk_fake_sink.h's own doc comment on
+     * mtk_fake_sink_set_lock. */
     mtk_fake_sink_set_lock(router_lock, router_unlock);
 
     const mtk_opcode_entry_t *start_op = mtk_test_find_op("HANDSHAKE_START");
     const mtk_opcode_entry_t *stop_op = mtk_test_find_op("HANDSHAKE_STOP");
     MTK_CHECK(start_op && stop_op);
 
-    /* ---- Part 1: synchronous monitor-entry failure -- no async runner
-     * registered yet, so this runs entirely on the calling thread, the
-     * simplest and most direct proof. */
+    /* Part 1: synchronous monitor-entry failure -- no async runner registered
+     * yet, so this runs entirely on the calling thread, the simplest and most
+     * direct proof. */
     {
         mtk_fake_sink_state_t sink; mtk_fake_sink_reset(&sink);
         mtk_request_ctx_t ctx = mtk_test_ctx(&sink, 1);
@@ -97,11 +95,11 @@ MTK_TEST_MAIN_BEGIN
         mtk_test_call(&stopctx, stop_op, &stopreq);
     }
 
-    /* ---- Part 2: a genuine concurrent STOP racing a slow, eventually-
-     * failing promisc_start (real async worker, real pthread) -- proves
-     * the race resolves to exactly one HANDSHAKE_STOPPED, one restore,
-     * one arbiter release, regardless of which side (the worker's own
-     * failure path, or the STOP) actually wins mtk_op_transition. */
+    /* Part 2: a genuine concurrent STOP racing a slow, eventually- failing
+     * promisc_start (real async worker, real pthread) -- proves the race
+     * resolves to exactly one HANDSHAKE_STOPPED, one restore, one arbiter
+     * release, regardless of which side (the worker's own failure path, or the
+     * STOP) actually wins mtk_op_transition. */
     {
         mtk_router_set_async_runner(pthread_runner);
         mtk_fake_sink_state_t sink; mtk_fake_sink_reset(&sink);

@@ -1,7 +1,6 @@
-/* Canonical core operation-token lifecycle (002-canonical-core-contract.md
- * Sec 4.2/4.2.1): ACCEPTED->RUNNING->terminal transitions, terminal
- * stickiness (idempotent, no re-transition), stale-epoch NOT_FOUND, and
- * the 60s retention window / eviction-under-pressure rule. */
+/* Canonical core operation-token lifecycle: ACCEPTED->RUNNING->terminal
+ * transitions, terminal stickiness (idempotent, no re-transition), stale-epoch
+ * NOT_FOUND, and the 60s retention window / eviction-under-pressure rule. */
 #include "mtk_test.h"
 #include "mtek_core.h"
 
@@ -60,7 +59,7 @@ MTK_TEST_MAIN_BEGIN
     MTK_CHECK(reused != NULL);
     MTK_CHECK_EQ(no_mem, 0);
 
-    /* Reset invalidates every token from the prior epoch (Sec 8). */
+    /* Reset invalidates every token from the prior epoch . */
     mtk_core_init(3000);
     mtk_operation_record_t *r2 = mtk_op_alloc(0x0001, 0x0001, 0, &no_mem);
     uint32_t tok2 = r2->token;

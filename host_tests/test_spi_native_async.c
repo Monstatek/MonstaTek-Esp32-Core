@@ -49,12 +49,10 @@ static int pthread_runner(void (*fn)(void *arg), void *arg) {
     return 0;
 }
 
-/* Polls until a real RESPONSE cell arrives, skipping over (not stopping
- * at) any EVENT/STREAM cell in between -- since native SPI v1 now really
- * relays those onto the wire (RC5 independent audit P0 "Native events
- * and streams are not implemented"), a poll can legitimately return a
- * non-IDLE EVENT cell before the RESPONSE this test is actually waiting
- * for. */
+/* Polls until a real RESPONSE cell arrives, skipping over (not stopping at) any
+ * EVENT/STREAM cell in between -- since native SPI v1 now really relays those
+ * onto the wire, a poll can legitimately return a non-IDLE EVENT cell before the
+ * RESPONSE this test is actually waiting for. */
 static void poll_until(mtk_spi_native_dispatch_ctx_t *dctx, mtk_spi_native_header_t *resp_hdr, uint8_t *resp_payload, uint16_t *resp_len) {
     for (int i = 0; i < 3000; i++) {
         mtek_spi_native_dispatch_poll_outbound(dctx, resp_hdr, resp_payload, resp_len);
@@ -86,18 +84,16 @@ MTK_TEST_MAIN_BEGIN
     mtk_router_init();
     mtk_router_set_async_runner(pthread_runner);
     mtk_router_set_lock(router_lock, router_unlock);
-    /* RC11 independent correction order P0 "replace unsafe operation-
-     * record pointer reads with atomic snapshots" verification fallout
-     * (same real TSan-caught gap as test_spi_native_dup_cache.c's own
-     * identical fix): this test registers a real pthread async runner,
-     * so a DEAUTH_START dispatched here can genuinely race a concurrent
-     * DEAUTH_STOP/status query on the SAME operation record via
-     * mtk_op_claim_finalization/mtk_op_transition_by_token -- but never
+    /* Verification fallout (same real TSan-caught gap as
+     * test_spi_native_dup_cache.c's own identical fix): this test registers a
+     * real pthread async runner, so a DEAUTH_START dispatched here can genuinely
+     * race a concurrent DEAUTH_STOP/status query on the SAME operation record
+     * via mtk_op_claim_finalization/mtk_op_transition_by_token -- but never
      * registered mtk_core_set_lock/mtek_wifi_service_set_lock/mtk_fake_
      * wifi_set_lock, leaving those calls' own internal locking as no-ops.
-     * Mirrors test_deauth_continuous.c's own established pattern -- one
-     * real mutex backing every one of these, matching mtk_router_set_
-     * lock's own router_lock/router_unlock above. */
+     * Mirrors test_deauth_continuous.c's own established pattern -- one real
+     * mutex backing every one of these, matching mtk_router_set_ lock's own
+     * router_lock/router_unlock above. */
     mtk_core_set_lock(router_lock, router_unlock);
     mtek_wifi_service_set_lock(router_lock, router_unlock);
     mtk_fake_wifi_set_lock(router_lock, router_unlock);
@@ -118,9 +114,9 @@ MTK_TEST_MAIN_BEGIN
 
     mtk_spi_native_header_t resp_hdr; uint8_t resp_payload[MTK_SPI_NATIVE_MAX_PAYLOAD]; uint16_t resp_len = 0;
 
-    /* ---- Lifetime/ownership + cancellation: DEAUTH_START deferred,
-     * DEAUTH_STOP against the not-yet-known token safely rejected,
-     * eventual real delivery with a real minted operation_token. ---- */
+    /* Lifetime/ownership + cancellation: DEAUTH_START deferred, DEAUTH_STOP
+     * against the not-yet-known token safely rejected, eventual real delivery
+     * with a real minted operation_token. -- */
     uint32_t first_token;
     {
         mtk_deauth_start_req_t req; memset(&req, 0, sizeof(req));
@@ -169,8 +165,8 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(resp_hdr.status, MTK_STATUS_OK);
     }
 
-    /* ---- Ordering: a second, independent deferred DEAUTH_START gets a
-     * genuinely new token, proving no state bled across operations. ---- */
+    /* Ordering: a second, independent deferred DEAUTH_START gets a genuinely new
+     * token, proving no state bled across operations. -- */
     {
         mtk_deauth_start_req_t req; memset(&req, 0, sizeof(req));
         memcpy(req.ap_bssid.b, (uint8_t[]){0xAA,0xBB,0xCC,0xDD,0xEE,0xFF}, 6);
@@ -180,13 +176,11 @@ MTK_TEST_MAIN_BEGIN
         mtk_encode(deauth_op->req_desc, &req, buf, sizeof(buf), &blen);
         mtk_spi_native_header_t hdr = base_req_hdr(deauth_op->service_id, deauth_op->opcode, 4, (uint16_t)blen);
         mtek_spi_native_dispatch_feed_cell(&dctx, &hdr, buf, 4, &resp_hdr, resp_payload, &resp_len);
-        /* This transaction's own reply is IDLE (deferred) unless a
-         * backlog EVENT from the first sub-test's own DEAUTH_STOPPED
-         * terminal event (now genuinely relayed onto the wire -- RC5
-         * independent audit P0 "Native events and streams are not
-         * implemented") happened to still be queued and got delivered
-         * here instead; either is correct, so only the eventual RESPONSE
-         * this sub-test actually cares about is asserted below. */
+        /* This transaction's own reply is IDLE (deferred) unless a backlog EVENT
+         * from the first sub-test's own DEAUTH_STOPPED terminal event (now
+         * genuinely relayed onto the wire --) happened to still be queued and
+         * got delivered here instead; either is correct, so only the eventual
+         * RESPONSE this sub-test actually cares about is asserted below. */
         MTK_CHECK(resp_hdr.msg_class == MTK_SPI_CLASS_IDLE || resp_hdr.msg_class == MTK_SPI_CLASS_EVENT);
         poll_until(&dctx, &resp_hdr, resp_payload, &resp_len);
         MTK_CHECK_EQ(resp_hdr.msg_class, MTK_SPI_CLASS_RESPONSE);
@@ -203,8 +197,8 @@ MTK_TEST_MAIN_BEGIN
         mtek_spi_native_dispatch_feed_cell(&dctx, &stop_hdr, stop_buf, 5, &resp_hdr, resp_payload, &resp_len);
     }
 
-    /* ---- Reset: dctx's event_queue is safe to reset mid-flight and
-     * reusable afterward. ---- */
+    /* Reset: dctx's event_queue is safe to reset mid-flight and reusable
+     * afterward. -- */
     {
         mtk_deauth_start_req_t req; memset(&req, 0, sizeof(req));
         memcpy(req.ap_bssid.b, (uint8_t[]){0xAA,0xBB,0xCC,0xDD,0xEE,0xFF}, 6);
@@ -241,10 +235,9 @@ MTK_TEST_MAIN_BEGIN
         mtek_spi_native_dispatch_feed_cell(&dctx, &stop_hdr, stop_buf, 8, &resp_hdr, resp_payload, &resp_len);
     }
 
-    /* ---- Overflow/backpressure: flooding dctx's queue with synthetic
-     * frames before a real dispatch proves the real accept response is
-     * still correctly found/delivered despite queue pressure, and the
-     * drop counter is honest. ---- */
+    /* Overflow/backpressure: flooding dctx's queue with synthetic frames before
+     * a real dispatch proves the real accept response is still correctly
+     * found/delivered despite queue pressure, and the drop counter is honest. -- */
     {
         mtk_async_queue_reset(&dctx.event_queue);
         for (unsigned i = 0; i < MTK_ASYNC_QUEUE_DEPTH; i++) {
@@ -252,15 +245,13 @@ MTK_TEST_MAIN_BEGIN
             f.kind = MTK_ASYNC_FRAME_EVENT;
             mtk_async_queue_push(&dctx.event_queue, &f);
         }
-        /* RC7 independent audit P0 "Native scheduling can starve or drop
-         * control and terminal traffic": mtk_async_queue_push now evicts
-         * a lower-priority occupied slot to make room for a higher-
-         * priority arrival (RESPONSE > EVENT > STREAM) -- a genuinely
-         * full queue only refuses a push whose OWN priority is no better
-         * than everything already queued. `overflow_frame` must match the
+        /* mtk_async_queue_push now evicts a lower-priority occupied slot to make
+         * room for a higher- priority arrival (RESPONSE > EVENT > STREAM) -- a
+         * genuinely full queue only refuses a push whose OWN priority is no
+         * better than everything already queued. `overflow_frame` must match the
          * fill kind (EVENT) to prove that same-priority case here;
-         * mtk_async_queue's own priority-eviction behavior is proven
-         * directly in test_async_queue.c. */
+         * mtk_async_queue's own priority-eviction behavior is proven directly in
+         * test_async_queue.c. */
         mtk_async_frame_t overflow_frame; memset(&overflow_frame, 0, sizeof(overflow_frame));
         overflow_frame.kind = MTK_ASYNC_FRAME_EVENT;
         MTK_CHECK_EQ(mtk_async_queue_push(&dctx.event_queue, &overflow_frame), 0);

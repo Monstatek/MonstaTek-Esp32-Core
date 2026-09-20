@@ -1,17 +1,15 @@
-/* RC5 independent audit P0 "Shared runtime state is not concurrency-safe":
- * mtek_core.c's operation-token table and mtek_arbiter.c's single active-
- * owner slot were unprotected -- simultaneous Wi-Fi/BLE/capture requests
- * on real FreeRTOS workers (the router's async runner, enabled once any
- * ACCEPTED_ASYNC opcode across any adapter is dispatched) could race
- * allocation, ownership, completion, and cancellation. Reproduces the
- * failure mode with real pthread threads (not a single-threaded
- * simulation) hammering mtk_op_alloc/mtk_op_transition/mtk_arbiter_acquire/
- * mtk_arbiter_release concurrently under ASan/UBSan, then proves the fix
- * (mtk_core_set_lock/mtk_arbiter_set_lock) makes every invariant hold:
- * every minted token is unique and never double-allocated into two
- * threads' hands, the arbiter never grants two threads the active class
- * simultaneously, and repeated cancel/complete races never corrupt state
- * or crash under the sanitizers. */
+/* mtek_core.c's operation-token table and mtek_arbiter.c's single active- owner
+ * slot were unprotected -- simultaneous Wi-Fi/BLE/capture requests on real
+ * FreeRTOS workers (the router's async runner, enabled once any ACCEPTED_ASYNC
+ * opcode across any adapter is dispatched) could race allocation, ownership,
+ * completion, and cancellation. Reproduces the failure mode with real pthread
+ * threads (not a single-threaded simulation) hammering
+ * mtk_op_alloc/mtk_op_transition/mtk_arbiter_acquire/ mtk_arbiter_release
+ * concurrently under ASan/UBSan, then proves the fix
+ * (mtk_core_set_lock/mtk_arbiter_set_lock) makes every invariant hold: every
+ * minted token is unique and never double-allocated into two threads' hands, the
+ * arbiter never grants two threads the active class simultaneously, and repeated
+ * cancel/complete races never corrupt state or crash under the sanitizers. */
 #include "mtk_test.h"
 #include "mtek_core.h"
 #include "mtek_arbiter.h"
@@ -94,7 +92,7 @@ static void test_core_op_table_concurrency(void) {
     mtk_core_set_lock(NULL, NULL);
 }
 
-/* ---- Arbiter: concurrent acquire/release races -------------------------- */
+/* Arbiter: concurrent acquire/release races -------------- */
 
 #define ARB_ITERS 2000
 static volatile int s_arb_violation;
@@ -138,17 +136,15 @@ static void test_arbiter_concurrency(void) {
     mtk_arbiter_set_lock(NULL, NULL);
 }
 
-/* ---- RC7 independent audit P0 "Shared operation/session state remains
- * data-racy": "STOP and worker paths can both restore the radio, release
- * the arbiter, and emit lifecycle output." mtk_op_transition's return
- * value is the linearization point real callers (e.g. mtek_wifi_logic.c's
- * handle_deauth_start's own natural loop-exit vs. a concurrent
- * handle_deauth_stop) must gate cleanup on. Proves under REAL concurrent
- * racing -- many threads simultaneously racing to transition the SAME
- * operation record to a terminal state -- that EXACTLY ONE thread ever
- * receives a "you won, do cleanup" (1) result, never zero, never more
- * than one, across many repeated trials (a race window this narrow is
- * not reliably hit by a single trial). ------------------------------- */
+/* "STOP and worker paths can both restore the radio, release the arbiter, and
+ * emit lifecycle output." mtk_op_transition's return value is the linearization
+ * point real callers (e.g. mtek_wifi_logic.c's handle_deauth_start's own natural
+ * loop-exit vs. a concurrent handle_deauth_stop) must gate cleanup on. Proves
+ * under REAL concurrent racing -- many threads simultaneously racing to
+ * transition the SAME operation record to a terminal state -- that EXACTLY ONE
+ * thread ever receives a "you won, do cleanup" (1) result, never zero, never
+ * more than one, across many repeated trials (a race window this narrow is not
+ * reliably hit by a single trial). ----------------- */
 #define TRANSITION_RACE_THREADS 8
 #define TRANSITION_RACE_TRIALS 300
 
@@ -193,24 +189,20 @@ static void test_op_transition_linearization(void) {
     mtk_core_set_lock(NULL, NULL);
 }
 
-/* ---- RC8 independent audit P0-2 "Remove operation-table pointer races":
- * "Add a concurrent allocation/GC/status/stop/complete stress test that
- * proves a reused slot cannot be observed as the previous operation."
- * Two complementary proofs:
- *  1. Real concurrent churn (many threads simultaneously allocating,
- *     transitioning to terminal, and thereby triggering mtk_op_alloc's
- *     own slot-eviction path for OTHER threads' full-table allocations)
- *     never corrupts the table or crashes under contention -- the
- *     "concurrent allocation/GC" half of the ask.
- *  2. A deterministic, single-threaded demonstration of exactly why a
- *     service must retain a TOKEN and re-look-up (mtk_op_find), never a
- *     raw mtk_operation_record_t* across a tick/callback boundary: once a
- *     terminal record's slot is evicted and recycled for a brand-new
- *     token, mtk_op_find correctly refuses the OLD token (the safe,
- *     already-in-place mitigation), while a hypothetically-retained raw
- *     pointer to that same slot address would silently show the NEW
- *     operation's own data -- the exact "reused slot observed as the
- *     previous operation" hazard this item names. */
+/* "Add a concurrent allocation/GC/status/stop/complete stress test that proves a
+ * reused slot cannot be observed as the previous operation." Two complementary
+ * proofs: 1. Real concurrent churn (many threads simultaneously allocating,
+ * transitioning to terminal, and thereby triggering mtk_op_alloc's own
+ * slot-eviction path for OTHER threads' full-table allocations) never corrupts
+ * the table or crashes under contention -- the "concurrent allocation/GC" half
+ * of the ask. 2. A deterministic, single-threaded demonstration of exactly why a
+ * service must retain a TOKEN and re-look-up (mtk_op_find), never a raw
+ * mtk_operation_record_t* across a tick/callback boundary: once a terminal
+ * record's slot is evicted and recycled for a brand-new token, mtk_op_find
+ * correctly refuses the OLD token (the safe, already-in-place mitigation), while
+ * a hypothetically-retained raw pointer to that same slot address would silently
+ * show the NEW operation's own data -- the exact "reused slot observed as the
+ * previous operation" hazard this item names. */
 #define REUSE_CHURN_THREADS 4
 #define REUSE_CHURN_ITERS 2000
 

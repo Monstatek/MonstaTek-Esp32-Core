@@ -72,22 +72,19 @@ int mtk_transport_claim_try(mtk_public_adapter_t which);
 
 mtk_public_adapter_t mtk_transport_claim_get(void);
 
-/* RC7 independent audit P0 "Native 512-to-1024 discovery transition is
- * still wrong": the audit's own required correction was "extract a
- * host-testable physical transaction state machine. Prove the cold-boot
- * sequence byte-for-byte and length-for-length: neutral/HELLO at 512,
- * HELLO_ACK at 512, then 1024 only after the ACK transaction completes."
- * A prior round's own single-flag version (`if (upgrade_pending) {
- * cell_size = 1024; ...}` applied starting the very next transaction)
- * upgraded exactly one transaction too early -- the very transaction that
- * carries the HELLO_ACK response itself, which the master (having only
- * just sent its own HELLO and seen no acknowledgement yet) necessarily
- * still clocks at the 512-byte discovery cadence. This pure, portable
- * state machine is that fix, extracted so the exact transaction-by-
- * transaction sequence can be proven on host, not only trusted by
- * inspection of target-only code (main/mtek_spi_runtime.c, which is not
- * itself host-testable -- see mtek_spi_native_discovery.c's own doc
- * comment on that boundary). */
+/* The audit's own required correction was "extract a host-testable physical
+ * transaction state machine. Prove the cold-boot sequence byte-for-byte and
+ * length-for-length: neutral/HELLO at 512, HELLO_ACK at 512, then 1024 only
+ * after the ACK transaction completes." A prior round's own single-flag version
+ * (`if (upgrade_pending) { cell_size = 1024;...}` applied starting the very next
+ * transaction) upgraded exactly one transaction too early -- the very
+ * transaction that carries the HELLO_ACK response itself, which the master
+ * (having only just sent its own HELLO and seen no acknowledgement yet)
+ * necessarily still clocks at the 512-byte discovery cadence. This pure,
+ * portable state machine is that fix, extracted so the exact transaction-by-
+ * transaction sequence can be proven on host, not only trusted by inspection of
+ * target-only code (main/mtek_spi_runtime.c, which is not itself host-testable
+ * -- see mtek_spi_native_discovery.c's own doc comment on that boundary). */
 typedef struct {
     int countdown; /* 0 = no upgrade pending; N = apply once N more transactions have started */
 } mtk_native_cellsize_negotiator_t;

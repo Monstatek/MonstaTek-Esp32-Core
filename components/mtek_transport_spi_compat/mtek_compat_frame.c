@@ -1,8 +1,7 @@
-/* Clean-room implementation from MonstaTek contract
- * (001-profile-bootstrap-feasibility.md Sec 1). Explicit little-endian
- * load/store throughout -- no native-structure casting onto the wire
- * buffer, matching this task's general codec discipline
- * (SPI_PROTOCOL_V1.md's own rule, applied uniformly to both SPI profiles). */
+/* Clean-room implementation from MonstaTek contract. Explicit little-endian
+ * load/store throughout -- no native-structure casting onto the wire buffer,
+ * matching's general codec discipline (SPI_PROTOCOL_V1.md's own rule, applied
+ * uniformly to both SPI profiles). */
 #include "mtek_compat_frame.h"
 #include <string.h>
 

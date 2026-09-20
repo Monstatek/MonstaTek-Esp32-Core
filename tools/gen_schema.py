@@ -426,6 +426,16 @@ def gen_constants(schema, out):
         lines.append(f"    MTK_CAP_{name},")
     lines.append("} mtk_capability_state_t;")
     lines.append("")
+    api = schema.get("core_host_api", {})
+    if api:
+        lines.append("")
+        lines.append("/* Core host-contract identity. api_minor increments for additive,")
+        lines.append(" * backward-compatible capability growth; api_major only for a change that")
+        lines.append(" * breaks an existing host contract. Hosts negotiate features through")
+        lines.append(" * GET_CAPABILITIES and never branch on a variant name. */")
+        lines.append(f"#define MTK_CORE_API_MAJOR {api.get('api_major', 1)}")
+        lines.append(f"#define MTK_CORE_API_MINOR {api.get('api_minor', 0)}")
+        lines.append("")
     for cid, val in schema["core_budgets"].items():
         if isinstance(val, int):
             lines.append(f"#define MTK_BUDGET_{cid.upper()} {val}")
@@ -492,8 +502,12 @@ def gen_arbiter(schema, out):
     src.append("};")
     src.append(f"const int mtk_arbiter_pairwise_count = {len(pairwise)};")
     src.append("")
-    src.append("/* self-pairs: every active class conflicts with itself (BUSY); reserved classes are DISABLED */")
-    reserved = {c for c in classes if owner[c] not in ("RADIO_OWNER_WIFI", "RADIO_OWNER_BLE")}
+    src.append("/* self-pairs: every implemented class conflicts with itself (BUSY); classes listed as reserved are DISABLED */")
+    # Reserved classes are declared explicitly. Deriving this from the radio
+    # owner would mislabel any implemented class whose PHY is neither Wi-Fi
+    # nor BLE -- IEEE 802.15.4 is a distinct PHY and must still report its
+    # own radio owner truthfully while being a fully acquirable class.
+    reserved = set(schema.get("arbiter_reserved_classes", []))
     src.append("const mtk_pair_entry_t mtk_arbiter_self_pairs[] = {")
     for c in classes:
         p = "MTK_POLICY_DISABLED" if c in reserved else "MTK_POLICY_BUSY"
@@ -574,7 +588,7 @@ def gen_registry(schema, out, msg_desc_names):
     src.append("};")
     src.append("")
     src.append("const mtk_opcode_entry_t *mtk_opcode_find(uint16_t service_id, uint16_t opcode) {")
-    src.append("    /* RC12 hardening round, item 5 (P1): the test-only overlay is")
+    src.append("    /* The test-only overlay is")
     src.append("     * consulted first. It is permanently empty in production (no")
     src.append("     * production code ever registers an overlay entry), so this is a")
     src.append("     * zero-iteration no-op there and the behavior is identical to the")

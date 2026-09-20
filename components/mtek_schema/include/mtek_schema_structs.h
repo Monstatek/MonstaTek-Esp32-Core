@@ -623,8 +623,8 @@ typedef struct {
 
 typedef struct {
     uint32_t captured_at_epoch_s;
-    struct { uint16_t len; uint8_t data[255]; } username;
-    struct { uint16_t len; uint8_t data[255]; } password;
+    struct { uint16_t len; uint8_t data[64]; } username;
+    struct { uint16_t len; uint8_t data[64]; } password;
 } mtk_anon_mtk_captive_portal_get_credentials_resp_t_credentials_elem_3_t;
 
 typedef struct {
@@ -1159,3 +1159,183 @@ typedef struct {
     struct { uint32_t count; mtk_anon_mtk_gatt_discover_descs_resp_t_items_elem_7_t items[16]; } items;
     uint16_t next_index;
 } mtk_gatt_discover_descs_resp_t;
+
+typedef struct {
+    uint8_t channel;
+} mtk_espnow_start_req_t;
+
+typedef struct {
+    uint32_t operation_token;
+} mtk_espnow_start_resp_t;
+
+typedef struct {
+    uint32_t operation_token;
+    uint8_t status;
+    uint32_t sent_ok;
+    uint32_t received;
+} mtk_espnow_stopped_ev_t;
+
+typedef struct {
+    uint32_t operation_token;
+} mtk_espnow_stop_req_t;
+
+typedef struct {
+    uint8_t final_state;
+    uint8_t final_status;
+} mtk_espnow_stop_resp_t;
+
+typedef struct {
+    mtk_mac6_t peer;
+    uint8_t channel;
+    uint8_t encrypt;
+    struct { uint16_t len; uint8_t data[16]; } lmk;
+} mtk_espnow_add_peer_req_t;
+
+typedef struct {
+    mtk_mac6_t peer;
+    struct { uint16_t len; uint8_t data[250]; } data;
+} mtk_espnow_send_req_t;
+
+typedef struct {
+    uint32_t sent_ok;
+    uint32_t send_fail;
+    uint32_t received;
+    uint32_t dropped;
+} mtk_espnow_stats_resp_t;
+
+typedef struct {
+    uint8_t channel;
+    uint8_t promiscuous;
+} mtk_ieee154_start_req_t;
+
+typedef struct {
+    uint32_t operation_token;
+} mtk_ieee154_start_resp_t;
+
+typedef struct {
+    uint32_t operation_token;
+    uint8_t status;
+    uint32_t frames_received;
+    uint32_t frames_dropped;
+} mtk_ieee154_stopped_ev_t;
+
+typedef struct {
+    uint32_t operation_token;
+} mtk_ieee154_stop_req_t;
+
+typedef struct {
+    uint8_t final_state;
+    uint8_t final_status;
+} mtk_ieee154_stop_resp_t;
+
+typedef struct {
+    uint8_t state;
+    uint8_t channel;
+    uint8_t promiscuous;
+    uint32_t frames_received;
+    uint32_t frames_dropped;
+    uint32_t frames_transmitted;
+    uint32_t tx_failures;
+} mtk_ieee154_status_resp_t;
+
+typedef struct {
+    uint8_t channel;
+} mtk_ieee154_set_channel_req_t;
+
+typedef struct {
+    uint32_t channel_mask;
+    uint16_t dwell_ms;
+} mtk_ieee154_energy_scan_req_t;
+
+typedef struct {
+    uint32_t operation_token;
+} mtk_ieee154_energy_scan_resp_t;
+
+typedef struct {
+    uint8_t channel;
+    int8_t peak_rssi;
+} mtk_anon_mtk_ieee154_energy_result_ev_t_results_elem_8_t;
+
+typedef struct {
+    uint32_t operation_token;
+    uint8_t status;
+    struct { uint32_t count; mtk_anon_mtk_ieee154_energy_result_ev_t_results_elem_8_t items[16]; } results;
+} mtk_ieee154_energy_result_ev_t;
+
+typedef struct {
+    struct { uint16_t len; uint8_t data[127]; } data;
+    uint8_t cca;
+} mtk_ieee154_tx_req_t;
+
+typedef struct {
+    uint8_t tx_status;
+} mtk_ieee154_tx_resp_t;
+
+typedef struct {
+    uint32_t operation_token;
+} mtk_ieee154_rcp_start_resp_t;
+
+typedef struct {
+    uint32_t operation_token;
+    uint8_t status;
+} mtk_ieee154_rcp_stopped_ev_t;
+
+typedef struct {
+    uint32_t operation_token;
+} mtk_ieee154_rcp_stop_req_t;
+
+typedef struct {
+    uint8_t final_state;
+    uint8_t final_status;
+} mtk_ieee154_rcp_stop_resp_t;
+
+typedef struct {
+    uint8_t running;
+    uint8_t host_link;
+    uint32_t baud_rate;
+} mtk_ieee154_rcp_status_resp_t;
+
+typedef struct {
+    uint8_t mode;
+    uint8_t channel;
+    uint32_t channel_mask;
+    uint16_t hop_dwell_ms;
+} mtk_ieee154_capture_start_req_t;
+
+typedef struct {
+    uint32_t operation_token;
+} mtk_ieee154_capture_start_resp_t;
+
+typedef struct {
+    uint32_t operation_token;
+    uint8_t status;
+    uint32_t frames_received;
+    uint32_t frames_dropped;
+    uint32_t hop_count;
+} mtk_ieee154_capture_stopped_ev_t;
+
+typedef struct {
+    uint32_t operation_token;
+} mtk_ieee154_capture_stop_req_t;
+
+typedef struct {
+    uint8_t final_state;
+    uint8_t final_status;
+} mtk_ieee154_capture_stop_resp_t;
+
+typedef struct {
+    uint8_t state;
+    uint8_t mode;
+    uint8_t channel;
+    uint32_t frames_received;
+    uint32_t frames_dropped;
+    uint32_t hop_count;
+} mtk_ieee154_capture_status_resp_t;
+
+typedef struct {
+    uint8_t api_major;
+    uint8_t api_minor;
+    uint8_t variant_id;
+    uint16_t capability_count;
+    struct { uint16_t len; uint8_t data[24]; } variant_name;
+} mtk_get_api_identity_resp_t;

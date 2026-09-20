@@ -1,31 +1,27 @@
-/* Release-tooling-round P0 correction, ROUND 3 (follow-up read-only audit,
- * "genuine peer-session generation ownership"): two scenarios that
- * specifically need the real native-SPI wire/dctx layer (unlike
- * test_peer_session_invalidation_services.c's own direct per-service
- * exercise) -- both close gaps a read-only re-audit found in the prior
- * round's own peer-session invalidation:
+/* ROUND 3 (follow-up read-only audit, "genuine peer-session generation
+ * ownership"): two scenarios that specifically need the real native-SPI
+ * wire/dctx layer (unlike test_peer_session_invalidation_services.c's own direct
+ * per-service exercise) -- both close gaps a read-only re-audit found in the
+ * prior round's own peer-session invalidation:
  *
- *  1. "Deferred-before-accept requests": a request already dispatched to
- *     the router's own async pool -- genuinely queued, its worker thread
- *     not yet actually running -- when a peer reboot is detected must
- *     never be allowed to mint a brand-new operation once its worker
- *     finally does start, indistinguishable from one the NEW peer
- *     session legitimately created. mtek_router.c's own async_trampoline
- *     now checks mtk_request_ctx_t.session_generation (stamped by
- *     mtek_spi_native_dispatch.c at the moment of admission) against
- *     mtk_core_session_generation() immediately before invoking the
- *     handler; a stale request is answered NOT_FOUND and the handler is
- *     never called at all -- no operation minted, no arbiter class ever
- *     acquired, no HAL call ever made.
- *  2. "Invalidate every old-session operation token, including terminal
- *     retained tokens" + "Preserve idempotency for repeated HELLO with
- *     the same epoch": several operations that already completed
- *     (naturally terminal, still retained in the table) earlier in one
- *     peer session must ALL become unusable the instant that peer
- *     reboots -- proven here through a REAL HELLO, not a direct call to
- *     the underlying per-service/core primitives -- while a REPEATED
- *     HELLO carrying the SAME (already-adopted) epoch must leave them
- *     completely undisturbed. */
+ * 1. "Deferred-before-accept requests": a request already dispatched to the
+ * router's own async pool -- genuinely queued, its worker thread not yet
+ * actually running -- when a peer reboot is detected must never be allowed to
+ * mint a brand-new operation once its worker finally does start,
+ * indistinguishable from one the NEW peer session legitimately created.
+ * mtek_router.c's own async_trampoline now checks
+ * mtk_request_ctx_t.session_generation (stamped by mtek_spi_native_dispatch.c at
+ * the moment of admission) against mtk_core_session_generation immediately
+ * before invoking the handler; a stale request is answered NOT_FOUND and the
+ * handler is never called at all -- no operation minted, no arbiter class ever
+ * acquired, no HAL call ever made. 2. "Invalidate every old-session operation
+ * token, including terminal retained tokens" + "Preserve idempotency for
+ * repeated HELLO with the same epoch": several operations that already completed
+ * (naturally terminal, still retained in the table) earlier in one peer session
+ * must ALL become unusable the instant that peer reboots -- proven here through
+ * a REAL HELLO, not a direct call to the underlying per-service/core primitives
+ * -- while a REPEATED HELLO carrying the SAME (already-adopted) epoch must leave
+ * them completely undisturbed. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtk_test_async_fixture.h"
@@ -132,13 +128,14 @@ MTK_TEST_MAIN_BEGIN
     mtk_async_queue_set_lock(&dctx.event_queue, queue_lock, queue_unlock, NULL);
 
     const mtk_opcode_entry_t *deauth_op = mtk_test_find_op("DEAUTH_START");
-    const mtk_opcode_entry_t *ts_start_op = mtk_test_async_fixture_install() /* RC12 item 5: test-only overlay async op, was TIME_SYNC_START */;
+    const mtk_opcode_entry_t *ts_start_op = mtk_test_async_fixture_install() /* Test-only overlay async op, was
+                                                                              * TIME_SYNC_START */;
     const mtk_opcode_entry_t *status_op = mtk_test_find_op("GET_OPERATION_STATUS");
     MTK_CHECK(deauth_op && ts_start_op && status_op);
 
     mtk_spi_native_header_t resp_hdr; uint8_t resp_payload[MTK_SPI_NATIVE_MAX_PAYLOAD]; uint16_t resp_len = 0;
 
-    /* ---- 1. Initial HELLO from the peer (PEER_EPOCH_A). ---------------- */
+    /* 1. Initial HELLO from the peer (PEER_EPOCH_A). -------- */
     {
         mtk_spi_native_header_t h = hello_hdr(PEER_EPOCH_A);
         mtek_spi_native_dispatch_feed_cell(&dctx, &h, NULL, 1, &resp_hdr, resp_payload, &resp_len);
@@ -166,20 +163,17 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(resp_hdr.msg_class, MTK_SPI_CLASS_HELLO_ACK);
         MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_NONE); /* nothing was ever minted for the stale request */
 
-        /* P0 correction (follow-up read-only audit, "final focused
-         * concurrency-correction round"), adversarial test: "Old deferred
-         * request ID N -> peer HELLO/reset -> new request with the same
-         * ID N before the old worker wakes." request_id=100's own
-         * dctx->pending[] slot was just wiped by the HELLO reset above
-         * (mtek_spi_native_dispatch.c's own cancel-and-reset path), so it
-         * is legitimately free for a brand-new, unrelated request to
-         * reuse -- while the OLD stale worker (already a real, independent
-         * background pthread, unaffected by changing s_async_runner from
-         * this point on) is still asleep, not yet anywhere near touching
-         * anything. Switch to synchronous dispatch (safe: it only affects
-         * requests dispatched from here on, never a thread already
-         * created) so this new request's own response is immediate and
-         * unambiguous. */
+        /* Adversarial test: "Old deferred request ID N -> peer HELLO/reset ->
+         * new request with the same ID N before the old worker wakes."
+         * request_id=100's own dctx->pending[] slot was just wiped by the HELLO
+         * reset above (mtek_spi_native_dispatch.c's own cancel-and-reset path),
+         * so it is legitimately free for a brand-new, unrelated request to reuse
+         * -- while the OLD stale worker (already a real, independent background
+         * pthread, unaffected by changing s_async_runner from this point on) is
+         * still asleep, not yet anywhere near touching anything. Switch to
+         * synchronous dispatch (safe: it only affects requests dispatched from
+         * here on, never a thread already created) so this new request's own
+         * response is immediate and unambiguous. */
         mtk_router_set_async_runner(NULL);
         uint32_t new_token;
         {
@@ -236,15 +230,11 @@ MTK_TEST_MAIN_BEGIN
             MTK_CHECK_EQ(resp_hdr.status, MTK_STATUS_OK);
         }
 
-        /* P0 correction (follow-up read-only audit, "final focused
-         * concurrency-correction round", issue 1): async_trampoline no
-         * longer calls the original sink's emit_response at all for a
-         * stale request -- it releases its router pool slot in silence.
-         * Nothing is ever pushed into dctx->event_queue for request_id
-         * 100, so the queue must be genuinely EMPTY here, not merely
-         * "polled and found empty after discarding one unmatched frame"
-         * (round 3's own workaround for the prior, now-corrected
-         * behavior, which DID push a stale NOT_FOUND response here). */
+        /* async_trampoline no longer calls the original sink's emit_response at
+         * all for a stale request -- it releases its router pool slot in
+         * silence. Nothing is ever pushed into dctx->event_queue for request_id
+         * 100, so the queue must be genuinely EMPTY here, not merely "polled and
+         * found empty after discarding one unmatched frame". */
         MTK_CHECK_EQ(mtk_async_queue_count(&dctx.event_queue), 0u);
         mtek_spi_native_dispatch_poll_outbound(&dctx, &resp_hdr, resp_payload, &resp_len);
         MTK_CHECK_EQ(resp_hdr.msg_class, MTK_SPI_CLASS_IDLE);

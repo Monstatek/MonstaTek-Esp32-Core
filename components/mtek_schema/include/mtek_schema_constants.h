@@ -50,6 +50,14 @@ typedef enum {
     MTK_CAP_UNSUPPORTED,
 } mtk_capability_state_t;
 
+
+/* Core host-contract identity. api_minor increments for additive,
+ * backward-compatible capability growth; api_major only for a change that
+ * breaks an existing host contract. Hosts negotiate features through
+ * GET_CAPABILITIES and never branch on a variant name. */
+#define MTK_CORE_API_MAJOR 1
+#define MTK_CORE_API_MINOR 0
+
 #define MTK_BUDGET_MAX_INFLIGHT_REQUESTS 4
 #define MTK_BUDGET_MAX_REASSEMBLY_CONTEXTS 4
 #define MTK_BUDGET_MAX_CONTROL_PAYLOAD_BYTES 65536

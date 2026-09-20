@@ -1,9 +1,8 @@
-/* Clean-room implementation from MonstaTek contract
- * (002-service-registry.md Sec 3.0a capability-state/wire-status closure).
- * Central dispatch point every adapter calls into after constructing a
- * canonical request context: looks the opcode up in the generated
- * registry, applies the profile's capability-state gate, and -- only if
- * SUPPORTED -- hands off to the owning service's registered handler. */
+/* Clean-room implementation from MonstaTek contract. Central dispatch point
+ * every adapter calls into after constructing a canonical request context: looks
+ * the opcode up in the generated registry, applies the profile's
+ * capability-state gate, and -- only if SUPPORTED -- hands off to the owning
+ * service's registered handler. */
 #pragma once
 #include "mtek_core.h"
 #include "mtek_opcode_registry.h"

@@ -185,15 +185,14 @@ MTK_TEST_MAIN_BEGIN
     mtk_router_init();
     mtk_router_set_async_runner(tracked_runner);
     mtk_router_set_lock(router_lock, router_unlock);
-    /* RC11 independent correction order P0 verification fallout (same
-     * real TSan-caught gap as test_spi_native_dup_cache.c/test_spi_
-     * native_async.c's own identical fix): a real async runner is
-     * registered above, and this file exercises both DEAUTH_START and
-     * CAPTURE_START's own completion paths, each genuinely touching
-     * shared operation-table/wifi-service/capture-service/fake-HAL state
-     * from a different thread than a concurrent STOP/status request --
-     * every one of these must share the SAME real mutex as mtk_router_
-     * set_lock above. */
+    /* Verification fallout (same real TSan-caught gap as
+     * test_spi_native_dup_cache.c/test_spi_ native_async.c's own identical fix):
+     * a real async runner is registered above, and this file exercises both
+     * DEAUTH_START and CAPTURE_START's own completion paths, each genuinely
+     * touching shared operation-table/wifi-service/capture-service/fake-HAL
+     * state from a different thread than a concurrent STOP/status request --
+     * every one of these must share the SAME real mutex as mtk_router_ set_lock
+     * above. */
     mtk_core_set_lock(router_lock, router_unlock);
     mtek_wifi_service_set_lock(router_lock, router_unlock);
     mtek_capture_set_lock(router_lock, router_unlock);
@@ -214,8 +213,8 @@ MTK_TEST_MAIN_BEGIN
 
     mtk_compat_header_t resp_hdr; uint8_t resp_payload[MTK_COMPAT_SINGLE_CELL_PAYLOAD_MAX]; uint16_t resp_len = 0;
 
-    /* ---- HANDSHAKE_START: deferred, delivered later, STOP-while-pending
-     * rejected (same cancellation-safety pattern as DEAUTH_START). ---- */
+    /* HANDSHAKE_START: deferred, delivered later, STOP-while-pending rejected
+     * (same cancellation-safety pattern as DEAUTH_START). -- */
     {
         uint8_t hs_payload[9] = {1,2,3,4,5,6, 6, 0,0};
         mtk_compat_header_t hdr = {0};
@@ -252,9 +251,9 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(dctx.handshake_token, 0);
     }
 
-    /* ---- CAPTURE_START: deferred delivery of the special raw-4-byte-
-     * errno response format (not the generic bare-status convention) --
-     * proves the per-opcode response-shape override survives deferral. */
+    /* CAPTURE_START: deferred delivery of the special raw-4-byte- errno response
+     * format (not the generic bare-status convention) -- proves the per-opcode
+     * response-shape override survives deferral. */
     {
         uint8_t cap_payload[2] = {0, 0}; /* channel=0(hop), band=0 */
         mtk_compat_header_t hdr = {0};
@@ -281,8 +280,8 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(dctx.capture_token, 0);
     }
 
-    /* ---- Ordering: two sequential deferred DEAUTH_START/STOP operations
-     * complete in issue order, never interleaved. ---- */
+    /* Ordering: two sequential deferred DEAUTH_START/STOP operations complete in
+     * issue order, never interleaved. -- */
     {
         uint8_t req_payload[6 + 1 + 6 + 2 + 2];
         memcpy(req_payload, (uint8_t[]){0x02,0x02,0x03,0x04,0x05,0x06}, 6);
@@ -330,9 +329,8 @@ MTK_TEST_MAIN_BEGIN
         mtek_compat_dispatch_request(&dctx, &stop_hdr, NULL, &resp_hdr, resp_payload, &resp_len);
     }
 
-    /* ---- Reset: dctx's event_queue is safe to reset mid-flight (e.g. a
-     * boot_epoch reset) and fully reusable afterward for an unrelated
-     * later operation. ---- */
+    /* Reset: dctx's event_queue is safe to reset mid-flight (e.g. a boot_epoch
+     * reset) and fully reusable afterward for an unrelated later operation. -- */
     {
         uint8_t req_payload[6 + 1 + 6 + 2 + 2];
         memcpy(req_payload, (uint8_t[]){0x02,0x02,0x03,0x04,0x05,0x06}, 6);
@@ -387,12 +385,12 @@ MTK_TEST_MAIN_BEGIN
         mtek_compat_dispatch_request(&dctx, &stop_hdr, NULL, &resp_hdr, resp_payload, &resp_len);
     }
 
-    /* ---- Overflow/backpressure: the underlying mtk_async_queue's own
-     * bounded-drop behavior (proven generically in test_async_queue.c)
-     * is exercised here at the adapter level by flooding dctx's queue
-     * with synthetic frames before a real dispatch, proving the real
-     * accept response is still correctly found/delivered despite queue
-     * pressure from unrelated traffic, and the drop counter is honest. */
+    /* Overflow/backpressure: the underlying mtk_async_queue's own bounded-drop
+     * behavior (proven generically in test_async_queue.c) is exercised here at
+     * the adapter level by flooding dctx's queue with synthetic frames before a
+     * real dispatch, proving the real accept response is still correctly
+     * found/delivered despite queue pressure from unrelated traffic, and the
+     * drop counter is honest. */
     {
         mtk_async_queue_reset(&dctx.event_queue);
         for (unsigned i = 0; i < MTK_ASYNC_QUEUE_DEPTH; i++) {
@@ -401,13 +399,11 @@ MTK_TEST_MAIN_BEGIN
             mtk_async_queue_push(&dctx.event_queue, &f);
         }
         MTK_CHECK_EQ(mtk_async_queue_count(&dctx.event_queue), MTK_ASYNC_QUEUE_DEPTH);
-        /* RC7 independent audit P0 "Native scheduling can starve or drop
-         * control and terminal traffic": mtk_async_queue_push now evicts
-         * a lower-priority occupied slot to make room for a higher-
-         * priority arrival (RESPONSE > EVENT > STREAM) -- `overflow_frame`
-         * must match the fill kind (EVENT) to prove the genuinely-full
-         * same-priority case here; priority eviction itself is proven
-         * directly in test_async_queue.c. */
+        /* mtk_async_queue_push now evicts a lower-priority occupied slot to make
+         * room for a higher- priority arrival (RESPONSE > EVENT > STREAM) --
+         * `overflow_frame` must match the fill kind (EVENT) to prove the
+         * genuinely-full same-priority case here; priority eviction itself is
+         * proven directly in test_async_queue.c. */
         mtk_async_frame_t overflow_frame; memset(&overflow_frame, 0, sizeof(overflow_frame));
         overflow_frame.kind = MTK_ASYNC_FRAME_EVENT;
         MTK_CHECK_EQ(mtk_async_queue_push(&dctx.event_queue, &overflow_frame), 0); /* dropped, queue full */

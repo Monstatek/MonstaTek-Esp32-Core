@@ -1,8 +1,7 @@
-/* AUTO transport selection (SPI_PROTOCOL_V1.md "Runtime transport
- * selection"): exactly one profile locks per boot, cross-profile
- * rejection holds across an exhaustive 2-byte magic-region sweep
- * (mirroring 001-profile-bootstrap-feasibility.md Sec 2's own
- * corroboration sweep), and noise/corruption never locks anything. */
+/* AUTO transport selection (SPI_PROTOCOL_V1.md "Runtime transport selection"):
+ * exactly one profile locks per boot, cross-profile rejection holds across an
+ * exhaustive 2-byte magic-region sweep (mirroring corroboration sweep), and
+ * noise/corruption never locks anything. */
 #include "mtk_test.h"
 #include "mtek_transport_select.h"
 #include "mtek_spi_native_frame.h"

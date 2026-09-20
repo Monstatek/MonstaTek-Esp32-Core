@@ -6,26 +6,22 @@
 
 typedef struct {
     mtk_hal_ble_adv_t scan_results[8]; unsigned scan_count;
-    /* P0 correction (follow-up read-only audit, "final focused
-     * concurrency-correction round"): mirrors mtk_fake_wifi_hal.h's own
-     * connect_delay_ms/promisc_start_delay_ms precedent -- an optional
-     * REAL delay (ms) before scan()/gatt_connect() check their own
-     * injected result, giving a test's own concurrent thread a genuine
-     * window to invalidate this exact operation's token (a simulated
-     * native-SPI peer reboot) before the blocking HAL call returns. 0
-     * (default) = no delay, every other test's existing timing
-     * unaffected. */
+    /* Mirrors mtk_fake_wifi_hal.h's own connect_delay_ms/promisc_start_delay_ms
+     * precedent -- an optional REAL delay (ms) before scan/gatt_connect check
+     * their own injected result, giving a test's own concurrent thread a genuine
+     * window to invalidate this exact operation's token (a simulated native-SPI
+     * peer reboot) before the blocking HAL call returns. 0 (default) = no delay,
+     * every other test's existing timing unaffected. */
     unsigned scan_delay_ms;
     unsigned gatt_connect_delay_ms;
     int adv_start_rc;
     int signal_rc; int8_t signal_rssi; uint8_t signal_is_random;
     int gatt_connect_rc; uint16_t gatt_vendor_handle;
     mtk_hal_gatt_service_t gatt_services[4]; unsigned gatt_service_count;
-    /* RC8 independent audit P0-6: filtered by requested [start_handle,
-     * end_handle] at call time (like a real HAL would), so a test can
-     * populate the full connection's chars/descs once and different
-     * per-service/per-characteristic discovery calls each see only the
-     * subset whose handle actually falls in their own real range. */
+    /* Filtered by requested [start_handle, end_handle] at call time (like a real
+     * HAL would), so a test can populate the full connection's chars/descs once
+     * and different per-service/per-characteristic discovery calls each see only
+     * the subset whose handle actually falls in their own real range. */
     mtk_hal_gatt_char_t gatt_chars[8]; unsigned gatt_char_count;
     mtk_hal_gatt_desc_t gatt_descs[8]; unsigned gatt_desc_count;
     uint8_t gatt_read_data[64]; uint16_t gatt_read_len; int gatt_read_rc;
@@ -39,45 +35,43 @@ typedef struct {
     uint16_t last_unsubscribe_attr_handle, last_unsubscribe_end_handle;
     uint16_t notify_handle; uint8_t notify_data[32]; uint16_t notify_len; int notify_pending;
     int remote_disconnect_pending; /* test sets this to simulate a real BLE_GAP_EVENT_DISCONNECT */
-    uint8_t remote_disconnect_reason; /* RC8 independent audit P0-6: test sets this to simulate a real HCI-level reason code */
-    uint32_t notify_dropped_count; /* RC7 independent audit item 9: test sets this to simulate real HAL-side overflow */
-    unsigned gatt_disconnect_call_count; /* P0 correction (follow-up read-only audit, "genuine peer-session ownership"): proves a peer-reset invalidation genuinely tore down a live/mid-connect GATT session */
-    /* P0 correction (follow-up read-only audit, "Round 8: final concurrency
-     * and resource-failure closure", item 2): mirrors scan_delay_ms/gatt_
-     * connect_delay_ms's own established pattern -- an optional REAL delay
-     * (ms) before gatt_discover()/gatt_read() check their own injected
-     * result, giving a test's own concurrent thread a genuine window to
+    uint8_t remote_disconnect_reason; /* Test sets this to simulate a real
+                                       * HCI-level reason code */
+    uint32_t notify_dropped_count; /* Test sets this to simulate real HAL-side
+                                    * overflow */
+    unsigned gatt_disconnect_call_count; /* Proves a peer-reset invalidation
+                                          * genuinely tore down a live/mid-connect
+                                          * GATT session */
+    /* Mirrors scan_delay_ms/gatt_ connect_delay_ms's own established pattern --
+     * an optional REAL delay (ms) before gatt_discover/gatt_read check their own
+     * injected result, giving a test's own concurrent thread a genuine window to
      * disconnect-then-reconnect (deliberately reusing the exact same
-     * vendor_handle for the new connection) while the call is blocked, so
-     * the canonical layer's own post-call identity re-validation
-     * (mtek_ble_logic.c's gatt_revalidate_identity) can be proven to
-     * actually refuse merging/publishing a stale result into the new
-     * session rather than merely trusting connection_token alone. 0
-     * (default) = no delay, every other test's existing timing
-     * unaffected. */
+     * vendor_handle for the new connection) while the call is blocked, so the
+     * canonical layer's own post-call identity re-validation (mtek_ble_logic.c's
+     * gatt_revalidate_identity) can be proven to actually refuse
+     * merging/publishing a stale result into the new session rather than merely
+     * trusting connection_token alone. 0 (default) = no delay, every other
+     * test's existing timing unaffected. */
     unsigned gatt_op_delay_ms;
-    /* P0 correction (this round, item 5 test coverage "BLE allocation-
-     * failure semantics"): lets a test inject a genuine HAL-layer
-     * discovery failure (mirroring a real xSemaphoreCreateBinary failure
-     * in mtek_ble_hal_esp32.c's esp32_gatt_discover/_chars/_descs) so the
-     * canonical service layer's own handling of a negative return can be
-     * proven -- an honest MTK_STATUS_IO_ERROR, never an apparently
-     * successful empty discovery. 0 (default) = no injected failure. */
+    /* Lets a test inject a genuine HAL-layer discovery failure (mirroring a real
+     * xSemaphoreCreateBinary failure in mtek_ble_hal_esp32.c's
+     * esp32_gatt_discover/_chars/_descs) so the canonical service layer's own
+     * handling of a negative return can be proven -- an honest
+     * MTK_STATUS_IO_ERROR, never an apparently successful empty discovery. 0
+     * (default) = no injected failure. */
     int gatt_discover_force_fail;
 } mtk_fake_ble_state_t;
 
 static mtk_fake_ble_state_t g_fake_ble;
 static inline void mtk_fake_ble_reset(void) { memset(&g_fake_ble, 0, sizeof(g_fake_ble)); }
 
-/* P0 correction (follow-up read-only audit, "final focused concurrency-
- * correction round"): mirrors mtk_fake_wifi_hal.h's own established lock
- * pattern exactly -- a real TSan run against this round's own new
- * concurrent BLE_SCAN/GATT_CONNECT tests caught a genuine data race
- * between a background worker's writes into g_fake_ble (e.g.
- * gatt_disconnect_call_count) and the main thread's own polling reads of
- * the same fields, with no lock of any kind previously guarding this
- * struct. Optional, safe no-op default for every other (single-threaded)
- * host test that never registers one. */
+/* Mirrors mtk_fake_wifi_hal.h's own established lock pattern exactly -- a real
+ * TSan run against the new concurrent BLE_SCAN/GATT_CONNECT tests caught a
+ * genuine data race between a background worker's writes into g_fake_ble (e.g.
+ * gatt_disconnect_call_count) and the main thread's own polling reads of the
+ * same fields, with no lock of any kind previously guarding this struct.
+ * Optional, safe no-op default for every other (single-threaded) host test that
+ * never registers one. */
 typedef void (*mtk_fake_ble_lock_fn)(void);
 static mtk_fake_ble_lock_fn s_fake_ble_lock_fn, s_fake_ble_unlock_fn;
 static inline void mtk_fake_ble_set_lock(mtk_fake_ble_lock_fn lock, mtk_fake_ble_lock_fn unlock) {
@@ -113,14 +107,12 @@ static void fake_ble_gatt_disconnect(uint16_t vendor_handle) {
 }
 static int fake_ble_gatt_discover(uint16_t vendor_handle, mtk_hal_gatt_service_t *out, unsigned max_out) {
     (void)vendor_handle;
-    /* P0 correction (follow-up read-only audit, "Round 8: final concurrency
-     * and resource-failure closure", item 2 test coverage): gatt_op_
-     * delay_ms exists precisely so a test can reconfigure g_fake_ble.
-     * gatt_service_count/gatt_services[] on a DIFFERENT thread while this
-     * call is genuinely blocked -- reading them (and the delay itself)
-     * under fake_ble_lock/unlock (a real mutex when a test registers one,
-     * a safe no-op otherwise, matching every other test's existing
-     * single-threaded usage) avoids racing that concurrent reconfigure. */
+    /* gatt_op_ delay_ms exists precisely so a test can reconfigure g_fake_ble.
+     * gatt_service_count/gatt_services[] on a DIFFERENT thread while this call
+     * is genuinely blocked -- reading them (and the delay itself) under
+     * fake_ble_lock/unlock (a real mutex when a test registers one, a safe no-op
+     * otherwise, matching every other test's existing single-threaded usage)
+     * avoids racing that concurrent reconfigure. */
     fake_ble_lock();
     unsigned delay = g_fake_ble.gatt_op_delay_ms;
     fake_ble_unlock();
@@ -186,12 +178,11 @@ static int fake_ble_gatt_subscribe(uint16_t vendor_handle, uint16_t attr_handle,
     fake_ble_unlock();
     return rc;
 }
-/* P0 correction (this round, item 2 test coverage): mirrors fake_ble_gatt_
- * subscribe's own gatt_op_delay_ms/locking pattern exactly -- previously
- * this function had no delay hook and no lock of any kind, so no test
- * could genuinely race a concurrent disconnect/reconnect against an
- * in-flight UNSUBSCRIBE the way the existing subscribe/discover/read
- * tests already do. */
+/* Mirrors fake_ble_gatt_ subscribe's own gatt_op_delay_ms/locking pattern
+ * exactly -- previously this function had no delay hook and no lock of any kind,
+ * so no test could genuinely race a concurrent disconnect/reconnect against an
+ * in-flight UNSUBSCRIBE the way the existing subscribe/discover/read tests
+ * already do. */
 static int fake_ble_gatt_unsubscribe(uint16_t vendor_handle, uint16_t attr_handle, uint16_t end_handle) {
     (void)vendor_handle;
     fake_ble_lock();

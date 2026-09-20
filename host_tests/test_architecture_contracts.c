@@ -29,9 +29,11 @@ MTK_TEST_MAIN_BEGIN
     MTK_CHECK_EQ(mtk_router_register(1, NULL), MTK_REGISTER_INVALID_HANDLER);
     MTK_CHECK_EQ(mtk_router_register(1, handler), MTK_REGISTER_OK);
     MTK_CHECK_EQ(mtk_router_register(1, replacement), MTK_REGISTER_DUPLICATE);
-    for (unsigned i = 2; i <= 6; i++)
+    /* Fills the table to its configured capacity, then proves the next
+     * registration is refused rather than silently dropped. */
+    for (unsigned i = 2; i <= 8; i++)
         MTK_CHECK_EQ(mtk_router_register((uint16_t)i, handler), MTK_REGISTER_OK);
-    MTK_CHECK_EQ(mtk_router_register(7, handler), MTK_REGISTER_FULL);
+    MTK_CHECK_EQ(mtk_router_register(9, handler), MTK_REGISTER_FULL);
     MTK_CHECK_EQ(mtk_router_register(1, replacement), MTK_REGISTER_DUPLICATE);
 
     /* The same harmless fixture handler proves execution mode is independent

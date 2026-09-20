@@ -1,25 +1,22 @@
-/* RC12 hardening round, item 1 (P0) "BLE callback lifetime": deterministic
- * forced-interleaving proof of mtk_ble_op_lifecycle -- the exact primitive
- * mtek_ble_hal_esp32.c's nine NimBLE callbacks now enter/leave through.
- * mtek_ble_hal_esp32.c itself is ESP-IDF/NimBLE-only and not linked into
- * host tests, so this proves the LIFETIME PROTOCOL (the reusable core of
- * the fix) directly, using pthreads to force the precise orderings the
- * check-to-use race depends on:
+/* Deterministic forced-interleaving proof
+ * of mtk_ble_op_lifecycle -- the exact primitive mtek_ble_hal_esp32.c's nine
+ * NimBLE callbacks now enter/leave through. mtek_ble_hal_esp32.c itself is
+ * ESP-IDF/NimBLE-only and not linked into host tests, so this proves the
+ * LIFETIME PROTOCOL (the reusable core of the fix) directly, using pthreads to
+ * force the precise orderings the check-to-use race depends on:
  *
- *   A. callback already ENTERED (holding the lifetime lock, mid-use) when a
- *      timeout's retire() begins -- retire must block until the callback
- *      finishes, never freeing context out from under it.
- *   B. callback ARRIVING AFTER cleanup -- callback_begin must reject it and
- *      never hand back a context.
- *   C. STALE callback after a NEW operation is armed -- the old generation
- *      must be rejected while the new one is accepted with the new context.
- *   D. START/ALLOCATION FAILURE paths -- arm() followed immediately by
- *      retire() with no callback ever firing (the HAL's rc!=0 / semaphore-
- *      alloc-failure branches), and a late callback after that must be
- *      rejected.
+ * A. callback already ENTERED (holding the lifetime lock, mid-use) when a
+ * timeout's retire begins -- retire must block until the callback finishes,
+ * never freeing context out from under it. B. callback ARRIVING AFTER cleanup --
+ * callback_begin must reject it and never hand back a context. C. STALE callback
+ * after a NEW operation is armed -- the old generation must be rejected while
+ * the new one is accepted with the new context. D. START/ALLOCATION FAILURE
+ * paths -- arm followed immediately by retire with no callback ever firing (the
+ * HAL's rc!=0 / semaphore- alloc-failure branches), and a late callback after
+ * that must be rejected.
  *
- * The primitive is driven here EXACTLY as the HAL drives it: arm(ctx) ->
- * (start op) -> wait -> [cancel] -> retire -> free ctx; callbacks enter via
+ * The primitive is driven here EXACTLY as the HAL drives it: arm(ctx) -> (start
+ * op) -> wait -> [cancel] -> retire -> free ctx; callbacks enter via
  * callback_begin/end. */
 #include "mtk_test.h"
 #include "mtk_ble_op_lifecycle.h"
@@ -41,9 +38,9 @@ typedef struct {
     int callback_saw_ctx;
 } fake_ctx_t;
 
-/* ---- Orchestration for interleaving A: a control gate distinct from the
- * lifetime lock, so the "callback" thread can pause WHILE STILL HOLDING the
- * lifetime lock (exactly the mid-callback state retire() must respect). */
+/* Orchestration for interleaving A: a control gate distinct from the lifetime
+ * lock, so the "callback" thread can pause WHILE STILL HOLDING the lifetime lock
+ * (exactly the mid-callback state retire must respect). */
 static pthread_mutex_t s_gate_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t s_gate_cond = PTHREAD_COND_INITIALIZER;
 static int s_gate_open;
@@ -62,9 +59,9 @@ static void *callback_thread_A(void *arg) {
      * ctx (generation still current at this point). */
     if (mtk_ble_op_lifecycle_callback_begin(&s_lc, s_genA, &cptr)) {
         fake_ctx_t *c = (fake_ctx_t *)cptr;
-        /* Announce we are INSIDE the callback (lifetime lock held), then
-         * block on the gate -- still holding the lock -- so the main thread
-         * can launch retire() and prove it cannot proceed. */
+        /* Announce we are INSIDE the callback (lifetime lock held), then block
+         * on the gate -- still holding the lock -- so the main thread can launch
+         * retire and prove it cannot proceed. */
         pthread_mutex_lock(&s_gate_mutex);
         s_cb_entered = 1;
         pthread_cond_signal(&s_gate_cond);
@@ -104,8 +101,8 @@ static void test_A_callback_entered_when_timeout_cleanup_begins(void) {
     while (!s_cb_entered) pthread_cond_wait(&s_gate_cond, &s_gate_mutex);
     pthread_mutex_unlock(&s_gate_mutex);
 
-    /* Launch retire() while the callback holds the lifetime lock. It MUST
-     * block -- give it a moment and confirm it has not completed. */
+    /* Launch retire while the callback holds the lifetime lock. It MUST block --
+     * give it a moment and confirm it has not completed. */
     pthread_create(&rt, NULL, retire_thread_A, NULL);
     for (volatile int spin = 0; spin < 1000000; spin++) { /* brief busy pause */ }
     MTK_CHECK_EQ(atomic_load(&s_retire_completed), 0); /* retire cannot finish while the callback is mid-use */
@@ -177,11 +174,10 @@ static void test_D_start_and_alloc_failure_paths(void) {
     void *cptr = NULL;
     MTK_CHECK_EQ(mtk_ble_op_lifecycle_callback_begin(&lc, gen, &cptr), 0);
 
-    /* Semaphore-allocation failure: the HAL returns BEFORE arm() is ever
-     * called, so the lifecycle stays in its initial (nothing-armed) state.
-     * Any callback that somehow fires against generation 0, or any real
-     * generation, is rejected -- and retire() on a never-armed lifecycle is
-     * a safe no-op. */
+    /* Semaphore-allocation failure: the HAL returns BEFORE arm is ever called,
+     * so the lifecycle stays in its initial (nothing-armed) state. Any callback
+     * that somehow fires against generation 0, or any real generation, is
+     * rejected -- and retire on a never-armed lifecycle is a safe no-op. */
     mtk_ble_op_lifecycle_retire(&lc); /* idempotent / never-armed: no crash */
     void *cptr2 = NULL;
     MTK_CHECK_EQ(mtk_ble_op_lifecycle_callback_begin(&lc, 0, &cptr2), 0); /* generation 0 is never current */

@@ -1,6 +1,6 @@
-/* BLE signal meter (002-ble-gatt-service.md Sec 2.3): start, repeated
- * SIGNAL_METER_UPDATE samples via the tick path, and the terminal
- * SIGNAL_METER_LOST event when the target is no longer observable. */
+/* BLE signal meter: start, repeated SIGNAL_METER_UPDATE samples via the tick
+ * path, and the terminal SIGNAL_METER_LOST event when the target is no longer
+ * observable. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtek_schema_message_descs.h"
@@ -81,12 +81,10 @@ MTK_TEST_MAIN_BEGIN
     MTK_CHECK_EQ(u1.raw_rssi, -55);
     MTK_CHECK_EQ(u1.category, 1); /* STRONG: -60 <= rssi < -50 */
 
-    /* RC5 independent audit P1 "BLE/GATT implementation is not yet
-     * parity-complete": the real sampling cadence is now self-throttled
-     * to ~5s (matching the audit's own stated shipping figure) regardless
-     * of how often the caller's own periodic task invokes this tick -- a
-     * tick before that interval has elapsed must NOT produce a new
-     * sample. */
+    /* The real sampling cadence is now self-throttled to ~5s (matching the
+     * audit's own stated shipping figure) regardless of how often the caller's
+     * own periodic task invokes this tick -- a tick before that interval has
+     * elapsed must NOT produce a new sample. */
     g_fake_ble.signal_rssi = -90; /* VERY_WEAK */
     mtek_ble_signal_meter_tick(); /* time has not advanced -- no new sample yet */
     unsigned updates = 0;
@@ -99,13 +97,10 @@ MTK_TEST_MAIN_BEGIN
     for (unsigned i = 0; i < sink.event_count; i++) if (strcmp(sink.events[i].name, "SIGNAL_METER_UPDATE") == 0) updates++;
     MTK_CHECK_EQ(updates, 2);
 
-    /* RC7 independent audit item 9 "signal LOST now requires three
-     * five-second misses (roughly 15 seconds), contradicting shipped
-     * approximately-five-second loss behavior": RC6's own 3-consecutive-
-     * miss tolerance is reverted -- with a real ~5s sampling interval,
-     * the FIRST missed sample (itself already ~5 seconds after the last
-     * successful one) now declares LOST directly, matching the confirmed
-     * shipped figure instead of a multiple of it. */
+    /* RC6's own 3-consecutive- miss tolerance is reverted -- with a real ~5s
+     * sampling interval, the FIRST missed sample (itself already ~5 seconds
+     * after the last successful one) now declares LOST directly, matching the
+     * confirmed shipped figure instead of a multiple of it. */
     g_fake_ble.signal_rc = 1;
     s_mtk_test_now_ms += 5001;
     mtek_ble_signal_meter_tick(); /* the one and only miss -> LOST */
