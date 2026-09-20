@@ -1,6 +1,6 @@
-/* Clean-room implementation from MonstaTek contract. See
- * mtek_opcode_overlay.h for the design rationale (RC12 hardening round,
- * item 5 (P1): a test-only opcode overlay seam, inert in production). */
+/* Clean-room implementation from MonstaTek contract. See mtek_opcode_overlay.h
+ * for the design rationale (item 5 (P1): a test-only opcode overlay seam, inert
+ * in production). */
 #include "mtek_opcode_overlay.h"
 #include <stddef.h>
 

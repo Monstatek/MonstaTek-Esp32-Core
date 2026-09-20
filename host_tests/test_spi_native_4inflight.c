@@ -1,27 +1,23 @@
-/* RC5 independent audit P0 "Native in-flight request guarantee is not
- * met": dctx->pending_active used to be a single scalar, so a second
- * deferred request silently overwrote the first's identity, permanently
- * orphaning its eventual response (the first request's real answer would
- * arrive in the shared event_queue but nothing would ever remember which
- * transaction it belonged to). This test drives four genuinely
- * concurrent deferred TIME_SYNC_START operations through the SAME dctx
- * (matching MTK_SPI_NATIVE_MAX_IN_FLIGHT, itself matching the router's
- * own confirmed 4-in-flight async pool budget). TIME_SYNC_START is used
- * rather than a radio-owning opcode (DEAUTH_START, AP_SCAN_START, etc.)
- * because the canonical resource arbiter (002-resource-arbiter.md)
- * deliberately serializes every pair of radio-owning classes to exactly
- * one active owner at a time -- true 4-way *simultaneous radio work* is
- * not a scenario this system supports at all, by design. TIME_SYNC_START
- * touches no arbiter class (mtek_system_logic.c), so it is the correct
- * opcode for isolating and proving the TRANSPORT layer's own in-flight
- * bookkeeping (this file) independent of that unrelated, working-as-
- * designed radio-serialization constraint. Real pthread workers complete
- * in a DIFFERENT order than they were issued, proving delivery is
- * matched by identity (request_id/correlation), not FIFO-by-issue-order.
- * Also proves a 5th concurrent attempt while all 4 slots are genuinely
- * still in flight gets the router's own synchronous NO_MEMORY, and that
- * a STOP/cancel against one still-pending operation does not disturb the
- * other three. */
+/* dctx->pending_active used to be a single scalar, so a second deferred request
+ * silently overwrote the first's identity, permanently orphaning its eventual
+ * response (the first request's real answer would arrive in the shared
+ * event_queue but nothing would ever remember which transaction it belonged to).
+ * This test drives four genuinely concurrent deferred TIME_SYNC_START operations
+ * through the SAME dctx (matching MTK_SPI_NATIVE_MAX_IN_FLIGHT, itself matching
+ * the router's own confirmed 4-in-flight async pool budget). TIME_SYNC_START is
+ * used rather than a radio-owning opcode (DEAUTH_START, AP_SCAN_START, etc.)
+ * because the canonical resource arbiter deliberately serializes every pair of
+ * radio-owning classes to exactly one active owner at a time -- true 4-way
+ * *simultaneous radio work* is not a scenario this system supports at all, by
+ * design. TIME_SYNC_START touches no arbiter class (mtek_system_logic.c), so it
+ * is the correct opcode for isolating and proving the TRANSPORT layer's own
+ * in-flight bookkeeping (this file) independent of that unrelated, working-as-
+ * designed radio-serialization constraint. Real pthread workers complete in a
+ * DIFFERENT order than they were issued, proving delivery is matched by identity
+ * (request_id/correlation), not FIFO-by-issue-order. Also proves a 5th
+ * concurrent attempt while all 4 slots are genuinely still in flight gets the
+ * router's own synchronous NO_MEMORY, and that a STOP/cancel against one
+ * still-pending operation does not disturb the other three. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtk_test_async_fixture.h"
@@ -98,8 +94,11 @@ MTK_TEST_MAIN_BEGIN
     mtek_spi_native_dispatch_init(&dctx, 0x1234);
     mtk_async_queue_set_lock(&dctx.event_queue, queue_lock, queue_unlock, NULL);
 
-    const mtk_opcode_entry_t *ts_op = mtk_test_async_fixture_install() /* RC12 item 5: test-only overlay async op, was TIME_SYNC_START */;
-    const mtk_opcode_entry_t *stop_op = mtk_test_async_fixture_stop_install(); /* RC12 item 1: test-only overlay STOP (was TIME_SYNC_STOP, now UNSUPPORTED on native) */
+    const mtk_opcode_entry_t *ts_op = mtk_test_async_fixture_install() /* Test-only overlay async op, was
+                                                                        * TIME_SYNC_START */;
+    const mtk_opcode_entry_t *stop_op = mtk_test_async_fixture_stop_install(); /* Test-only overlay STOP (was
+                                                                                * TIME_SYNC_STOP, now UNSUPPORTED on
+                                                                                * native) */
     mtk_spi_native_header_t resp_hdr; uint8_t resp_payload[MTK_SPI_NATIVE_MAX_PAYLOAD]; uint16_t resp_len = 0;
 
     /* Issue 4 distinct TIME_SYNC_START operations back-to-back,

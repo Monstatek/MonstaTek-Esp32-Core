@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "purpose": "Non-production, machine-readable mirror of the Task 002 canonical contract, rework 9 (contract review 9 closure-correction pass applied on top of the rework 8 User Classification Decision / contract review 8 closure pass). Independently authored for this task; imports no external source.",
+    "purpose": "Non-production, machine-readable mirror of the Task 002 canonical contract, rework 9. Independently authored for; imports no external source.",
     "task": "002_CANONICAL_SERVICE_CONTRACTS",
     "protocol_ref": "02-protocol/SPI_PROTOCOL_V1.md",
     "completeness_note": "Every one of the 91 canonical opcodes (corrected this rework: 86 + TIME_SYNC_START + TIME_SYNC_STOP + WIFI_MODE_GET + WIFI_MODE_SET + WIFI_MAC_GET, contract review 8 items 2-3 -- the user classified SNTP_SYNC and Wi-Fi GET_MODE/SET_MODE/GET_MAC as List B clean-slate platform utilities on 2026-09-04, so all five now have real canonical owners and are folded into `opcodes` below like every other List B family, no longer left in the unclassified/reserved ledger) carries explicit request_fields/response_fields (empty arrays where genuinely empty, never a missing key), a capability_state per profile, a resource_class (or no_radio_lease:true), and lifecycle metadata (status_outcomes, deadline bounds, cancellable, idempotent, persistent_effects, stop_owner). Major async operations carry explicit event schemas. Legacy SPI Compatibility-only commands/events that remain genuinely reserved-DISABLED (Zigbee, ESP-NOW, system OTA) are enumerated separately in `compat_ledger_summary` below and in full in `002-adapter-translation-matrix.md` Sec 5, not folded into `opcodes`, since they have no canonical owner to encode fields against. The qMonstatek/screen host bridge remains the one deliberate exception: capability-only and DISABLED under accepted design input 12 (contract review 4 item 2), not because it is unclassified. Every `notes` field that previously carried a stale `UNCLASSIFIED` label on an opcode already reclassified into List B (BEACON_START and the twelve BLE compatibility-family opcodes) was corrected in rework 5 (contract review 5 item 1); the same correction is applied this rework to every reference to the four now-resolved items."
@@ -38,7 +38,7 @@
     ]
   },
   "operation_states": {
-    "_note": "CANCELLED removed per rework 1 review item 8 -- four terminal states only.",
+    "_note": "CANCELLED removed per -- four terminal states only.",
     "ACCEPTED": 0,
     "RUNNING": 1,
     "COMPLETED": 2,
@@ -64,7 +64,9 @@
     "ble": "0x0002",
     "gatt": "0x0003",
     "capture": "0x0004",
-    "diagnostics": "0x0005"
+    "diagnostics": "0x0005",
+    "espnow": "0x0006",
+    "ieee802154": "0x0007"
   },
   "capability_ids": {
     "_note": "Reserved/disabled features live in a distinct identifier space, disjoint from every service_id (0-5), starting at 0x1001 (rework 1 fix after the validator caught a collision).",
@@ -74,18 +76,18 @@
     "ble_compat_family": 4100
   },
   "authorization_levels": {
-    "_note": "Rework 2 review item 9: corrected from a single UNAUTHENTICATED==0-only check to an ordered policy. Phase 1 implements exactly one level (TRANSPORT_POSSESSION); higher levels are reserved so a stronger future level satisfies a weaker requirement (ordinal >= required, never ==).",
+    "_note": "corrected from a single UNAUTHENTICATED==0-only check to an ordered policy. Phase 1 implements exactly one level (TRANSPORT_POSSESSION); higher levels are reserved so a stronger future level satisfies a weaker requirement (ordinal >= required, never ==).",
     "TRANSPORT_POSSESSION": 0,
     "reserved_future_min_ordinal_note": "Any operation requiring authorization_level >= N is satisfied by a presented level with ordinal >= N. Phase 1 defines only ordinal 0; every canonical opcode in this file requires ordinal 0 (the weakest/only defined level), so every Phase-1 adapter session (which authenticates only by transport possession) satisfies every operation's requirement."
   },
   "lab_controls_policy": {
-    "_note": "New, contract review 9 item 4. TRANSPORT_POSSESSION alone is not lab authorization -- every Phase-1 session has it by construction (authorization_levels above), so gating a diagnostic mode-override control on authorization_level alone would make it universally callable. A separate, explicit policy gate is required for any operation that lets a caller directly override the Wi-Fi driver mode outside a feature's own arbiter-owned transition.",
+    "_note": "New. TRANSPORT_POSSESSION alone is not lab authorization -- every Phase-1 session has it by construction (authorization_levels above), so gating a diagnostic mode-override control on authorization_level alone would make it universally callable. A separate, explicit policy gate is required for any operation that lets a caller directly override the Wi-Fi driver mode outside a feature's own arbiter-owned transition.",
     "gate_name": "lab_controls_enabled",
     "default_universal_customer_factory_artifact": false,
     "gated_operations": [
       "WIFI_MODE_SET"
     ],
-    "when_false": "the gated operation reports capability_state DISABLED for every profile that would otherwise be SUPPORTED, and any request against it (bypassing capability discovery) is rejected the legal wire status UNSUPPORTED with no side effect -- mode is left completely unchanged, no partial state transition, no radio/arbiter interaction attempted. DISABLED is a capability-discovery state only, never a wire status (contract review 10 item 5); status_outcomes for the gated operation lists UNSUPPORTED, never DISABLED.",
+    "when_false": "the gated operation reports capability_state DISABLED for every profile that would otherwise be SUPPORTED, and any request against it (bypassing capability discovery) is rejected the legal wire status UNSUPPORTED with no side effect -- mode is left completely unchanged, no partial state transition, no radio/arbiter interaction attempted. DISABLED is a capability-discovery state only, never a wire status; status_outcomes for the gated operation lists UNSUPPORTED, never DISABLED.",
     "when_true": "ordinary authorization_level >= TRANSPORT_POSSESSION plus the operation's own atomic-lock BUSY/no-side-effect precondition checks (opcode lifecycle_meta) still apply in full -- the lab gate only removes the DISABLED capability-discovery default, it never substitutes for or weakens the other checks",
     "enablement_mechanism": "a separately identified lab build/profile (a distinct compile-time configuration from the universal three-adapter customer/factory artifact, 002-compatibility-boundary-and-size-gate.md Sec 5.5) or a future authenticated administrative policy -- neither is an unauthenticated runtime toggle, and this task does not invent one",
     "opcode_stays_compiled_in": "the canonical opcode remains compiled into the universal image and is truthfully capability-reported as DISABLED there (never removed/hidden); only a lab-enabled native build may report SUPPORTED for it -- WIFI_MODE_SET's compat_spi mapping remains DISABLED regardless of this gate, pending T-WIFI-5, since T-WIFI-5 (no dispatch case evidenced in any pinned build) is a wholly separate, unrelated gate that a lab-enabled Legacy SPI Compatibility build does not close (contract review 10 item 7)"
@@ -115,7 +117,7 @@
             "TIME_SYNC_STOP"
           ],
           "capability_state_factory_uart": "UNAVAILABLE",
-          "note": "range extended 0x0007->0x0009 this rework (contract review 8 item 2): SNTP_SYNC classified List B 2026-09-04, canonicalized as an asynchronous time service with its own STOP, not folded into the always-callable system-service default."
+          "note": "range extended 0x0007->0x0009: SNTP_SYNC classified List B 2026-09-04, canonicalized as an asynchronous time service with its own STOP, not folded into the always-callable system-service default."
         }
       ]
     },
@@ -178,7 +180,7 @@
             "PMKID_CAPTURE_STOP"
           ],
           "capability_state_factory_uart": "UNAVAILABLE",
-          "note": "range extended 0x0018->0x0025 rework 4 (contract review 4 item 1), then ->0x0026 this rework for PMKID_CAPTURE_STOP (contract review 5 item 2)"
+          "note": "range extended 0x0018->0x0025 rework 4, then ->0x0026 for PMKID_CAPTURE_STOP"
         },
         {
           "opcodes": [
@@ -309,8 +311,8 @@
     "GC",
     "SAP",
     "RAW",
-    "RESV_ESPNOW",
-    "RESV_154"
+    "ESPNOW",
+    "IEEE154"
   ],
   "arbiter_owner_by_class": {
     "WMC": "RADIO_OWNER_WIFI",
@@ -325,8 +327,8 @@
     "GC": "RADIO_OWNER_BLE",
     "SAP": "RADIO_OWNER_WIFI",
     "RAW": "RADIO_OWNER_WIFI",
-    "RESV_ESPNOW": "RADIO_OWNER_ESPNOW",
-    "RESV_154": "RADIO_OWNER_IEEE802154_RX"
+    "ESPNOW": "RADIO_OWNER_WIFI",
+    "IEEE154": "RADIO_OWNER_IEEE802154_RX"
   },
   "arbiter_pairwise_policy": {
     "WMC|WS": "SERIALIZED",
@@ -394,7 +396,32 @@
     "BA|RAW": "CROSS_SUBSYSTEM_BUSY",
     "SM|RAW": "CROSS_SUBSYSTEM_BUSY",
     "GC|RAW": "CROSS_SUBSYSTEM_BUSY",
-    "SAP|RAW": "SERIALIZED"
+    "SAP|RAW": "SERIALIZED",
+    "WMC|ESPNOW": "SERIALIZED",
+    "WS|ESPNOW": "SERIALIZED",
+    "BEACON|ESPNOW": "SERIALIZED",
+    "D|ESPNOW": "SERIALIZED",
+    "H|ESPNOW": "SERIALIZED",
+    "M|ESPNOW": "SERIALIZED",
+    "SAP|ESPNOW": "SERIALIZED",
+    "RAW|ESPNOW": "SERIALIZED",
+    "BS|ESPNOW": "CROSS_SUBSYSTEM_BUSY",
+    "BA|ESPNOW": "CROSS_SUBSYSTEM_BUSY",
+    "SM|ESPNOW": "CROSS_SUBSYSTEM_BUSY",
+    "GC|ESPNOW": "CROSS_SUBSYSTEM_BUSY",
+    "WMC|IEEE154": "SERIALIZED",
+    "WS|IEEE154": "SERIALIZED",
+    "BEACON|IEEE154": "SERIALIZED",
+    "D|IEEE154": "SERIALIZED",
+    "H|IEEE154": "SERIALIZED",
+    "M|IEEE154": "SERIALIZED",
+    "SAP|IEEE154": "SERIALIZED",
+    "RAW|IEEE154": "SERIALIZED",
+    "ESPNOW|IEEE154": "SERIALIZED",
+    "BS|IEEE154": "CROSS_SUBSYSTEM_BUSY",
+    "BA|IEEE154": "CROSS_SUBSYSTEM_BUSY",
+    "SM|IEEE154": "CROSS_SUBSYSTEM_BUSY",
+    "GC|IEEE154": "CROSS_SUBSYSTEM_BUSY"
   },
   "self_pairs_policy": {
     "active_classes_policy": "BUSY",
@@ -535,7 +562,7 @@
     ]
   },
   "enums": {
-    "_note": "New this rework (contract review 10 item 2). A field's enum_values array remains the wire-level bound; this block names the machine-readable meaning of each value for fields that reference it by name in adapter_map/notes prose, matching the informal pattern already used for WifiMode (documented only in prose on WIFI_MODE_GET/SET's notes) but made explicit and checkable for the new targeting field.",
+    "_note": "New. A field's enum_values array remains the wire-level bound; this block names the machine-readable meaning of each value for fields that reference it by name in adapter_map/notes prose, matching the informal pattern already used for WifiMode (documented only in prose on WIFI_MODE_GET/SET's notes) but made explicit and checkable for the new targeting field.",
     "DeauthTargetMode": {
       "SELECTED": 0,
       "ALL_SCANNED": 1,
@@ -736,7 +763,7 @@
         "factory_uart": "version",
         "compat_spi": "0x0002+0x0003 M1ESP_SYS_GET_STATUS + M1ESP_SYS_GET_FW_VERSION (merged)"
       },
-      "notes": "service_summary added rework 2 review item 7: bounded per-service {id,major,minor} digest so GET_VERSION alone answers 'what service versions does this build implement' without a second GET_CAPABILITIES round trip; GET_CAPABILITIES remains the sole owner of per-operation state/limits/dependencies (Sec 2 002-service-registry.md)."
+      "notes": "service_summary added bounded per-service {id,major,minor} digest so GET_VERSION alone answers 'what service versions does this build implement' without a second GET_CAPABILITIES round trip; GET_CAPABILITIES remains the sole owner of per-operation state/limits/dependencies (Sec 2 the canonical contract)."
     },
     {
       "service": "0x0000",
@@ -906,7 +933,7 @@
         "factory_uart": "help (synthesized internally, never on wire)",
         "compat_spi": "0x0002 M1ESP_SYS_GET_STATUS cap_bitmap (coarse, whole-service rows only)"
       },
-      "notes": "service_major/service_minor added to each entry rework 2 review item 7. Every opcode in this file has an effective GET_CAPABILITIES entry (either its own explicit override row or its service's whole-service default row, 002-service-registry.md Sec 2) -- this is the byte-unambiguous inheritance encoding that satisfies 'return an effective entry for every operation (paged), or define and test an inheritance encoding'."
+      "notes": "service_major/service_minor added to each entry . Every opcode in this file has an effective GET_CAPABILITIES entry (either its own explicit override row or its service's whole-service default row, the canonical contract) -- this is the byte-unambiguous inheritance encoding that satisfies 'return an effective entry for every operation (paged), or define and test an inheritance encoding'."
     },
     {
       "service": "0x0000",
@@ -1019,7 +1046,7 @@
         "idempotent": false,
         "persistent_effects": "none",
         "stop_owner": "n/a (not cancellable once accepted)",
-        "cleanup": "device resets; all epoch-scoped state invalidated per 002-canonical-core-contract.md Sec 8",
+        "cleanup": "device resets; all epoch-scoped state invalidated per the canonical contract",
         "reset_result": "n/a -- this operation IS the reset"
       },
       "resource_class": null,
@@ -1145,7 +1172,7 @@
         "cleanup": "no radio lease to release (no_radio_lease:true); after ACCEPTED, exactly one terminal outcome linearizes per terminal_outcomes below. Every non-success terminal TIME_SYNC_RESULT has unix_time_ms/stratum/uncertainty_ms all zeroed. Peer loss aborts to FAILED/IO_ERROR but cannot promise delivery of that terminal event to the lost peer; reset invalidates the operation token immediately with no pre-reset event-delivery promise (the same boot-epoch-scoped-object rule every other ACCEPTED_ASYNC operation follows).",
         "requires_sta_connected": true,
         "terminal_outcomes": {
-          "_note": "New this rework, contract review 10 item 6 -- machine-readable exact structure, not prose-only; run_stop_result_shape_consistency-style validator assertions must check this structure directly, not only their own local simulation.",
+          "_note": "New -- machine-readable exact structure, not prose-only; run_stop_result_shape_consistency-style validator assertions must check this structure directly, not only their own local simulation.",
           "success": {
             "operation_state": "COMPLETED",
             "status": "OK"
@@ -3147,7 +3174,7 @@
         "cancellable": false,
         "idempotent": true,
         "repeat_stop_emits_terminal_event": false,
-        "idempotent_note": "repeat STOP against an already-terminal operation returns the recorded terminal status without re-emitting PMKID_CAPTURE_RESULT, per 002-canonical-core-contract.md Sec 4.2's general idempotent-STOP rule",
+        "idempotent_note": "repeat STOP against an already-terminal operation returns the recorded terminal status without re-emitting PMKID_CAPTURE_RESULT, per the canonical contract's general idempotent-STOP rule",
         "persistent_effects": "none",
         "stop_owner": "n/a (is the stop)",
         "cleanup": "releases RAW lease"
@@ -3507,13 +3534,13 @@
               {
                 "name": "username",
                 "type": "bytes",
-                "max": 255,
+                "max": 64,
                 "len_prefix": "u8"
               },
               {
                 "name": "password",
                 "type": "bytes",
-                "max": 255,
+                "max": 64,
                 "len_prefix": "u8"
               }
             ]
@@ -3762,7 +3789,7 @@
         "factory_uart": null,
         "compat_spi": "0x0102 M1_RPC_WIFI_GET_MAC (header-evidenced exact shape: REQ u8 iface(0=sta,1=ap) -> RESP u8[6]; no dispatch case exists in any pinned main.c read this session, so the shape is design evidence only, not a confirmed live response -- named adapter test T-WIFI-5 covers the missing live confirmation, not the shape itself, which the header states unambiguously)"
       },
-      "notes": "List B -- clean-slate platform utility, classified 2026-09-04 (User Classification Decision / contract review 8 item 3). Explicit interface selector iface: STA=0, AP=1 (matches the header comment's own '0=sta,1=ap' exactly); any other byte value is INVALID_ARGUMENT. Returns exactly one mac6, never both interfaces in one call. Side-effect-free, no_radio_lease:true, always callable."
+      "notes": "List B -- clean-slate platform utility, classified 2026-09-04 (User Classification Decision / the canonical contract). Explicit interface selector iface: STA=0, AP=1 (matches the header comment's own '0=sta,1=ap' exactly); any other byte value is INVALID_ARGUMENT. Returns exactly one mac6, never both interfaces in one call. Side-effect-free, no_radio_lease:true, always callable."
     },
     {
       "service": "0x0002",
@@ -4142,7 +4169,7 @@
         "factory_uart": "list <id>",
         "compat_spi": null
       },
-      "notes": "raw_adv and raw_scan_rsp are each independently bounded 31B (rework 2 review item 11 correction from a shared 62B field, 002-ble-gatt-service.md Sec 1)."
+      "notes": "raw_adv and raw_scan_rsp are each independently bounded 31B correction from a shared 62B field, the canonical contract)."
     },
     {
       "service": "0x0002",
@@ -4582,7 +4609,7 @@
         "factory_uart": null,
         "compat_spi": "0x0405 M1ESP_BLE_HID_INIT"
       },
-      "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5 (contract review 5 item 1): stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B. DISABLED group gate (capability_id 0x1004, ble_compat_family) remains a separate, orthogonal fact from classification -- List B settles design freedom, not Phase 1 dispatch state."
+      "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5: stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B. DISABLED group gate (capability_id 0x1004, ble_compat_family) remains a separate, orthogonal fact from classification -- List B settles design freedom, not Phase 1 dispatch state."
     },
     {
       "service": "0x0002",
@@ -4635,7 +4662,7 @@
         "factory_uart": null,
         "compat_spi": "0x0406 M1ESP_BLE_HID_KEY"
       },
-      "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5 (contract review 5 item 1): stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B (002-ble-gatt-service.md Sec 4, 002-compatibility-boundary-and-size-gate.md Sec 2)."
+      "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5: stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B."
     },
     {
       "service": "0x0002",
@@ -4681,7 +4708,7 @@
         "factory_uart": null,
         "compat_spi": "0x0407 M1ESP_BLE_HID_STRING"
       },
-      "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5 (contract review 5 item 1): stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B (002-ble-gatt-service.md Sec 4, 002-compatibility-boundary-and-size-gate.md Sec 2)."
+      "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5: stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B."
     },
     {
       "service": "0x0002",
@@ -4727,7 +4754,7 @@
         "factory_uart": null,
         "compat_spi": "0x0408 M1ESP_BLE_HID_SCRIPT"
       },
-      "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5 (contract review 5 item 1): stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B (002-ble-gatt-service.md Sec 4, 002-compatibility-boundary-and-size-gate.md Sec 2)."
+      "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5: stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B."
     },
     {
       "service": "0x0002",
@@ -4777,7 +4804,7 @@
         "factory_uart": null,
         "compat_spi": "0x040B M1ESP_BLE_HID_DEINIT"
       },
-      "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5 (contract review 5 item 1): stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B (002-ble-gatt-service.md Sec 4, 002-compatibility-boundary-and-size-gate.md Sec 2)."
+      "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5: stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B."
     },
     {
       "service": "0x0002",
@@ -4826,7 +4853,7 @@
         "factory_uart": null,
         "compat_spi": "0x040C M1ESP_BLE_HID_STATUS"
       },
-      "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5 (contract review 5 item 1): stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B (002-ble-gatt-service.md Sec 4, 002-compatibility-boundary-and-size-gate.md Sec 2)."
+      "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5: stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B."
     },
     {
       "service": "0x0002",
@@ -4885,7 +4912,7 @@
         "factory_uart": null,
         "compat_spi": "0x040D M1ESP_BLE_SPAM_START"
       },
-      "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5 (contract review 5 item 1): stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B (002-ble-gatt-service.md Sec 4, 002-compatibility-boundary-and-size-gate.md Sec 2)."
+      "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5: stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B."
     },
     {
       "service": "0x0002",
@@ -4935,7 +4962,7 @@
         "factory_uart": null,
         "compat_spi": "0x040E M1ESP_BLE_SPAM_STOP"
       },
-      "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5 (contract review 5 item 1): stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B (002-ble-gatt-service.md Sec 4, 002-compatibility-boundary-and-size-gate.md Sec 2)."
+      "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5: stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B."
     },
     {
       "service": "0x0002",
@@ -5017,7 +5044,7 @@
         "factory_uart": null,
         "compat_spi": "0x0411 M1ESP_BLE_BEACON_START"
       },
-      "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5 (contract review 5 item 1): stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B (002-ble-gatt-service.md Sec 4, 002-compatibility-boundary-and-size-gate.md Sec 2)."
+      "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5: stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B."
     },
     {
       "service": "0x0002",
@@ -5067,7 +5094,7 @@
         "factory_uart": null,
         "compat_spi": "0x0412 M1ESP_BLE_BEACON_STOP"
       },
-      "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5 (contract review 5 item 1): stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B (002-ble-gatt-service.md Sec 4, 002-compatibility-boundary-and-size-gate.md Sec 2)."
+      "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5: stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B."
     },
     {
       "service": "0x0002",
@@ -5112,7 +5139,7 @@
         "factory_uart": null,
         "compat_spi": "0x040F M1ESP_BLE_RPC_ADV"
       },
-      "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5 (contract review 5 item 1): stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B (002-ble-gatt-service.md Sec 4, 002-compatibility-boundary-and-size-gate.md Sec 2)."
+      "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5: stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B."
     },
     {
       "service": "0x0002",
@@ -5168,7 +5195,7 @@
         "factory_uart": null,
         "compat_spi": "0x0410 M1ESP_BLE_STATE"
       },
-      "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5 (contract review 5 item 1): stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B (002-ble-gatt-service.md Sec 4, 002-compatibility-boundary-and-size-gate.md Sec 2)."
+      "notes": "List B -- clean-slate design; DISABLED pending its separate enablement/security/hardware gate. Corrected rework 5: stale rework-1 UNCLASSIFIED label, superseded by the user's 2026-09-04 Classification Decision approving the full BLE compatibility family into List B."
     },
     {
       "service": "0x0003",
@@ -5593,7 +5620,7 @@
         "factory_uart": "subscribe <handle> / indicate <handle>",
         "compat_spi": null
       },
-      "notes": "Rework 2 review item 10: GATT_VALUE_EVENT deliberately has no visible_drop_count field of its own -- GATT_DROP_EVENT is the explicit, per-connection drop-accounting mechanism for this event stream (a more precise mechanism than the generic progress-queue coalescing counter), documented here as the event's specific, non-universal overflow behavior."
+      "notes": "GATT_VALUE_EVENT deliberately has no visible_drop_count field of its own -- GATT_DROP_EVENT is the explicit, per-connection drop-accounting mechanism for this event stream (a more precise mechanism than the generic progress-queue coalescing counter), documented here as the event's specific, non-universal overflow behavior."
     },
     {
       "service": "0x0003",
@@ -5792,7 +5819,7 @@
         "cancellable": false,
         "idempotent": true,
         "repeat_stop_emits_terminal_event": false,
-        "idempotent_note": "repeat STOP returns the already-recorded final_state/final_status/final_reason and does not re-emit CAPTURE_STOPPED, per 002-canonical-core-contract.md Sec 4.2's general idempotent-STOP rule",
+        "idempotent_note": "repeat STOP returns the already-recorded final_state/final_status/final_reason and does not re-emit CAPTURE_STOPPED, per the canonical contract's general idempotent-STOP rule",
         "persistent_effects": "none",
         "stop_owner": "n/a (is the stop)",
         "cleanup": "releases M lease"
@@ -6383,7 +6410,7 @@
         "factory_uart": "services (nested [CHR] rows)",
         "compat_spi": null
       },
-      "notes": "RC8 independent audit P0-6 'BLE connection discovery lacks nested service/char/descriptor counts/listing': new, purely additive opcode (does not modify GATT_DISCOVER/any existing opcode's command ID or framing) enumerating characteristics of one already-discovered service's handle range. properties is the raw ATT/GATT properties octet (bit0=Broadcast,1=Read,2=WriteNoResp,3=Write,4=Notify,5=Indicate,6=AuthSignedWrite,7=ExtendedProps)."
+      "notes": "'BLE connection discovery lacks nested service/char/descriptor counts/listing': new, purely additive opcode (does not modify GATT_DISCOVER/any existing opcode's command ID or framing) enumerating characteristics of one already-discovered service's handle range. properties is the raw ATT/GATT properties octet (bit0=Broadcast,1=Read,2=WriteNoResp,3=Write,4=Notify,5=Indicate,6=AuthSignedWrite,7=ExtendedProps)."
     },
     {
       "service": "0x0003",
@@ -6464,7 +6491,1184 @@
         "factory_uart": "services (nested [DSC] rows)",
         "compat_spi": null
       },
-      "notes": "RC8 independent audit P0-6, companion to GATT_DISCOVER_CHARS: new, purely additive opcode enumerating descriptors of one already-discovered characteristic's handle range (val_handle+1 .. containing service's end_handle, matching gatt_subscribe's own established CCCD-search-range contract)."
+      "notes": "companion to GATT_DISCOVER_CHARS: new, purely additive opcode enumerating descriptors of one already-discovered characteristic's handle range (val_handle+1 .. containing service's end_handle, matching gatt_subscribe's own established CCCD-search-range contract)."
+    },
+    {
+      "service": "0x0006",
+      "opcode": "0x0001",
+      "name": "ESPNOW_START",
+      "lifecycle": "ACCEPTED_ASYNC",
+      "request_fields": [
+        {
+          "name": "channel",
+          "type": "u8"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "operation_token",
+          "type": "u32"
+        }
+      ],
+      "events": [
+        {
+          "name": "ESPNOW_STOPPED",
+          "kind": "TERMINAL",
+          "fields": [
+            {
+              "name": "operation_token",
+              "type": "u32"
+            },
+            {
+              "name": "status",
+              "type": "u8"
+            },
+            {
+              "name": "sent_ok",
+              "type": "u32"
+            },
+            {
+              "name": "received",
+              "type": "u32"
+            }
+          ]
+        }
+      ],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "ACCEPTED",
+          "INVALID_ARGUMENT",
+          "BUSY"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 2000,
+        "cancellable": true,
+        "idempotent": false,
+        "persistent_effects": "none",
+        "stop_owner": "caller via ESPNOW_STOP",
+        "cleanup": "ESP-NOW deinitialised, peers forgotten, ESPNOW lease released, prior radio mode restored"
+      },
+      "resource_class": "ESPNOW",
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_spi": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_spi": null
+      },
+      "notes": "ESP-NOW shares the 2.4GHz Wi-Fi radio, so it holds the ESPNOW arbiter class for its whole session and serializes against every Wi-Fi class. channel 1..13."
+    },
+    {
+      "service": "0x0006",
+      "opcode": "0x0002",
+      "name": "ESPNOW_STOP",
+      "lifecycle": "SYNCHRONOUS",
+      "request_fields": [
+        {
+          "name": "operation_token",
+          "type": "u32"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "final_state",
+          "type": "u8"
+        },
+        {
+          "name": "final_status",
+          "type": "u8"
+        }
+      ],
+      "events": [],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "OK",
+          "NOT_FOUND"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 2000,
+        "cancellable": false,
+        "idempotent": true,
+        "persistent_effects": "none",
+        "stop_owner": "n/a",
+        "cleanup": "releases the ESPNOW lease"
+      },
+      "resource_class": null,
+      "no_radio_lease": true,
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_spi": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_spi": null
+      },
+      "notes": ""
+    },
+    {
+      "service": "0x0006",
+      "opcode": "0x0003",
+      "name": "ESPNOW_ADD_PEER",
+      "lifecycle": "SYNCHRONOUS",
+      "request_fields": [
+        {
+          "name": "peer",
+          "type": "mac6"
+        },
+        {
+          "name": "channel",
+          "type": "u8"
+        },
+        {
+          "name": "encrypt",
+          "type": "bool"
+        },
+        {
+          "name": "lmk",
+          "type": "bytes",
+          "max": 16,
+          "len_prefix": "u8"
+        }
+      ],
+      "response_fields": [],
+      "events": [],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "OK",
+          "INVALID_ARGUMENT",
+          "NOT_READY",
+          "OVERFLOW"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 2000,
+        "cancellable": false,
+        "idempotent": true,
+        "persistent_effects": "none",
+        "stop_owner": "n/a",
+        "cleanup": "n/a"
+      },
+      "resource_class": null,
+      "no_radio_lease": true,
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_spi": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_spi": null
+      },
+      "notes": "Peers are bounded by the ESP-NOW peer table; a full table returns OVERFLOW. An encrypted peer requires a 16-byte local master key."
+    },
+    {
+      "service": "0x0006",
+      "opcode": "0x0004",
+      "name": "ESPNOW_SEND",
+      "lifecycle": "SYNCHRONOUS",
+      "request_fields": [
+        {
+          "name": "peer",
+          "type": "mac6"
+        },
+        {
+          "name": "data",
+          "type": "bytes",
+          "max": 250,
+          "len_prefix": "u8"
+        }
+      ],
+      "response_fields": [],
+      "events": [],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "OK",
+          "INVALID_ARGUMENT",
+          "NOT_READY",
+          "IO_ERROR"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 2000,
+        "cancellable": false,
+        "idempotent": true,
+        "persistent_effects": "none",
+        "stop_owner": "n/a",
+        "cleanup": "n/a"
+      },
+      "resource_class": null,
+      "no_radio_lease": true,
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_spi": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_spi": null
+      },
+      "notes": "250 bytes is the ESP-NOW maximum payload. An all-zero peer address broadcasts."
+    },
+    {
+      "service": "0x0006",
+      "opcode": "0x0005",
+      "name": "ESPNOW_POLL_RECV",
+      "lifecycle": "SYNCHRONOUS",
+      "request_fields": [],
+      "events": [],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "OK",
+          "NOT_READY"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 2000,
+        "cancellable": false,
+        "idempotent": true,
+        "persistent_effects": "none",
+        "stop_owner": "n/a",
+        "cleanup": "n/a"
+      },
+      "resource_class": null,
+      "no_radio_lease": true,
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_spi": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_spi": null
+      },
+      "notes": "Drains one buffered inbound frame. Mirrors CAPTURE_POLL_READ: a bounded ring is filled by the receive callback and drained here, so no unbounded buffering occurs.",
+      "response_fields_tagged": {
+        "tag_field": "tag",
+        "tag_type": "u8",
+        "variants": {
+          "0": {
+            "name": "EMPTY",
+            "fields": []
+          },
+          "1": {
+            "name": "RECORD",
+            "fields": [
+              {
+                "name": "src",
+                "type": "mac6"
+              },
+              {
+                "name": "rssi",
+                "type": "i8"
+              },
+              {
+                "name": "data",
+                "type": "bytes",
+                "max": 250,
+                "len_prefix": "u8"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "service": "0x0006",
+      "opcode": "0x0006",
+      "name": "ESPNOW_STATS",
+      "lifecycle": "SYNCHRONOUS",
+      "request_fields": [],
+      "response_fields": [
+        {
+          "name": "sent_ok",
+          "type": "u32"
+        },
+        {
+          "name": "send_fail",
+          "type": "u32"
+        },
+        {
+          "name": "received",
+          "type": "u32"
+        },
+        {
+          "name": "dropped",
+          "type": "u32"
+        }
+      ],
+      "events": [],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "OK",
+          "NOT_READY"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 2000,
+        "cancellable": false,
+        "idempotent": true,
+        "persistent_effects": "none",
+        "stop_owner": "n/a",
+        "cleanup": "n/a"
+      },
+      "resource_class": null,
+      "no_radio_lease": true,
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_spi": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_spi": null
+      },
+      "notes": ""
+    },
+    {
+      "service": "0x0007",
+      "opcode": "0x0001",
+      "name": "IEEE154_START",
+      "lifecycle": "ACCEPTED_ASYNC",
+      "request_fields": [
+        {
+          "name": "channel",
+          "type": "u8"
+        },
+        {
+          "name": "promiscuous",
+          "type": "bool"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "operation_token",
+          "type": "u32"
+        }
+      ],
+      "events": [
+        {
+          "name": "IEEE154_STOPPED",
+          "kind": "TERMINAL",
+          "fields": [
+            {
+              "name": "operation_token",
+              "type": "u32"
+            },
+            {
+              "name": "status",
+              "type": "u8"
+            },
+            {
+              "name": "frames_received",
+              "type": "u32"
+            },
+            {
+              "name": "frames_dropped",
+              "type": "u32"
+            }
+          ]
+        }
+      ],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "ACCEPTED",
+          "INVALID_ARGUMENT",
+          "BUSY"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 5000,
+        "cancellable": true,
+        "idempotent": false,
+        "persistent_effects": "none",
+        "stop_owner": "caller via IEEE154_STOP",
+        "cleanup": "radio disabled, receive ring reset, IEEE154 lease released"
+      },
+      "resource_class": "IEEE154",
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_spi": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_spi": null
+      },
+      "notes": "Channels 11..26 (2.4GHz O-QPSK). Holds the IEEE154 class for the whole session; serialized against Wi-Fi and ESP-NOW because the ESP32-C6 has one 2.4GHz radio."
+    },
+    {
+      "service": "0x0007",
+      "opcode": "0x0002",
+      "name": "IEEE154_STOP",
+      "lifecycle": "SYNCHRONOUS",
+      "request_fields": [
+        {
+          "name": "operation_token",
+          "type": "u32"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "final_state",
+          "type": "u8"
+        },
+        {
+          "name": "final_status",
+          "type": "u8"
+        }
+      ],
+      "events": [],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "OK",
+          "NOT_FOUND"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 5000,
+        "cancellable": false,
+        "idempotent": true,
+        "persistent_effects": "none",
+        "stop_owner": "n/a",
+        "cleanup": "releases the IEEE154 lease"
+      },
+      "resource_class": null,
+      "no_radio_lease": true,
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_spi": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_spi": null
+      },
+      "notes": ""
+    },
+    {
+      "service": "0x0007",
+      "opcode": "0x0003",
+      "name": "IEEE154_STATUS",
+      "lifecycle": "SYNCHRONOUS",
+      "request_fields": [],
+      "response_fields": [
+        {
+          "name": "state",
+          "type": "u8"
+        },
+        {
+          "name": "channel",
+          "type": "u8"
+        },
+        {
+          "name": "promiscuous",
+          "type": "bool"
+        },
+        {
+          "name": "frames_received",
+          "type": "u32"
+        },
+        {
+          "name": "frames_dropped",
+          "type": "u32"
+        },
+        {
+          "name": "frames_transmitted",
+          "type": "u32"
+        },
+        {
+          "name": "tx_failures",
+          "type": "u32"
+        }
+      ],
+      "events": [],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "OK"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 5000,
+        "cancellable": false,
+        "idempotent": true,
+        "persistent_effects": "none",
+        "stop_owner": "n/a",
+        "cleanup": "n/a"
+      },
+      "resource_class": null,
+      "no_radio_lease": true,
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_spi": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_spi": null
+      },
+      "notes": ""
+    },
+    {
+      "service": "0x0007",
+      "opcode": "0x0004",
+      "name": "IEEE154_SET_CHANNEL",
+      "lifecycle": "SYNCHRONOUS",
+      "request_fields": [
+        {
+          "name": "channel",
+          "type": "u8"
+        }
+      ],
+      "response_fields": [],
+      "events": [],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "OK",
+          "INVALID_ARGUMENT",
+          "NOT_READY",
+          "IO_ERROR"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 5000,
+        "cancellable": false,
+        "idempotent": true,
+        "persistent_effects": "none",
+        "stop_owner": "n/a",
+        "cleanup": "n/a"
+      },
+      "resource_class": null,
+      "no_radio_lease": true,
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_spi": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_spi": null
+      },
+      "notes": "Retunes a live session without restarting it."
+    },
+    {
+      "service": "0x0007",
+      "opcode": "0x0005",
+      "name": "IEEE154_ENERGY_SCAN",
+      "lifecycle": "ACCEPTED_ASYNC",
+      "request_fields": [
+        {
+          "name": "channel_mask",
+          "type": "u32"
+        },
+        {
+          "name": "dwell_ms",
+          "type": "u16"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "operation_token",
+          "type": "u32"
+        }
+      ],
+      "events": [
+        {
+          "name": "IEEE154_ENERGY_RESULT",
+          "kind": "TERMINAL",
+          "fields": [
+            {
+              "name": "operation_token",
+              "type": "u32"
+            },
+            {
+              "name": "status",
+              "type": "u8"
+            },
+            {
+              "name": "results",
+              "type": "array",
+              "max": 16,
+              "len_prefix": "u8",
+              "elem": {
+                "type": "struct",
+                "fields": [
+                  {
+                    "name": "channel",
+                    "type": "u8"
+                  },
+                  {
+                    "name": "peak_rssi",
+                    "type": "i8"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "ACCEPTED",
+          "INVALID_ARGUMENT",
+          "BUSY"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 5000,
+        "cancellable": true,
+        "idempotent": false,
+        "persistent_effects": "none",
+        "stop_owner": "caller via IEEE154_STOP",
+        "cleanup": "radio disabled, IEEE154 lease released"
+      },
+      "resource_class": "IEEE154",
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_spi": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_spi": null
+      },
+      "notes": "channel_mask bit N selects channel N (bits 11..26 legal). Per-channel peak energy over dwell_ms."
+    },
+    {
+      "service": "0x0007",
+      "opcode": "0x0006",
+      "name": "IEEE154_TX",
+      "lifecycle": "SYNCHRONOUS",
+      "request_fields": [
+        {
+          "name": "data",
+          "type": "bytes",
+          "max": 127,
+          "len_prefix": "u8"
+        },
+        {
+          "name": "cca",
+          "type": "bool"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "tx_status",
+          "type": "u8"
+        }
+      ],
+      "events": [],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "OK",
+          "INVALID_ARGUMENT",
+          "NOT_READY",
+          "IO_ERROR"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 5000,
+        "cancellable": false,
+        "idempotent": true,
+        "persistent_effects": "none",
+        "stop_owner": "n/a",
+        "cleanup": "n/a"
+      },
+      "resource_class": null,
+      "no_radio_lease": true,
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_spi": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_spi": null
+      },
+      "notes": "Raw PHY payload, 1..127 bytes per IEEE 802.15.4 aMaxPHYPacketSize. The caller supplies the full MPDU; Core does not synthesise headers, so any 802.15.4-based protocol can be driven from the host."
+    },
+    {
+      "service": "0x0007",
+      "opcode": "0x0007",
+      "name": "IEEE154_POLL_RECV",
+      "lifecycle": "SYNCHRONOUS",
+      "request_fields": [],
+      "events": [],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "OK",
+          "NOT_READY"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 5000,
+        "cancellable": false,
+        "idempotent": true,
+        "persistent_effects": "none",
+        "stop_owner": "n/a",
+        "cleanup": "n/a"
+      },
+      "resource_class": null,
+      "no_radio_lease": true,
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_spi": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_spi": null
+      },
+      "notes": "Drains one received frame with its metadata. Bounded ring; overflow drops oldest and is counted.",
+      "response_fields_tagged": {
+        "tag_field": "tag",
+        "tag_type": "u8",
+        "variants": {
+          "0": {
+            "name": "EMPTY",
+            "fields": []
+          },
+          "1": {
+            "name": "RECORD",
+            "fields": [
+              {
+                "name": "timestamp_us",
+                "type": "u64"
+              },
+              {
+                "name": "channel",
+                "type": "u8"
+              },
+              {
+                "name": "rssi",
+                "type": "i8"
+              },
+              {
+                "name": "lqi",
+                "type": "u8"
+              },
+              {
+                "name": "flags",
+                "type": "u8"
+              },
+              {
+                "name": "original_len",
+                "type": "u16"
+              },
+              {
+                "name": "data",
+                "type": "bytes",
+                "max": 127,
+                "len_prefix": "u8"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "service": "0x0007",
+      "opcode": "0x0008",
+      "name": "IEEE154_RCP_START",
+      "lifecycle": "ACCEPTED_ASYNC",
+      "request_fields": [],
+      "response_fields": [
+        {
+          "name": "operation_token",
+          "type": "u32"
+        }
+      ],
+      "events": [
+        {
+          "name": "IEEE154_RCP_STOPPED",
+          "kind": "TERMINAL",
+          "fields": [
+            {
+              "name": "operation_token",
+              "type": "u32"
+            },
+            {
+              "name": "status",
+              "type": "u8"
+            }
+          ]
+        }
+      ],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "ACCEPTED",
+          "BUSY",
+          "NOT_READY"
+        ],
+        "deadline_default_ms": 3000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 10000,
+        "cancellable": true,
+        "idempotent": false,
+        "persistent_effects": "none",
+        "stop_owner": "caller via IEEE154_RCP_STOP",
+        "cleanup": "OpenThread deinitialised, Spinel UART released, IEEE154 lease released"
+      },
+      "resource_class": "IEEE154",
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_spi": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_spi": null
+      },
+      "notes": "Hands the radio to the OpenThread Radio Co-Processor runtime. The host runs the Thread stack over Spinel; Core runs no Thread application stack. Holds the IEEE154 class, so it cannot overlap the raw radio service, capture, Wi-Fi or ESP-NOW."
+    },
+    {
+      "service": "0x0007",
+      "opcode": "0x0009",
+      "name": "IEEE154_RCP_STOP",
+      "lifecycle": "SYNCHRONOUS",
+      "request_fields": [
+        {
+          "name": "operation_token",
+          "type": "u32"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "final_state",
+          "type": "u8"
+        },
+        {
+          "name": "final_status",
+          "type": "u8"
+        }
+      ],
+      "events": [],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "OK",
+          "NOT_FOUND"
+        ],
+        "deadline_default_ms": 3000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 10000,
+        "cancellable": false,
+        "idempotent": true,
+        "persistent_effects": "none",
+        "stop_owner": "n/a",
+        "cleanup": "releases the IEEE154 lease"
+      },
+      "resource_class": null,
+      "no_radio_lease": true,
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_spi": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_spi": null
+      },
+      "notes": ""
+    },
+    {
+      "service": "0x0007",
+      "opcode": "0x000A",
+      "name": "IEEE154_RCP_STATUS",
+      "lifecycle": "SYNCHRONOUS",
+      "request_fields": [],
+      "response_fields": [
+        {
+          "name": "running",
+          "type": "bool"
+        },
+        {
+          "name": "host_link",
+          "type": "u8"
+        },
+        {
+          "name": "baud_rate",
+          "type": "u32"
+        }
+      ],
+      "events": [],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "OK"
+        ],
+        "deadline_default_ms": 3000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 10000,
+        "cancellable": false,
+        "idempotent": true,
+        "persistent_effects": "none",
+        "stop_owner": "n/a",
+        "cleanup": "n/a"
+      },
+      "resource_class": null,
+      "no_radio_lease": true,
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_spi": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_spi": null
+      },
+      "notes": "host_link: 0=none, 1=UART Spinel. Diagnostic; capability negotiation remains authoritative."
+    },
+    {
+      "service": "0x0007",
+      "opcode": "0x000B",
+      "name": "IEEE154_CAPTURE_START",
+      "lifecycle": "ACCEPTED_ASYNC",
+      "request_fields": [
+        {
+          "name": "mode",
+          "type": "u8"
+        },
+        {
+          "name": "channel",
+          "type": "u8"
+        },
+        {
+          "name": "channel_mask",
+          "type": "u32"
+        },
+        {
+          "name": "hop_dwell_ms",
+          "type": "u16"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "operation_token",
+          "type": "u32"
+        }
+      ],
+      "events": [
+        {
+          "name": "IEEE154_CAPTURE_STOPPED",
+          "kind": "TERMINAL",
+          "fields": [
+            {
+              "name": "operation_token",
+              "type": "u32"
+            },
+            {
+              "name": "status",
+              "type": "u8"
+            },
+            {
+              "name": "frames_received",
+              "type": "u32"
+            },
+            {
+              "name": "frames_dropped",
+              "type": "u32"
+            },
+            {
+              "name": "hop_count",
+              "type": "u32"
+            }
+          ]
+        }
+      ],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "ACCEPTED",
+          "INVALID_ARGUMENT",
+          "BUSY"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 5000,
+        "cancellable": true,
+        "idempotent": false,
+        "persistent_effects": "none",
+        "stop_owner": "caller via IEEE154_CAPTURE_STOP",
+        "cleanup": "radio disabled, receive ring reset, IEEE154 lease released"
+      },
+      "resource_class": "IEEE154",
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_spi": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_spi": null
+      },
+      "notes": "mode 0 = fixed channel (uses `channel`), mode 1 = hopping over `channel_mask` with `hop_dwell_ms` per channel. Frames are drained through IEEE154_POLL_RECV, which already carries the PCAP metadata (SFD timestamp, channel, RSSI, LQI, original length, truncation). Core preserves complete MPDUs and decodes no application protocol."
+    },
+    {
+      "service": "0x0007",
+      "opcode": "0x000C",
+      "name": "IEEE154_CAPTURE_STOP",
+      "lifecycle": "SYNCHRONOUS",
+      "request_fields": [
+        {
+          "name": "operation_token",
+          "type": "u32"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "final_state",
+          "type": "u8"
+        },
+        {
+          "name": "final_status",
+          "type": "u8"
+        }
+      ],
+      "events": [],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "OK",
+          "NOT_FOUND"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 5000,
+        "cancellable": false,
+        "idempotent": true,
+        "persistent_effects": "none",
+        "stop_owner": "n/a",
+        "cleanup": "releases the IEEE154 lease"
+      },
+      "resource_class": null,
+      "no_radio_lease": true,
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_spi": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_spi": null
+      },
+      "notes": ""
+    },
+    {
+      "service": "0x0007",
+      "opcode": "0x000D",
+      "name": "IEEE154_CAPTURE_STATUS",
+      "lifecycle": "SYNCHRONOUS",
+      "request_fields": [],
+      "response_fields": [
+        {
+          "name": "state",
+          "type": "u8"
+        },
+        {
+          "name": "mode",
+          "type": "u8"
+        },
+        {
+          "name": "channel",
+          "type": "u8"
+        },
+        {
+          "name": "frames_received",
+          "type": "u32"
+        },
+        {
+          "name": "frames_dropped",
+          "type": "u32"
+        },
+        {
+          "name": "hop_count",
+          "type": "u32"
+        }
+      ],
+      "events": [],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "OK"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 5000,
+        "cancellable": false,
+        "idempotent": true,
+        "persistent_effects": "none",
+        "stop_owner": "n/a",
+        "cleanup": "n/a"
+      },
+      "resource_class": null,
+      "no_radio_lease": true,
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_spi": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_spi": null
+      },
+      "notes": ""
+    },
+    {
+      "service": "0x0000",
+      "opcode": "0x000A",
+      "name": "GET_API_IDENTITY",
+      "lifecycle": "SYNCHRONOUS",
+      "request_fields": [],
+      "response_fields": [
+        {
+          "name": "api_major",
+          "type": "u8"
+        },
+        {
+          "name": "api_minor",
+          "type": "u8"
+        },
+        {
+          "name": "variant_id",
+          "type": "u8"
+        },
+        {
+          "name": "capability_count",
+          "type": "u16"
+        },
+        {
+          "name": "variant_name",
+          "type": "bytes",
+          "max": 24,
+          "len_prefix": "u8"
+        }
+      ],
+      "events": [],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "OK"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 5000,
+        "cancellable": false,
+        "idempotent": true,
+        "persistent_effects": "none",
+        "stop_owner": "n/a",
+        "cleanup": "n/a"
+      },
+      "resource_class": null,
+      "no_radio_lease": true,
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "SUPPORTED",
+        "compat_spi": "SUPPORTED"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_spi": null
+      },
+      "notes": "Stable Core host-contract identity, present in every image. api_minor increments for additive, backward-compatible capability growth; api_major increments only for a change that breaks an existing host contract. variant_id/variant_name are diagnostic only -- capability negotiation via GET_CAPABILITIES remains authoritative and a host must never gate features on the variant name."
     }
   ],
   "wifi_settings_schema": {
@@ -6493,10 +7697,10 @@
         "ref": "IpConfig"
       }
     ],
-    "persistence_state_rework2": "DISABLED -- rework 2 review item 13: no partition-compatible at-rest key/encryption policy has been frozen anywhere in this task or its Task 001 evidence base, so PERSISTENT is marked DISABLED (not SUPPORTED-but-aspirational) until a dedicated settings-service task freezes that policy. VOLATILE remains the only supported persistence mode for STA_CONNECT in Phase 1 (002-wifi-service.md Sec 2.6.1)."
+    "persistence_state_rework2": "DISABLED -- no partition-compatible at-rest key/encryption policy has been frozen anywhere in or its Task 001 evidence base, so PERSISTENT is marked DISABLED (not SUPPORTED-but-aspirational) until a dedicated settings-service task freezes that policy. VOLATILE remains the only supported persistence mode for STA_CONNECT in Phase 1."
   },
   "compat_ledger_summary": {
-    "_note": "Full per-command/event ledger with source support, canonical owner, adapter policy, and gate lives in 002-adapter-translation-matrix.md Sec 5 (prose, not duplicated here as machine data). Counts below are a machine-checkable summary. Recomputed rework 4 (contract review 4 item 1): System 9 + WiFi-station 7 + WiFi-AP 3 + Offensive-WiFi 26 + BLE 19 + Zigbee 9 + ESP-NOW 6 + Screen/qMon 4 = 83 commands; 15 events (0xE001-0xE0FF). 13 commands (3 SoftAP + 2 probe + 1 PMKID + 2 karma + 1 raw TX + 4 captive portal) moved from unclassified_or_reserved into canonically_mapped that rework. Recomputed again this rework (User Classification Decision / contract review 8 items 2-3, 2026-09-04): SNTP_SYNC + WIFI_GET_MODE + WIFI_SET_MODE + WIFI_GET_MAC (4 commands) move from unclassified_or_reserved into canonically_mapped -- total command count (83) is unchanged (these four were already counted in the 83, only their disposition moves).",
+    "_note": "Full per-command/event ledger with source support, canonical owner, adapter policy, and gate lives in the canonical contract (prose, not duplicated here as machine data). Counts below are a machine-checkable summary. Recomputed rework 4: System 9 + WiFi-station 7 + WiFi-AP 3 + Offensive-WiFi 26 + BLE 19 + Zigbee 9 + ESP-NOW 6 + Screen/qMon 4 = 83 commands; 15 events (0xE001-0xE0FF). 13 commands (3 SoftAP + 2 probe + 1 PMKID + 2 karma + 1 raw TX + 4 captive portal) moved from unclassified_or_reserved into canonically_mapped that rework. Recomputed again (User Classification Decision / the canonical contract 8 items 2-3, 2026-09-04): SNTP_SYNC + WIFI_GET_MODE + WIFI_SET_MODE + WIFI_GET_MAC (4 commands) move from unclassified_or_reserved into canonically_mapped -- total command count (83) is unchanged (these four were already counted in the 83, only their disposition moves).",
     "total_m1esp_commands_0x00xx_through_0x07xx": 83,
     "total_m1esp_events_0xExxx": 15,
     "canonically_mapped_commands": 59,
@@ -6605,8 +7809,14 @@
         "family": "qMonstatek/screen host bridge",
         "capability_id_name": "host_bridge",
         "capability_id_hex": "0x1003",
-        "reason": "no host-bridge service infrastructure exists in this release; a dedicated future design task is required (contract review 4 item 2)"
+        "reason": "no host-bridge service infrastructure exists in this release; a dedicated future design task is required"
       }
     ]
+  },
+  "arbiter_reserved_classes": [],
+  "core_host_api": {
+    "api_major": 1,
+    "api_minor": 0,
+    "compatibility": "api_minor increments when capabilities are added without breaking an existing host contract: new opcodes, new capability IDs, or an opcode moving from UNAVAILABLE to SUPPORTED in some image. api_major increments only for a change that breaks an existing host contract: a removed or renumbered opcode, an incompatible request/response shape, or changed semantics for an existing opcode. Hosts must negotiate features through GET_CAPABILITIES and must never branch on variant_id or variant_name."
   }
 }

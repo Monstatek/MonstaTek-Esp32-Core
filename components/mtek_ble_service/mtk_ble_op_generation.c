@@ -1,6 +1,5 @@
-/* Clean-room implementation from MonstaTek contract. See
- * mtk_ble_op_generation.h for the design rationale (RC8 independent audit
- * P0-4 "Fix NimBLE timeout/late-callback ABA hazards"). */
+/* Clean-room implementation from MonstaTek contract. See mtk_ble_op_generation.h
+ * for the design rationale. */
 #include "mtk_ble_op_generation.h"
 
 void mtk_ble_op_generation_init(mtk_ble_op_generation_t *g) {

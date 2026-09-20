@@ -1,16 +1,14 @@
-/* RC12 blocker round, item 1 "cross-operation-token family validation":
- * adversarial proof of the mtk_op_*_family core APIs -- the exact atomic
- * primitives every feature-specific token-addressed STOP/STATUS/READ/
- * session-info/stats handler now gates on. Mints one operation token per
- * family (using each family's real (service_id, START opcode)) and proves:
- *   - validate/snapshot/transition/claim accept ONLY the matching family;
- *   - a wrong-family (or wrong-epoch, or zero) token is rejected with NO
- *     mutation of the record's state (the defect this closes: a foreign
- *     token was found and acted upon);
- *   - a rejected transition/claim leaves the targeted record and every
- *     other family's record completely unchanged.
- * Every family used by a converted handler is represented, so "every
- * operation family" is covered concretely. */
+/* Adversarial proof of the
+ * mtk_op_*_family core APIs -- the exact atomic primitives every
+ * feature-specific token-addressed STOP/STATUS/READ/ session-info/stats handler
+ * now gates on. Mints one operation token per family (using each family's real
+ * (service_id, START opcode)) and proves: - validate/snapshot/transition/claim
+ * accept ONLY the matching family; - a wrong-family (or wrong-epoch, or zero)
+ * token is rejected with NO mutation of the record's state (the defect this
+ * closes: a foreign token was found and acted upon); - a rejected
+ * transition/claim leaves the targeted record and every other family's record
+ * completely unchanged. Every family used by a converted handler is represented,
+ * so "every operation family" is covered concretely. */
 #include "mtk_test.h"
 #include "mtek_core.h"
 #include <string.h>
@@ -56,7 +54,7 @@ MTK_TEST_MAIN_BEGIN
         minted++;
     }
 
-    /* ---- validate_family: every token matches ONLY its own family. ---- */
+    /* validate_family: every token matches ONLY its own family. -- */
     for (unsigned i = 0; i < minted; i++) {
         MTK_CHECK_EQ(mtk_op_validate_family(tok[i], epoch, FAMILIES[i].svc, FAMILIES[i].start_op), 1);
         /* Against every OTHER family (different service and/or opcode): reject. */
@@ -70,7 +68,7 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(mtk_op_validate_family(0, epoch, FAMILIES[i].svc, FAMILIES[i].start_op), 0);
     }
 
-    /* ---- snapshot_family: wrong family returns 0 and does NOT write out. ---- */
+    /* snapshot_family: wrong family returns 0 and does NOT write out. -- */
     {
         mtk_operation_record_t snap; memset(&snap, 0, sizeof(snap)); snap.token = 0xDEADBEEFu;
         /* AP_SCAN token (index 0) asked for as STA_SCAN (index 1) family. */
@@ -81,7 +79,7 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(snap.state, MTK_OPS_ACCEPTED);
     }
 
-    /* ---- transition_by_token_family: a wrong-family STOP does NOT mutate. ---- */
+    /* transition_by_token_family: a wrong-family STOP does NOT mutate. -- */
     {
         /* Try to STOP the AP_SCAN token via the DEAUTH family (index 2). */
         MTK_CHECK_EQ(mtk_op_transition_by_token_family(tok[0], epoch, FAMILIES[2].svc, FAMILIES[2].start_op,
@@ -96,7 +94,7 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(snap.state, MTK_OPS_RUNNING);
     }
 
-    /* ---- claim_finalization_family: wrong family does NOT claim. ---- */
+    /* claim_finalization_family: wrong family does NOT claim. -- */
     {
         /* STA_SCAN token (index 1) claimed via AP_SCAN family: rejected. */
         MTK_CHECK_EQ(mtk_op_claim_finalization_family(tok[1], epoch, FAMILIES[0].svc, FAMILIES[0].start_op), 0);
@@ -110,7 +108,7 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(mtk_op_claim_finalization_family(tok[1], epoch, FAMILIES[1].svc, FAMILIES[1].start_op), 0);
     }
 
-    /* ---- every OTHER family's record is untouched by all of the above. ---- */
+    /* every OTHER family's record is untouched by all of the above. -- */
     for (unsigned i = 2; i < minted; i++) {
         mtk_operation_record_t snap;
         MTK_CHECK(mtk_op_snapshot(tok[i], epoch, &snap));
@@ -119,9 +117,8 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(snap.opcode, FAMILIES[i].start_op);
     }
 
-    /* ---- the 9th family (TIME_SYNC) validates against one of the 8 minted
-     * tokens: a TIME_SYNC family query on any Wi-Fi/BLE/capture token is
-     * rejected. ---- */
+    /* the 9th family (TIME_SYNC) validates against one of the 8 minted tokens: a
+     * TIME_SYNC family query on any Wi-Fi/BLE/capture token is rejected. -- */
     MTK_CHECK_EQ(mtk_op_validate_family(tok[0], epoch, SVC_SYS, 0x0008), 0);
     MTK_CHECK_EQ(mtk_op_validate_family(tok[4], epoch, SVC_SYS, 0x0008), 0);
 

@@ -1,13 +1,12 @@
-/* RC7 independent audit item 3 "RETRY/latest-eight duplicate cache" and
- * "epoch reset" (SPI_PROTOCOL_V1.md "Correlation and duplicate safety" /
- * "Reset and resynchronization"): proves the real three-stage duplicate-
- * safety lookup dispatch_complete_message performs for side-effecting
- * (non-idempotent) opcodes -- a still-active pending[] retry answers
- * IDLE without re-dispatching, a completed-response cache hit replays the
- * cached response (same operation_token, no fresh mtk_router_dispatch),
- * a same-request-ID/different-content collision is a protocol error, and
- * a genuine HELLO boot_epoch change invalidates the cache/pending table
- * so a stale-epoch request_id collision cannot resurrect old state. */
+/* And "epoch reset" (SPI_PROTOCOL_V1.md "Correlation and duplicate safety" /
+ * "Reset and resynchronization"): proves the real three-stage duplicate- safety
+ * lookup dispatch_complete_message performs for side-effecting (non-idempotent)
+ * opcodes -- a still-active pending[] retry answers IDLE without re-dispatching,
+ * a completed-response cache hit replays the cached response (same
+ * operation_token, no fresh mtk_router_dispatch), a
+ * same-request-ID/different-content collision is a protocol error, and a genuine
+ * HELLO boot_epoch change invalidates the cache/pending table so a stale-epoch
+ * request_id collision cannot resurrect old state. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtek_spi_native_dispatch.h"
@@ -26,15 +25,13 @@
 static uint64_t s_now = 1000;
 static uint64_t now_ms(void) { return s_now; }
 
-/* Release-tooling-round P0 correction (independent audit, "Native SPI
- * confuses the STM32 and ESP boot epochs"): deliberately DISTINCT from every
- * peer/dctx epoch value this file uses (0x1234, 0x5678) -- proves the ESP's
- * own canonical epoch (mtk_core_boot_epoch()) is used for operation-token
- * dispatch/lookup and ESP-originated wire stamping regardless of what the
- * peer's own HELLO epoch is or later changes to, closing the exact gap the
- * audit found: every host test previously used the SAME value for the peer,
- * the dctx seed, and mtk_core, which could never have caught this class of
- * bug. */
+/* Deliberately DISTINCT from every peer/dctx epoch value this file uses (0x1234,
+ * 0x5678) -- proves the ESP's own canonical epoch (mtk_core_boot_epoch) is used
+ * for operation-token dispatch/lookup and ESP-originated wire stamping
+ * regardless of what the peer's own HELLO epoch is or later changes to, closing
+ * the exact gap the audit found: every host test previously used the SAME value
+ * for the peer, the dctx seed, and mtk_core, which could never have caught this
+ * class of bug. */
 #define TEST_ESP_BOOT_EPOCH 0x99998888u
 
 static pthread_mutex_t s_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -79,12 +76,12 @@ static void poll_until_response(mtk_spi_native_dispatch_ctx_t *dctx, mtk_spi_nat
  * that happened to hold under normal/ASan scheduling but not under
  * heavier instrumentation (a real TSan run surfaced this exact gap). */
 static void wait_for_deauth_count(unsigned expected) {
-    /* RC11 independent correction order fallout: reads deauth_sent_count
-     * under the same real mutex fake_wifi_send_deauth's own write now
-     * goes through (mtk_fake_wifi_set_lock, registered above) -- a plain
-     * unsynchronized read here would still be a genuine TSan-flagged race
-     * even after the write side is locked, since nothing would establish
-     * a happens-before edge between them otherwise. */
+    /* Fallout: reads deauth_sent_count under the same real mutex
+     * fake_wifi_send_deauth's own write now goes through
+     * (mtk_fake_wifi_set_lock, registered above) -- a plain unsynchronized read
+     * here would still be a genuine TSan-flagged race even after the write side
+     * is locked, since nothing would establish a happens-before edge between
+     * them otherwise. */
     for (int i = 0; i < 3000; i++) {
         fake_wifi_lock();
         unsigned count = g_fake_wifi.deauth_sent_count;
@@ -129,22 +126,19 @@ MTK_TEST_MAIN_BEGIN
     mtk_arbiter_init();
     mtk_router_init();
     mtk_router_set_lock(router_lock, router_unlock);
-    /* RC11 independent correction order P0 "replace unsafe operation-
-     * record pointer reads with atomic snapshots" verification fallout: a
-     * real TSan run against THIS test's own genuine concurrency (the
-     * DEAUTH_STOP at the bottom of this block can race the pthread_
-     * runner-driven worker's own natural completion, both touching the
+    /* Verification fallout: a real TSan run against THIS test's own genuine
+     * concurrency (the DEAUTH_STOP at the bottom of this block can race the
+     * pthread_ runner-driven worker's own natural completion, both touching the
      * SAME operation record via mtk_op_claim_finalization/mtk_op_
      * transition_by_token) found this test never registered mtk_core_set_
-     * lock/mtek_wifi_service_set_lock/mtk_fake_wifi_set_lock at all -- a
-     * real, previously-undetected gap (this file predates deauth's own
-     * exactly-once finalization fix using a shared claim/cleanup/
-     * transition sequence that made the SAME slot's state field a genuine
-     * cross-thread read+write target here, not merely a single atomic
-     * mtk_op_transition call as before). Mirrors test_deauth_continuous.c's
-     * own established pattern -- one real mutex backing every one of
-     * these, matching mtk_router_set_lock's own router_lock/router_unlock
-     * above. */
+     * lock/mtek_wifi_service_set_lock/mtk_fake_wifi_set_lock at all -- a real,
+     * previously-undetected gap (this file predates deauth's own exactly-once
+     * finalization fix using a shared claim/cleanup/ transition sequence that
+     * made the SAME slot's state field a genuine cross-thread read+write target
+     * here, not merely a single atomic mtk_op_transition call as before).
+     * Mirrors test_deauth_continuous.c's own established pattern -- one real
+     * mutex backing every one of these, matching mtk_router_set_lock's own
+     * router_lock/router_unlock above. */
     mtk_core_set_lock(router_lock, router_unlock);
     mtek_wifi_service_set_lock(router_lock, router_unlock);
     mtk_fake_wifi_set_lock(router_lock, router_unlock);
@@ -167,11 +161,11 @@ MTK_TEST_MAIN_BEGIN
 
     mtk_spi_native_header_t resp_hdr; uint8_t resp_payload[MTK_SPI_NATIVE_MAX_PAYLOAD]; uint16_t resp_len = 0;
 
-    /* ---- Still-active pending[] retry: dispatched with a real async
-     * runner registered (genuinely deferred, not yet delivered), a RETRY
-     * of the SAME request_id/content while still pending answers IDLE --
-     * never a fresh dispatch (no second radio-side-effect, no second
-     * operation_token minted). ---------------------------------------- */
+    /* Still-active pending[] retry: dispatched with a real async runner
+     * registered (genuinely deferred, not yet delivered), a RETRY of the SAME
+     * request_id/content while still pending answers IDLE -- never a fresh
+     * dispatch (no second radio-side-effect, no second operation_token minted).
+     * -------------------- */
     uint32_t real_token;
     {
         mtk_router_set_async_runner(pthread_runner);
@@ -214,9 +208,9 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(g_fake_wifi.deauth_sent_count, 1); /* executed exactly once, by the ORIGINAL request */
     }
 
-    /* ---- Completed-response cache: a retry AFTER delivery is answered
-     * from the cache -- SAME operation_token, no second radio send, and
-     * duplicate_responses_served increments. ---------------------------- */
+    /* Completed-response cache: a retry AFTER delivery is answered from the
+     * cache -- SAME operation_token, no second radio send, and
+     * duplicate_responses_served increments. -------------- */
     {
         uint8_t buf[128]; size_t blen = 0;
         encode_deauth(deauth_op, 6, buf, &blen);
@@ -251,8 +245,8 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(resp_hdr.status, MTK_STATUS_OK);
     }
 
-    /* ---- packet-sequence diagnostics: a skipped now_seq/packet_seq is
-     * counted as a gap, a contiguous one is not. ------------------------ */
+    /* packet-sequence diagnostics: a skipped now_seq/packet_seq is counted as a
+     * gap, a contiguous one is not. ------------ */
     {
         /* Directly exercise the packet_seq tracker embedded in dctx via a
          * CANCEL cell (any class reaching feed_cell notes packet_seq).
@@ -280,21 +274,21 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(after2.packet_seq_gaps, after.packet_seq_gaps);
     }
 
-    /* ---- epoch reset: a HELLO carrying a genuinely different boot_epoch
-     * invalidates the duplicate cache -- request_id 100 (already retired
-     * into the cache above) is no longer recognized as a duplicate under
-     * the NEW epoch, so an identical-looking request now dispatches as a
-     * brand-new operation (a different operation_token) instead of
-     * incorrectly replaying stale cross-epoch cached data. ------------- */
+    /* epoch reset: a HELLO carrying a genuinely different boot_epoch invalidates
+     * the duplicate cache -- request_id 100 (already retired into the cache
+     * above) is no longer recognized as a duplicate under the NEW epoch, so an
+     * identical-looking request now dispatches as a brand-new operation (a
+     * different operation_token) instead of incorrectly replaying stale
+     * cross-epoch cached data. ------- */
     {
         mtk_spi_native_header_t h = hello_hdr(0x5678);
         mtek_spi_native_dispatch_feed_cell(&dctx, &h, NULL, 10, &resp_hdr, resp_payload, &resp_len);
         MTK_CHECK_EQ(resp_hdr.msg_class, MTK_SPI_CLASS_HELLO_ACK);
         /* HELLO_ACK always stamps the ESP's OWN fixed epoch (mtk_core_
-         * boot_epoch(), unaffected by mtk_core_reset() since nothing here
-         * calls it) -- NEVER the peer's own epoch, even immediately after
-         * adopting a genuinely new PEER epoch (0x1234 -> 0x5678) above.
-         * Proves the two epoch concepts stay independent. */
+         * boot_epoch, unaffected by mtk_core_reset since nothing here calls it)
+         * -- NEVER the peer's own epoch, even immediately after adopting a
+         * genuinely new PEER epoch (0x1234 -> 0x5678) above. Proves the two
+         * epoch concepts stay independent. */
         MTK_CHECK_EQ(resp_hdr.boot_epoch, TEST_ESP_BOOT_EPOCH);
 
         uint8_t buf[128]; size_t blen = 0;

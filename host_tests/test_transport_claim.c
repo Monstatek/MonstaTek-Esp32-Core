@@ -1,14 +1,12 @@
-/* RC7 independent audit P0 "The release artifact starts the wrong
- * transport for shipped M1 compatibility": mtk_transport_claim_try is the
- * cross-transport (UART vs. SPI) boot-session exclusivity latch that
- * makes real AUTO selection across all three physical adapters safe --
- * "Exactly one profile may dispatch after selection" even though UART0
- * and the shared SPI bus run their own physical loops fully concurrently
- * before that point. Proves single-threaded first-wins semantics,
- * idempotency for the winner, permanent rejection of every other
- * contender, and -- the actual concurrency property this exists for --
- * that exactly one of two genuinely concurrent pthread callers ever wins
- * when both race the same claim at once, with never a double-win. */
+/* mtk_transport_claim_try is the cross-transport (UART vs. SPI) boot-session
+ * exclusivity latch that makes real AUTO selection across all three physical
+ * adapters safe -- "Exactly one profile may dispatch after selection" even
+ * though UART0 and the shared SPI bus run their own physical loops fully
+ * concurrently before that point. Proves single-threaded first-wins semantics,
+ * idempotency for the winner, permanent rejection of every other contender, and
+ * -- the actual concurrency property this exists for -- that exactly one of two
+ * genuinely concurrent pthread callers ever wins when both race the same claim
+ * at once, with never a double-win. */
 #include "mtk_test.h"
 #include "mtek_transport_select.h"
 #include <pthread.h>
@@ -48,8 +46,8 @@ static void test_reset_allows_a_new_boot_session(void) {
     MTK_CHECK_EQ(mtk_transport_claim_try(MTK_PUBLIC_ADAPTER_COMPAT_SPI), 1);
 }
 
-/* ---- Real concurrent race: exactly one of two genuinely simultaneous
- * pthread callers ever wins, never both, never neither. -------------- */
+/* Real concurrent race: exactly one of two genuinely simultaneous pthread
+ * callers ever wins, never both, never neither. -------- */
 #define RACE_ITERS 500
 
 typedef struct { mtk_public_adapter_t which; int wins; } racer_arg_t;

@@ -53,7 +53,7 @@ MTK_TEST_MAIN_BEGIN
      * peer-HELLO epoch adoption). */
     #define DIVERGED_CTX_EPOCH 0x77777777u
 
-    /* ---- Part 1: handshake session survives ctx/core epoch divergence. ---- */
+    /* Part 1: handshake session survives ctx/core epoch divergence. -- */
     {
         mtk_fake_wifi_reset();
         uint16_t l1 = build_eapol_frame(g_fake_wifi.frames[0].data, 1, 0, 0, 0, bssid);
@@ -68,7 +68,7 @@ MTK_TEST_MAIN_BEGIN
 
         mtk_fake_sink_state_t sink; mtk_fake_sink_reset(&sink);
         mtk_request_ctx_t ctx = mtk_test_ctx(&sink, 1);
-        ctx.boot_epoch = DIVERGED_CTX_EPOCH; /* deliberately NOT mtk_core_boot_epoch() */
+        ctx.boot_epoch = DIVERGED_CTX_EPOCH; /* deliberately NOT mtk_core_boot_epoch */
         const mtk_opcode_entry_t *op = mtk_test_find_op("HANDSHAKE_START");
         mtk_handshake_start_req_t req = {0};
         memcpy(req.target_bssid.b, bssid, 6);
@@ -95,8 +95,7 @@ MTK_TEST_MAIN_BEGIN
         mtk_arbiter_reset();
     }
 
-    /* ---- Part 2: MonstaShark capture session survives ctx/core epoch
-     * divergence. ---- */
+    /* Part 2: MonstaShark capture session survives ctx/core epoch divergence. -- */
     {
         mtk_fake_wifi_reset();
         memset(g_fake_wifi.frames[0].data, 0xAB, 100); g_fake_wifi.frames[0].len = 100; g_fake_wifi.frames[0].channel = 6;
@@ -137,8 +136,7 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(stopsink.response.status, MTK_STATUS_OK);
     }
 
-    /* ---- Part 3: handshake callback rejects STOPPING (not just
-     * terminal). ---- */
+    /* Part 3: handshake callback rejects STOPPING (not just terminal). -- */
     {
         mtk_fake_wifi_reset();
         g_fake_wifi.defer_frames = 1; /* promisc_start only records the callback; replay explicitly below */
@@ -172,8 +170,7 @@ MTK_TEST_MAIN_BEGIN
         mtk_arbiter_reset();
     }
 
-    /* ---- Part 4: capture callback rejects STOPPING (not just
-     * terminal). ---- */
+    /* Part 4: capture callback rejects STOPPING (not just terminal). -- */
     {
         mtk_fake_wifi_reset();
         g_fake_wifi.defer_frames = 1;

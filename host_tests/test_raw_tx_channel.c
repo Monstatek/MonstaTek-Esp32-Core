@@ -1,11 +1,9 @@
-/* RC8 independent audit P0-9 "Correct raw-radio channel and monitor-mode
- * entry behavior": "Current raw TX validates the requested channel but
- * does not select it." req.channel was previously decoded and range-
- * checked, then never passed to the HAL at all -- the frame transmitted
- * on whatever channel the radio already happened to be on, not the
- * caller's requested one. Proves the real fix: the channel is genuinely
- * selected via the HAL (hal->set_channel), and -- the fix's other half,
- * "never transmit if channel selection fails" -- a channel-selection
+/* "Current raw TX validates the requested channel but does not select it."
+ * req.channel was previously decoded and range- checked, then never passed to
+ * the HAL at all -- the frame transmitted on whatever channel the radio already
+ * happened to be on, not the caller's requested one. Proves the real fix: the
+ * channel is genuinely selected via the HAL (hal->set_channel), and -- the fix's
+ * other half, "never transmit if channel selection fails" -- a channel-selection
  * failure aborts before ever reaching hal->raw_tx at all. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"

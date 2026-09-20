@@ -1,58 +1,50 @@
-/* Release-tooling-round P0 correction, ROUND 4 (follow-up read-only audit,
- * "final focused concurrency-correction round"): round 3's own peer-
- * session invalidation fenced STA_CONNECT/BLE_SCAN/GATT_CONNECT's own
- * op-table state, but a further read-only re-audit found the arbiter
- * itself was still released too early for these three uncancellable
- * blocking HAL operations -- the peer-reset canceller released the
- * radio-arbiter lease the instant it won the op-table transition, even
- * though the OLD blocking HAL call (connect()/scan()/gatt_connect(), none
- * of which have a cancel hook) could still genuinely be running on
- * another thread. That let a brand-new operation of the SAME class
- * acquire the arbiter and start a SECOND, physically overlapping HAL call
- * against the same radio hardware while the first one was still in
- * flight -- a real, unsafe overlap, not merely a stale/duplicate
- * response.
+/* ROUND 4 (follow-up read-only audit, "final focused concurrency-correction
+ * round"): round 3's own peer- session invalidation fenced
+ * STA_CONNECT/BLE_SCAN/GATT_CONNECT's own op-table state, but a further
+ * read-only re-audit found the arbiter itself was still released too early for
+ * these three uncancellable blocking HAL operations -- the peer-reset canceller
+ * released the radio-arbiter lease the instant it won the op-table transition,
+ * even though the OLD blocking HAL call (connect/scan/gatt_connect, none of
+ * which have a cancel hook) could still genuinely be running on another thread.
+ * That let a brand-new operation of the SAME class acquire the arbiter and start
+ * a SECOND, physically overlapping HAL call against the same radio hardware
+ * while the first one was still in flight -- a real, unsafe overlap, not merely
+ * a stale/duplicate response.
  *
- * The fix (mtek_wifi_logic.c/mtek_ble_logic.c, see their own doc
- * comments): the peer-reset canceller now ONLY fences the operation's own
- * TOKEN for these classes (WMC/BS/GC), never releasing the arbiter
- * itself. The arbiter stays genuinely HELD (so any replacement request of
- * the same class is correctly refused BUSY) until the ORIGINAL worker's
- * own tail -- once its real blocking HAL call actually returns -- performs
- * a token-ownership-checked release (mtk_arbiter_active_token() ==
- * id.token), independent of whether it also won the op-table state-
- * publish race. AP/STA scan's own bounded quiescence-wait canceller
- * additionally now force-finalizes the TOKEN (never the arbiter) if its
- * own 1-second wait times out, so the token never lingers queryable
- * forever even when the radio genuinely stays busy longer than that.
+ * The fix (mtek_wifi_logic.c/mtek_ble_logic.c, see their own doc comments): the
+ * peer-reset canceller now ONLY fences the operation's own TOKEN for these
+ * classes (WMC/BS/GC), never releasing the arbiter itself. The arbiter stays
+ * genuinely HELD (so any replacement request of the same class is correctly
+ * refused BUSY) until the ORIGINAL worker's own tail -- once its real blocking
+ * HAL call actually returns -- performs a token-ownership-checked release
+ * (mtk_arbiter_active_token == id.token), independent of whether it also won the
+ * op-table state- publish race. AP/STA scan's own bounded quiescence-wait
+ * canceller additionally now force-finalizes the TOKEN (never the arbiter) if
+ * its own 1-second wait times out, so the token never lingers queryable forever
+ * even when the radio genuinely stays busy longer than that.
  *
- * This file proves, with REAL concurrent pthread workers wherever the
- * production HAL call is genuinely blocking (BLE_SCAN, GATT_CONNECT,
- * AP_SCAN), the exact scenarios the re-audit demanded:
- *   A. Blocked BLE scan -> reset -> immediate replacement BLE operation:
- *      refused BUSY while genuinely in flight, no stale BLE_DEVICE_FOUND/
- *      BLE_SCAN_COMPLETE for the invalidated token, arbiter released
- *      exactly once by the real worker's own tail, replacement then
- *      succeeds normally.
- *   B. Real concurrently blocked GATT connect -> reset -> immediate
- *      replacement GATT connect: same shape, plus the stale worker's own
- *      lost-race teardown (gatt_disconnect on ITS OWN local vendor
- *      handle) is proven to fire without ever touching a newer
- *      connection.
- *   C. Forced AP/STA scan cancellation timeout followed by a new-session
- *      request: the fake HAL's own cancel signal is deliberately ignored
- *      (simulating a real HAL that does not honor cancellation promptly),
- *      forcing the peer-reset canceller's bounded quiescence wait to
- *      genuinely time out; the token is immediately force-finalized/
- *      evictable, an immediate replacement is still correctly refused
- *      BUSY (the arbiter was deliberately left held), and only the real
- *      worker's own eventual completion frees it, with no stale event
- *      ever emitted for the invalidated token.
+ * This file proves, with REAL concurrent pthread workers wherever the production
+ * HAL call is genuinely blocking (BLE_SCAN, GATT_CONNECT, AP_SCAN), the exact
+ * scenarios the re-audit demanded: A. Blocked BLE scan -> reset -> immediate
+ * replacement BLE operation: refused BUSY while genuinely in flight, no stale
+ * BLE_DEVICE_FOUND/ BLE_SCAN_COMPLETE for the invalidated token, arbiter
+ * released exactly once by the real worker's own tail, replacement then succeeds
+ * normally. B. Real concurrently blocked GATT connect -> reset -> immediate
+ * replacement GATT connect: same shape, plus the stale worker's own lost-race
+ * teardown (gatt_disconnect on ITS OWN local vendor handle) is proven to fire
+ * without ever touching a newer connection. C. Forced AP/STA scan cancellation
+ * timeout followed by a new-session request: the fake HAL's own cancel signal is
+ * deliberately ignored (simulating a real HAL that does not honor cancellation
+ * promptly), forcing the peer-reset canceller's bounded quiescence wait to
+ * genuinely time out; the token is immediately force-finalized/ evictable, an
+ * immediate replacement is still correctly refused BUSY (the arbiter was
+ * deliberately left held), and only the real worker's own eventual completion
+ * frees it, with no stale event ever emitted for the invalidated token.
  *
- * "Blocked STA connect -> reset -> immediate replacement STA operation"
- * (the fourth adversarial scenario the re-audit asked for) is already
- * proven with a real concurrent worker in test_peer_session_invalidation_
- * services.c's own section 2 (extended in this same round to add the
+ * "Blocked STA connect -> reset -> immediate replacement STA operation" (the
+ * fourth adversarial scenario the re-audit asked for) is already proven with a
+ * real concurrent worker in test_peer_session_invalidation_ services.c's own
+ * section 2 (extended in this same round to add the
  * immediate-replacement-refused-BUSY proof) -- not duplicated here. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
@@ -65,11 +57,9 @@ static pthread_mutex_t s_mutex = PTHREAD_MUTEX_INITIALIZER;
 static void router_lock(void) { pthread_mutex_lock(&s_mutex); }
 static void router_unlock(void) { pthread_mutex_unlock(&s_mutex); }
 
-/* P0 correction (follow-up read-only audit, "one P0 race remains"): a
- * SEPARATE mutex for mtk_op_set_publish_lock, distinct from s_mutex
- * above -- see mtek_core.h's own doc comment on mtk_op_begin_publish_
- * guard for why it must never share a lock with anything a sink's own
- * emit call can reach. */
+/* A SEPARATE mutex for mtk_op_set_publish_lock, distinct from s_mutex above --
+ * see mtek_core.h's own doc comment on mtk_op_begin_publish_ guard for why it
+ * must never share a lock with anything a sink's own emit call can reach. */
 static pthread_mutex_t s_pub_mutex = PTHREAD_MUTEX_INITIALIZER;
 static void pub_lock_fn(void) { pthread_mutex_lock(&s_pub_mutex); }
 static void pub_unlock_fn(void) { pthread_mutex_unlock(&s_pub_mutex); }
@@ -170,15 +160,15 @@ MTK_TEST_MAIN_BEGIN
 
         mtk_op_id_t cancelled = mtek_ble_cancel_active_for_peer_reset();
         MTK_CHECK_EQ(cancelled.token, tok);
-        /* The arbiter is deliberately NOT released -- the old scan() call
-         * has no cancel hook and may still genuinely be running. */
+        /* The arbiter is deliberately NOT released -- the old scan call has no
+         * cancel hook and may still genuinely be running. */
         MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_BS);
         mtk_op_evict_all_terminal();
         MTK_CHECK_EQ(op_status(tok), MTK_STATUS_NOT_FOUND); /* token evicted */
 
-        /* Immediate replacement, while the old scan() call is STILL
-         * genuinely blocked, must be refused -- never admitted to start a
-         * second, overlapping scan(). */
+        /* Immediate replacement, while the old scan call is STILL genuinely
+         * blocked, must be refused -- never admitted to start a second,
+         * overlapping scan. */
         {
             mtk_fake_sink_state_t busy_sink; mtk_fake_sink_reset(&busy_sink);
             mtk_request_ctx_t busy_ctx = mtk_test_ctx(&busy_sink, 2);
@@ -186,10 +176,10 @@ MTK_TEST_MAIN_BEGIN
             MTK_CHECK_EQ(poll_for_response_status(&busy_sink), MTK_STATUS_BUSY);
         }
 
-        /* Let the stale worker's scan() call finally return. It must
-         * never publish s_scan/emit BLE_DEVICE_FOUND/BLE_SCAN_COMPLETE for
-         * the invalidated token, but it IS the one place that safely
-         * releases MTK_ARB_BS once its own real call returns. */
+        /* Let the stale worker's scan call finally return. It must never publish
+         * s_scan/emit BLE_DEVICE_FOUND/BLE_SCAN_COMPLETE for the invalidated
+         * token, but it IS the one place that safely releases MTK_ARB_BS once
+         * its own real call returns. */
         usleep(400000);
         MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_NONE); /* released by the stale worker's own tail, via token ownership */
         mtk_fake_sink_lock();
@@ -225,16 +215,15 @@ MTK_TEST_MAIN_BEGIN
 
         mtk_op_id_t cancelled = mtek_ble_cancel_active_for_peer_reset();
         MTK_CHECK_EQ(cancelled.token, tok);
-        /* The arbiter is deliberately NOT released -- the old
-         * gatt_connect() call has no cancel hook and may still genuinely
-         * be running. */
+        /* The arbiter is deliberately NOT released -- the old gatt_connect call
+         * has no cancel hook and may still genuinely be running. */
         MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_GC);
         mtk_op_evict_all_terminal();
         MTK_CHECK_EQ(op_status(tok), MTK_STATUS_NOT_FOUND); /* token evicted */
 
-        /* Immediate replacement, while the old gatt_connect() call is
-         * STILL genuinely blocked, must be refused -- never admitted to
-         * start a second, overlapping connect. */
+        /* Immediate replacement, while the old gatt_connect call is STILL
+         * genuinely blocked, must be refused -- never admitted to start a
+         * second, overlapping connect. */
         {
             mtk_fake_sink_state_t busy_sink; mtk_fake_sink_reset(&busy_sink);
             mtk_request_ctx_t busy_ctx = mtk_test_ctx(&busy_sink, 5);
@@ -244,13 +233,12 @@ MTK_TEST_MAIN_BEGIN
             MTK_CHECK_EQ(poll_for_response_status(&busy_sink), MTK_STATUS_BUSY);
         }
 
-        /* Let the stale worker's gatt_connect() call finally return
-         * "connected" -- it lost the op-table race (already invalidated),
-         * so it must never publish s_gatt as connected nor emit GATT_
-         * CONNECT_COMPLETE for the invalidated token; it must tear its OWN
-         * just-formed real connection back down (gatt_disconnect on its
-         * own local vendor handle) and only THEN release MTK_ARB_GC via
-         * token ownership. */
+        /* Let the stale worker's gatt_connect call finally return "connected" --
+         * it lost the op-table race (already invalidated), so it must never
+         * publish s_gatt as connected nor emit GATT_ CONNECT_COMPLETE for the
+         * invalidated token; it must tear its OWN just-formed real connection
+         * back down (gatt_disconnect on its own local vendor handle) and only
+         * THEN release MTK_ARB_GC via token ownership. */
         usleep(400000);
         MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_NONE); /* released by the stale worker's own tail */
         fake_ble_lock();

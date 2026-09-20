@@ -32,6 +32,12 @@ unimplemented or disabled operation is never advertised as supported.
 
 ## Time synchronization
 
+SoftAP, raw-TX and monitor-mode canonical opcodes are not module-gated: they
+are general, reusable platform capabilities per `docs/ARCHITECTURE.md`. All
+three are implemented -- `SOFTAP_START/STOP/STA_LIST` (class `SAP`),
+`RAW_TX_SEND` (class `RAW`) and `mtek_capture_service`'s monitor-mode opcodes
+(class `M`).
+
 This firmware does not provide an SNTP client. Time synchronization therefore
 has the following capability state:
 
@@ -60,3 +66,11 @@ Document every component above as compiled in, compiled out, disabled, or
 unsupported. Do not omit existing components. A variant may compile out an
 unused adapter or optional module without changing canonical opcodes, schemas,
 or capability negotiation.
+
+## Adding a new build variant
+
+Copy the table above and change only the rows that differ, naming the variant
+after its `sdkconfig` overlay file. Do not remove a row for a component that
+still exists in the source tree even if a variant disables it -- report it as
+"Compiled out", never omit it, so this document always answers "what does this
+image actually contain?" for every component.

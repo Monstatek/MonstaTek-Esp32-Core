@@ -1,22 +1,19 @@
-/* RC5 independent audit P1 "Deauth 'all' and continuous operation are
- * not correctly implemented": count=0 ("run until stopped") used to
- * convert into exactly one round-robin pass and complete immediately.
- * Proves, with a real pthread-based mtk_router async runner (not a
- * single-threaded simulation) driving DEAUTH_START/STOP/STATUS through
- * native SPI v1's own dispatch layer (whose persistent, queue-backed
- * sink is the established safe pattern for a genuinely deferred
- * operation -- see mtek_spi_native_dispatch.c), that count=0 now
- * genuinely keeps sending across many rounds until a concurrent
- * DEAUTH_STOP on this thread ends it -- with live progress visible via
- * DEAUTH_STATUS while it runs, and a real HAL-observed total that keeps
- * growing well past a single target-set pass. The synchronous (no real
- * background execution context) fallback is already covered by every
- * existing single-threaded test_deauth_*.c that uses count=0 without
- * registering a runner -- proving that path still completes
- * deterministically rather than hanging is exactly the regression a
+/* Count=0 ("run until stopped") used to convert into exactly one round-robin
+ * pass and complete immediately. Proves, with a real pthread-based mtk_router
+ * async runner (not a single-threaded simulation) driving
+ * DEAUTH_START/STOP/STATUS through native SPI v1's own dispatch layer (whose
+ * persistent, queue-backed sink is the established safe pattern for a genuinely
+ * deferred operation -- see mtek_spi_native_dispatch.c), that count=0 now
+ * genuinely keeps sending across many rounds until a concurrent DEAUTH_STOP on
+ * this thread ends it -- with live progress visible via DEAUTH_STATUS while it
+ * runs, and a real HAL-observed total that keeps growing well past a single
+ * target-set pass. The synchronous (no real background execution context)
+ * fallback is already covered by every existing single-threaded test_deauth_*.c
+ * that uses count=0 without registering a runner -- proving that path still
+ * completes deterministically rather than hanging is exactly the regression a
  * naive "just loop until terminal" fix would have reintroduced (see
- * mtek_router.c's mtk_router_running_on_worker and
- * mtek_wifi_logic.c's own doc comment on this). */
+ * mtek_router.c's mtk_router_running_on_worker and mtek_wifi_logic.c's own doc
+ * comment on this). */
 #include "mtk_test.h"
 #include "mtek_spi_native_dispatch.h"
 #include "mtek_schema_message_descs.h"
@@ -76,29 +73,27 @@ static mtk_spi_native_header_t base_req_hdr(uint16_t service, uint16_t opcode, u
 MTK_TEST_MAIN_BEGIN
 
     mtk_core_init(0x2222);
-    /* RC8 independent audit "Run a supported ThreadSanitizer build":
-     * this test's own real pthread worker (pthread_runner below) calls
+    /* This test's own real pthread worker (pthread_runner below) calls
      * mtk_op_transition concurrently with the main thread's own deauth-
-     * status/-stop reads -- mtk_core_set_lock must be registered for
-     * that module's own already-proven locking (test_core_concurrency.c)
-     * to actually activate here too. */
+     * status/-stop reads -- mtk_core_set_lock must be registered for that
+     * module's own already-proven locking (test_core_concurrency.c) to actually
+     * activate here too. */
     mtk_core_set_lock(router_lock, router_unlock);
     mtk_arbiter_init();
     mtk_router_init();
     mtk_router_set_async_runner(pthread_runner);
     mtk_router_set_lock(router_lock, router_unlock);
-    /* RC8 independent audit P0-3 "synchronize service session state": a
-     * real ThreadSanitizer run against this exact test (which genuinely
-     * races handle_deauth_start's own worker-thread progress writes
-     * against handle_deauth_status's own concurrent reads of s_deauth)
-     * confirmed the data race this registration closes -- see
-     * mtek_wifi_service.h's own doc comment on mtek_wifi_service_set_lock. */
+    /* A real ThreadSanitizer run against this exact test (which genuinely races
+     * handle_deauth_start's own worker-thread progress writes against
+     * handle_deauth_status's own concurrent reads of s_deauth) confirmed the
+     * data race this registration closes -- see mtek_wifi_service.h's own doc
+     * comment on mtek_wifi_service_set_lock. */
     mtek_wifi_service_set_lock(router_lock, router_unlock);
-    /* RC8 independent audit P0-9's own TSan verification pass caught a
-     * real race on g_fake_wifi's own prior-state/channel/mode fields
-     * between this test's worker thread (fake_wifi_send_deauth) and the
-     * main thread's concurrent fake_wifi_restore_sta_mode call -- see
-     * mtk_fake_wifi_hal.h's own doc comment on mtk_fake_wifi_set_lock. */
+    /* 's own TSan verification pass caught a real race on g_fake_wifi's own
+     * prior-state/channel/mode fields between this test's worker thread
+     * (fake_wifi_send_deauth) and the main thread's concurrent
+     * fake_wifi_restore_sta_mode call -- see mtk_fake_wifi_hal.h's own doc
+     * comment on mtk_fake_wifi_set_lock. */
     mtk_fake_wifi_set_lock(router_lock, router_unlock);
     static const mtk_system_build_info_t info = {1,0,0,"t",0,0,0,0,"h","n"};
     mtek_system_service_init(&info, now_ms);
@@ -125,7 +120,7 @@ MTK_TEST_MAIN_BEGIN
     mtk_spi_native_header_t hdr = base_req_hdr(start_op->service_id, start_op->opcode, 1, (uint16_t)blen);
     mtek_spi_native_dispatch_feed_cell(&dctx, &hdr, buf, 1, &resp_hdr, resp_payload, &resp_len);
 
-    /* RC11 verification correction (independent audit): mtek_spi_
+    /* Mtek_spi_
      * native_dispatch.c's own dispatch_complete_message (via its shared
      * try_deliver_frame helper) explicitly permits the just-dispatched
      * request to already be answered by the time THIS call returns -- "the

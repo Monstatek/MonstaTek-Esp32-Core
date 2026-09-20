@@ -1,7 +1,6 @@
-/* Deauth: ALL_SCANNED target mode -- every station from one retained,
- * completed STA_SCAN_START result snapshot (002-wifi-service.md Sec 2.4).
- * Covers the stale/wrong-generation NOT_FOUND and empty-scan NOT_READY
- * failure paths too. */
+/* Deauth: ALL_SCANNED target mode -- every station from one retained, completed
+ * STA_SCAN_START result snapshot. Covers the stale/wrong-generation NOT_FOUND
+ * and empty-scan NOT_READY failure paths too. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtek_schema_message_descs.h"

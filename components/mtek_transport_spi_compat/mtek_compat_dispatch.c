@@ -58,7 +58,7 @@
 #include "mtek_codec_api.h"
 #include <string.h>
 
-/* RC12 blocker round, item 2: which deferred continuation is owed (see
+/* Which deferred continuation is owed (see
  * mtk_compat_dispatch_ctx_t.pending_continuation). */
 #define MTK_COMPAT_CONT_AP_SCAN  1  /* harvest AP result_generation, then build the network list */
 #define MTK_COMPAT_CONT_STA_SCAN 2  /* harvest STA result_generation into dctx, bare-status reply */
@@ -194,7 +194,8 @@ static void dispatch_start_track_token_async(mtk_compat_dispatch_ctx_t *dctx, ui
         dctx->pending_token_field = token_field;
         dctx->pending_service_id = service_id;
         dctx->pending_opcode = opcode;
-        dctx->pending_continuation = 0; /* RC12 item 2: this is the bare-status async path, not a terminal-event continuation */
+        dctx->pending_continuation = 0; /* This is the bare-status async path, not
+                                         * a terminal-event continuation */
         return;
     }
     cap->status = (uint8_t)f.seq_or_status;
@@ -251,11 +252,10 @@ static void dispatch_async_with_event(mtk_compat_dispatch_ctx_t *dctx, uint16_t 
     mtk_async_queue_reset(&dctx->event_queue);
     mtk_router_dispatch(&ctx, service_id, opcode, req, req_len);
 
-    /* Drain the whole batch once, recording BOTH halves independently --
-     * either, both, or neither may be present. extract() also fills cap's
-     * got_ flags and scan_generation/connection_token for the synchronous
-     * handler path (and, when we arm, for carrying the event into the
-     * continuation fields below). */
+    /* Drain the whole batch once, recording BOTH halves independently -- either,
+     * both, or neither may be present. extract also fills cap's got_ flags and
+     * scan_generation/connection_token for the synchronous handler path (and,
+     * when we arm, for carrying the event into the continuation fields below). */
     int have_response = 0, have_event = 0;
     uint8_t response_status = 0;
     mtk_async_frame_t f;
@@ -338,9 +338,9 @@ static void extract_sta_scan_generation(compat_capture_t *cap, const mtk_async_f
 static void extract_gatt_connection_token(compat_capture_t *cap, const mtk_async_frame_t *ev) {
     mtk_gatt_connect_complete_ev_t e; memset(&e, 0, sizeof(e));
     mtk_decode(&mtk_gatt_connect_complete_ev_t_desc, &e, ev->body, ev->body_len, NULL);
-    /* RC12 RC12 closure item 2: retain the real terminal status (OK on a
-     * live connection, TIMEOUT on a failed one) so the sync path can NAK a
-     * genuine failure; a connection_token is stored ONLY on success. */
+    /* RC12 retain the real terminal status (OK on a live connection, TIMEOUT on
+     * a failed one) so the sync path can NAK a genuine failure; a
+     * connection_token is stored ONLY on success. */
     cap->event_status = e.status;
     if (e.status == MTK_STATUS_OK) { cap->got_connection_token = 1; cap->connection_token = e.connection_token; }
 }
@@ -391,12 +391,12 @@ static void dispatch_bare(mtk_compat_dispatch_ctx_t *dctx, uint16_t service_id, 
     cap->body_len = 0; /* discard any structured response body -- bare status only */
 }
 
-/* Every STOP/STATUS opcode in this task's registry takes exactly
- * `{operation_token: u32}` as its sole request field (verified field-by-
- * field against components/mtek_schema/include/mtek_schema_structs.h for
- * every family used below). A local same-layout struct is safe to encode
- * against the generated descriptor: offsetof(<generated type>,
- * operation_token) is always 0 for these single-field structs. */
+/* Every STOP/STATUS opcode's registry takes exactly `{operation_token: u32}` as
+ * its sole request field (verified field-by- field against
+ * components/mtek_schema/include/mtek_schema_structs.h for every family used
+ * below). A local same-layout struct is safe to encode against the generated
+ * descriptor: offsetof(<generated type>, operation_token) is always 0 for these
+ * single-field structs. */
 typedef struct { uint32_t operation_token; } token_only_req_t;
 
 static void generic_token_op(mtk_compat_dispatch_ctx_t *dctx, uint32_t *token_field, uint8_t clear_on_call,
@@ -445,24 +445,21 @@ static void handle_ping(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *payload,
 /* GET_STATUS, Legacy SPI Compatibility 0x0002 (M1ESP_SYS_GET_STATUS, distinct from
  * GET_FW_VERSION 0x0003 below -- these are two separate Legacy SPI Compatibility wire
  * opcodes, not one shared call): confirmed exact response shape
- * `m1esp_devstatus_t {proto_ver: u8, cap_bitmap: bytes[8], fw_name:
- * bytes[32] null-terminated}` (002-service-registry.md Sec 9,
- * 002-system-service.md Sec 5). `proto_ver`/`fw_name` are real,
- * translated from the real canonical GET_VERSION dispatch
- * (protocol_major, build_id). `cap_bitmap` is a real 23-bit capability
- * bitmap (M1ESP_CAP_WIFI_SCAN..M1ESP_CAP_802154_TX, bits 0-22) whose
- * exact per-name bit INDEX assignment is not given anywhere in the
- * accepted contract package (only the name list and "bits 0-22" total
- * width) -- populating it would mean guessing which bit is which
- * capability, which this task's own "implement no guess that changes
- * the public surface" rule forbids. Left as 8 zero bytes, honestly
- * disclosed (docs/PROVENANCE.md), not fabricated. GET_CAPABILITIES is
- * still dispatched for real underneath (side-effect-free) so it is
- * genuinely exercised, even though its data isn't the source of
- * cap_bitmap here. */
+ * `m1esp_devstatus_t {proto_ver: u8, cap_bitmap: bytes[8], fw_name: bytes[32]
+ * null-terminated}`. `proto_ver`/`fw_name` are real, translated from the real
+ * canonical GET_VERSION dispatch (protocol_major, build_id). `cap_bitmap` is a
+ * real 23-bit capability bitmap (M1ESP_CAP_WIFI_SCAN..M1ESP_CAP_802154_TX, bits
+ * 0-22) whose exact per-name bit INDEX assignment is not given anywhere in the
+ * accepted contract package (only the name list and "bits 0-22" total width) --
+ * populating it would mean guessing which bit is which capability, which the
+ * "implement no guess that changes the public surface" rule forbids. Left as 8
+ * zero bytes, honestly disclosed (docs/PROVENANCE.md), not fabricated.
+ * GET_CAPABILITIES is still dispatched for real underneath (side-effect-free) so
+ * it is genuinely exercised, even though its data isn't the source of cap_bitmap
+ * here. */
 static void handle_get_status(mtk_compat_dispatch_ctx_t *dctx, compat_capture_t *cap) {
-    /* RC8 independent audit P0-1: dctx->scratch_cap, not a stack-local --
-     * see mtk_compat_dispatch_ctx_t's own doc comment. */
+    /* dctx->scratch_cap, not a stack-local -- see mtk_compat_dispatch_ctx_t's
+     * own doc comment. */
     compat_capture_t *caps_cap = &dctx->scratch_cap; memset(caps_cap, 0, sizeof(*caps_cap));
     mtk_get_capabilities_req_t caps_req = {0}; caps_req.start_index = 0; caps_req.max_items = 32;
     const mtk_opcode_entry_t *caps_op = mtk_opcode_find(0x0000, 0x0004);
@@ -564,8 +561,8 @@ static void build_ap_scan_list_response(mtk_compat_dispatch_ctx_t *dctx, uint32_
     page_req.result_generation = generation; page_req.start_index = 0; page_req.max_items = 50;
     uint8_t page_buf[16]; size_t page_blen = 0;
     mtk_encode(page_op->req_desc, &page_req, page_buf, sizeof(page_buf), &page_blen);
-    /* RC8 independent audit P0-1: dctx->scratch_cap/dctx->ap_scan_page,
-     * not stack-locals -- see mtk_compat_dispatch_ctx_t's own doc comment. */
+    /* dctx->scratch_cap/dctx->ap_scan_page, not stack-locals -- see
+     * mtk_compat_dispatch_ctx_t's own doc comment. */
     compat_capture_t *page_cap = &dctx->scratch_cap; memset(page_cap, 0, sizeof(*page_cap));
     router_call(dctx, page_cap, 0x0001, 0x0003, page_buf, page_blen);
     if (page_cap->status != MTK_STATUS_OK) {
@@ -650,10 +647,10 @@ static void handle_sta_scan_results_page(mtk_compat_dispatch_ctx_t *dctx, compat
     if (cap->status != MTK_STATUS_OK) { cap->body_len = 0; return; }
     mtk_sta_scan_results_page_resp_t page = {0}; /* ~264 bytes -- small enough to stay a stack local, unlike its AP-scan counterpart */
     mtk_decode(op->resp_desc, &page, cap->body, cap->body_len, NULL);
-    /* RC8 independent audit P0-1: built directly into cap->body (already
-     * dctx-owned) instead of a separate ~4KB scratch buffer -- `page` was
-     * already fully decoded above from cap->body's raw bytes, so cap->body
-     * is free to be overwritten from scratch with no aliasing hazard. */
+    /* Built directly into cap->body (already dctx-owned) instead of a separate
+     * ~4KB scratch buffer -- `page` was already fully decoded above from
+     * cap->body's raw bytes, so cap->body is free to be overwritten from scratch
+     * with no aliasing hazard. */
     uint16_t off = 2;
     uint16_t count = 0;
     for (uint32_t i = 0; i < page.items.count && off + 7 <= COMPAT_CAP_BODY_MAX; i++) {
@@ -692,7 +689,7 @@ static void handle_sta_disconnect(mtk_compat_dispatch_ctx_t *dctx, compat_captur
 
 /* STA_STATUS, 0x0106: dispatched for real (empty request); the one
  * confirmed byte-level fact about the response (ip_addr copied raw,
- * canonical-core-contract.md's ipv4 type note) is not enough on its own
+ * the canonical contract's ipv4 type note) is not enough on its own
  * to safely translate the remaining field order/widths without
  * guessing -- bare status only. */
 static void handle_sta_status(mtk_compat_dispatch_ctx_t *dctx, compat_capture_t *cap) {
@@ -935,13 +932,11 @@ static void handle_raw_tx(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *payloa
     dispatch_bare(dctx, 0x0001, 0x0021, buf, blen, cap);
 }
 
-/* CAPTIVE_PORTAL_START, 0x0316: confirmed exact request wire shape
- * (002-wifi-service.md Sec 2.8.6, source-confirmed
- * wifi_attack_captive_config_t/handle_captive_start): `[channel:1]
- * [ssid_len:1][ssid][title(rest, optional)]` -- note channel comes
- * FIRST, then ssid_len+ssid, then the title occupying whatever bytes
- * remain (no separate title-length prefix), truncated to the confirmed
- * 95-byte portal_title bound. Bare response (class 2); token tracked. */
+/* CAPTIVE_PORTAL_START, 0x0316: confirmed exact request wire shape: `[channel:1]
+ * [ssid_len:1][ssid][title(rest, optional)]` -- note channel comes FIRST, then
+ * ssid_len+ssid, then the title occupying whatever bytes remain (no separate
+ * title-length prefix), truncated to the confirmed 95-byte portal_title bound.
+ * Bare response (class 2); token tracked. */
 static void handle_captive_portal_start(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, compat_capture_t *cap) {
     if (len < 2) { cap->status = MTK_STATUS_INVALID_ARGUMENT; cap->body_len = 0; return; }
     uint8_t channel = payload[0];
@@ -1010,7 +1005,7 @@ static void handle_wifi_mac_get(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *
     cap->body_len = 6;
 }
 
-/* ---- BLE (only the 4 SUPPORTED, non-compat-family opcodes) ----------- */
+/* BLE (only the 4 SUPPORTED, non-compat-family opcodes) ------- */
 
 /* BLE_SCAN_START/RESULTS_PAGE/ADV_START/STOP: no Legacy SPI Compatibility BLE wire byte
  * layout at all is confirmed in the accepted contract package for these
@@ -1046,7 +1041,7 @@ static void handle_ble_adv_start(mtk_compat_dispatch_ctx_t *dctx, compat_capture
     dispatch_start_track_token_async(dctx, 0x0002, 0x0006, buf, blen, &dctx->ble_adv_token, cap);
 }
 
-/* ---- GATT (only the 2 SUPPORTED opcodes) ------------------------------ */
+/* GATT (only the 2 SUPPORTED opcodes) ---------------- */
 
 /* GATT_CONNECT, 0x0409 (M1ESP_BLE_CONNECT): confirmed exact request wire
  * shape -- source-confirmed `handle_ble_connect` passes
@@ -1072,19 +1067,16 @@ static void handle_gatt_connect(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *
     /* Deferred: the continuation harvests the connection_token (for a later
      * GATT_DISCONNECT) and delivers the bare-status reply. */
     if (cap->deferred) return;
-    /* RC12 RC12 closure item 2: honest terminal-failure semantics, kept
-     * equivalent to the deferred continuation below. Three outcomes:
-     *   - real connection (terminal event OK, token captured): store the
-     *     token, bare RESP OK;
-     *   - accepted but the terminal connect FAILED (event captured, no
-     *     token, cap->status still the ACCEPTED/OK acceptance): report the
-     *     terminal event's status -> mapped NAK, no token;
-     *   - acceptance itself was rejected (BUSY/NO_MEMORY: dispatch_async_
-     *     with_event already set that NAK status and captured NO event):
-     *     leave it untouched -- never overwrite it with event_status (which
-     *     is 0 when no terminal event was ever seen).
-     * So a later GATT_DISCONNECT finds no connection to act on in every
-     * non-success case. */
+    /* RC12 honest terminal-failure semantics, kept equivalent to the deferred
+     * continuation below. Three outcomes: - real connection (terminal event OK,
+     * token captured): store the token, bare RESP OK; - accepted but the
+     * terminal connect FAILED (event captured, no token, cap->status still the
+     * ACCEPTED/OK acceptance): report the terminal event's status -> mapped NAK,
+     * no token; - acceptance itself was rejected (BUSY/NO_MEMORY:
+     * dispatch_async_ with_event already set that NAK status and captured NO
+     * event): leave it untouched -- never overwrite it with event_status (which
+     * is 0 when no terminal event was ever seen). So a later GATT_DISCONNECT
+     * finds no connection to act on in every non-success case. */
     if (cap->got_connection_token) {
         dctx->gatt_conn_token = cap->connection_token;
         cap->status = MTK_STATUS_OK;
@@ -1139,8 +1131,8 @@ static void stage_and_emit(mtk_compat_dispatch_ctx_t *dctx, uint16_t msg_id, com
     mtek_compat_dispatch_poll_outbound(dctx, resp_hdr, resp_payload, resp_payload_len);
 }
 
-/* RC12 blocker round, item 2: emit a well-formed IDLE cell (the peer keeps
- * polling; the owed deferred reply is not ready yet). */
+/* Emit a well-formed IDLE cell (the peer keeps polling; the owed
+ * deferred reply is not ready yet). */
 static void emit_idle(mtk_compat_header_t *resp_hdr, uint8_t *resp_payload, uint16_t *resp_payload_len) {
     (void)resp_payload;
     resp_hdr->magic = MTK_COMPAT_MAGIC;
@@ -1182,7 +1174,8 @@ void mtek_compat_dispatch_poll_outbound(mtk_compat_dispatch_ctx_t *dctx,
                     mtk_gatt_connect_complete_ev_t e; memset(&e, 0, sizeof(e));
                     mtk_decode(&mtk_gatt_connect_complete_ev_t_desc, &e, f.body, f.body_len, NULL);
                     dctx->pending_event_ok = (e.status == MTK_STATUS_OK);
-                    dctx->pending_event_status = (uint8_t)e.status; /* RC12 RC12 closure item 2: retain for a failure NAK */
+                    dctx->pending_event_status = (uint8_t)e.status; /* RC12 retain for a failure NAK
+                                                                     * RC12 retain for a failure NAK */
                     dctx->pending_event_conn_token = e.connection_token;
                 }
             }
@@ -1218,11 +1211,11 @@ void mtek_compat_dispatch_poll_outbound(mtk_compat_dispatch_ctx_t *dctx,
             if (dctx->pending_event_ok) { dctx->sta_scan_generation = dctx->pending_event_generation; dctx->sta_scan_has_generation = 1; }
             cap->status = MTK_STATUS_OK; cap->body_len = 0;
         } else { /* MTK_COMPAT_CONT_GATT */
-            /* RC12 RC12 closure item 2: honest terminal-failure semantics,
-             * equivalent to handle_gatt_connect's synchronous tail. A real
-             * connection -> store the token and a bare RESP OK; a terminal
-             * failure (TIMEOUT) -> the mapped NAK and NO stored token, so a
-             * later GATT_DISCONNECT finds no connection to act on. */
+            /* RC12 honest terminal-failure semantics, equivalent to
+             * handle_gatt_connect's synchronous tail. A real connection -> store
+             * the token and a bare RESP OK; a terminal failure (TIMEOUT) -> the
+             * mapped NAK and NO stored token, so a later GATT_DISCONNECT finds
+             * no connection to act on. */
             if (dctx->pending_event_ok) {
                 dctx->gatt_conn_token = dctx->pending_event_conn_token;
                 cap->status = MTK_STATUS_OK; cap->body_len = 0;
@@ -1244,17 +1237,16 @@ void mtek_compat_dispatch_poll_outbound(mtk_compat_dispatch_ctx_t *dctx,
         if (pop_response_frame(&dctx->event_queue, &f)) {
             uint16_t msg_id = dctx->pending_start_msg_id;
             dctx->pending_start_msg_id = 0;
-            /* RC8 independent audit P0-1: dctx->async_complete_cap, not a
-             * stack-local -- see mtk_compat_dispatch_ctx_t's own doc
-             * comment. Distinct storage from dctx->cap (used by
-             * mtek_compat_dispatch_request's own switch): this function and
-             * that one are never both mid-use of their own capture at
-             * once (this branch only ever runs on a poll reached either
-             * as its own top-level call, with dispatch_request not on the
+            /* dctx->async_complete_cap, not a stack-local -- see
+             * mtk_compat_dispatch_ctx_t's own doc comment. Distinct storage from
+             * dctx->cap (used by mtek_compat_dispatch_request's own switch):
+             * this function and that one are never both mid-use of their own
+             * capture at once (this branch only ever runs on a poll reached
+             * either as its own top-level call, with dispatch_request not on the
              * stack at all, or via stage_and_emit at the tail of a
-             * dispatch_request call that took the FRAG-continuation path
-             * instead of this one -- pending_start_msg_id is still 0 in
-             * that case, so this branch is never even entered then). */
+             * dispatch_request call that took the FRAG-continuation path instead
+             * of this one -- pending_start_msg_id is still 0 in that case, so
+             * this branch is never even entered then). */
             compat_capture_t *cap = &dctx->async_complete_cap; memset(cap, 0, sizeof(*cap));
             cap->status = (uint8_t)f.seq_or_status;
             if (dctx->pending_token_field && cap->status == MTK_STATUS_ACCEPTED) {
@@ -1307,15 +1299,14 @@ void mtek_compat_dispatch_init(mtk_compat_dispatch_ctx_t *dctx, uint32_t boot_ep
 
 void mtek_compat_dispatch_request(mtk_compat_dispatch_ctx_t *dctx, const mtk_compat_header_t *hdr, const uint8_t *payload,
                                   mtk_compat_header_t *resp_hdr, uint8_t *resp_payload, uint16_t *resp_payload_len) {
-    /* RC8 independent audit P0-1 "Eliminate target stack overflow paths":
-     * dctx->cap, not a stack-local -- see mtk_compat_dispatch_ctx_t's own
-     * doc comment for the full before/after accounting. The whole switch
-     * below (every case, and every handler/generic_token_op/dispatch_empty
-     * call it makes) still reads as plain cap/&cap throughout, unchanged
-     * from before this fix -- this macro is the mechanical rename, scoped
-     * tightly to this one function's body (see the matching #undef at its
-     * closing brace) so it cannot leak into any other function's own,
-     * textually-unrelated cap parameter name. */
+    /* Dctx->cap, not a stack-local -- see mtk_compat_dispatch_ctx_t's own doc
+     * comment for the full before/after accounting. The whole switch below
+     * (every case, and every handler/generic_token_op/dispatch_empty call it
+     * makes) still reads as plain cap/&cap throughout, unchanged from before
+     * this fix -- this macro is the mechanical rename, scoped tightly to this
+     * one function's body (see the matching #undef at its closing brace) so it
+     * cannot leak into any other function's own, textually-unrelated cap
+     * parameter name. */
 #define cap (dctx->cap)
     memset(&cap, 0, sizeof(cap));
     cap.status = MTK_STATUS_UNSUPPORTED;
@@ -1417,11 +1408,10 @@ void mtek_compat_dispatch_request(mtk_compat_dispatch_ctx_t *dctx, const mtk_com
             uint16_t dlen = rd_u16(cap.body + data_len_off);
             uint16_t max_frame = (uint16_t)(sizeof(cap.body) - 4);
             if (dlen > max_frame) dlen = max_frame;
-            /* RC8 independent audit P0-1: this is a genuine in-place
-             * transform (source and destination both inside cap.body,
-             * potentially overlapping since data_len_off+2 can be as low
-             * as 4 past the start) -- memmove (not memcpy) handles that
-             * correctly, eliminating the ~4KB scratch buffer this used to
+            /* This is a genuine in-place transform (source and destination both
+             * inside cap.body, potentially overlapping since data_len_off+2 can
+             * be as low as 4 past the start) -- memmove (not memcpy) handles
+             * that correctly, eliminating the ~4KB scratch buffer this used to
              * need entirely instead of merely relocating it. */
             uint8_t hdr4[4] = { channel, (uint8_t)rssi, (uint8_t)dlen, (uint8_t)(dlen >> 8) };
             memmove(cap.body + 4, cap.body + data_len_off + 2, dlen);

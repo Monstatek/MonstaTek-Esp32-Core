@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""RC8 independent audit P0-1 "Eliminate target stack overflow paths" /
+"""/
 Required verification #4 "Target-ELF stack report shows safe margins for
 every task/callback path; no nested path exceeds its allocated stack":
 measures REAL per-function stack frame sizes (GCC's own `-fstack-usage`,
@@ -44,6 +44,7 @@ import sys
 CHAINS = [
     {
         "task": "ble_tick_task (blocking signal sample)",
+        "requires_sdkconfig": "CONFIG_BT_ENABLED",
         "stack_bytes": 4096,
         "margin": 0.60,
         "members": [
@@ -54,6 +55,7 @@ CHAINS = [
     },
     {
         "task": "periodic_delivery_task (GATT delivery)",
+        "requires_sdkconfig": "CONFIG_BT_ENABLED",
         "stack_bytes": 4096,
         "margin": 0.60,
         "members": [
@@ -94,6 +96,97 @@ CHAINS = [
         ],
     },
     {
+        # Step 1 raw-TX/monitor-mode foundation audit (2026-09-19): every
+        # existing native-SPI/Mtek-Compatibility chain above stops at this
+        # transport's own request-decode wrapper (dispatch_complete_message)
+        # and never follows its own, real, unconditional
+        # `mtk_router_dispatch(...)` call (mtek_spi_native_dispatch.c's own
+        # synchronous-lifecycle branch) on into the canonical service
+        # dispatch/handler/HAL frames every opcode actually reaches --
+        # previously an unmeasured gap, not a documented exclusion. Audited
+        # here for RAW_TX_SEND specifically: its own decoded
+        # mtk_raw_tx_send_req_t local (1,489-byte frame buffer) makes
+        # handle_raw_tx_send's real frame (1,536 bytes) the single largest
+        # canonical opcode handler reachable from native SPI, so this is
+        # the binding case for "does the canonical dispatch tail, once
+        # actually included, still fit" -- it does (native SPI's own
+        # dispatch_complete_message synchronous branch never also holds
+        # try_deliver_frame/stage_cell's own frames at the same time; those
+        # run strictly after mtk_router_dispatch already returned, on the
+        # ACCEPTED_ASYNC branch only -- confirmed by reading
+        # dispatch_complete_message's own source, not assumed).
+        "task": "spi_runtime_task (native SPI v1: RAW_TX_SEND canonical dispatch tail)",
+        "stack_bytes": 12288,
+        "margin": 0.60,
+        "members": [
+            ("main/mtek_spi_runtime.c", "spi_runtime_task"),
+            ("components/mtek_transport_spi_native/mtek_spi_native_dispatch.c", "mtek_spi_native_dispatch_feed_cell"),
+            ("components/mtek_transport_spi_native/mtek_spi_native_dispatch.c", "dispatch_complete_message"),
+            ("components/mtek_router/mtek_router.c", "mtk_router_dispatch"),
+            ("components/mtek_wifi_service/mtek_wifi_logic.c", "mtek_wifi_dispatch"),
+            ("components/mtek_wifi_service/mtek_wifi_logic.c", "handle_raw_tx_send"),
+            ("components/mtek_wifi_service/mtek_wifi_hal_esp32.c", "esp32_raw_tx"),
+        ],
+    },
+    {
+        # Same gap as above, Legacy SPI Compatibility transport: the existing
+        # "Legacy SPI Compatibility worst path" chain measures only
+        # mtek_compat_dispatch_request's own translation wrapper
+        # (handle_raw_tx, mtek_compat_dispatch.c) in isolation -- that
+        # wrapper's real, unconditional `router_call(...)` ->
+        # `mtk_router_dispatch(...)` call (confirmed by reading its own
+        # source) reaches this exact same canonical handle_raw_tx_send tail,
+        # never previously included.
+        "task": "spi_runtime_task (Legacy SPI Compatibility: RAW_TX_SEND canonical dispatch tail)",
+        "stack_bytes": 12288,
+        "margin": 0.60,
+        "members": [
+            ("main/mtek_spi_runtime.c", "spi_runtime_task"),
+            ("components/mtek_transport_spi_compat/mtek_compat_dispatch.c", "mtek_compat_dispatch_request"),
+            ("components/mtek_transport_spi_compat/mtek_compat_dispatch.c", "handle_raw_tx"),
+            ("components/mtek_router/mtek_router.c", "mtk_router_dispatch"),
+            ("components/mtek_wifi_service/mtek_wifi_logic.c", "mtek_wifi_dispatch"),
+            ("components/mtek_wifi_service/mtek_wifi_logic.c", "handle_raw_tx_send"),
+            ("components/mtek_wifi_service/mtek_wifi_hal_esp32.c", "esp32_raw_tx"),
+        ],
+    },
+    {
+        # Same class of gap, the general-purpose monitor-mode/capture
+        # service's own largest handler (handle_capture_poll_read's own
+        # 1,026-byte `out[]` wire-encode buffer, service 0x0004 opcode
+        # 0x0006): reachable from native SPI via the exact same
+        # dispatch_complete_message synchronous-lifecycle tail as above.
+        "task": "spi_runtime_task (native SPI v1: CAPTURE_POLL_READ canonical dispatch tail)",
+        "stack_bytes": 12288,
+        "margin": 0.60,
+        "members": [
+            ("main/mtek_spi_runtime.c", "spi_runtime_task"),
+            ("components/mtek_transport_spi_native/mtek_spi_native_dispatch.c", "mtek_spi_native_dispatch_feed_cell"),
+            ("components/mtek_transport_spi_native/mtek_spi_native_dispatch.c", "dispatch_complete_message"),
+            ("components/mtek_router/mtek_router.c", "mtk_router_dispatch"),
+            ("components/mtek_capture_service/mtek_capture_logic.c", "mtek_capture_dispatch"),
+            ("components/mtek_capture_service/mtek_capture_logic.c", "handle_capture_poll_read"),
+        ],
+    },
+    {
+        # Legacy SPI Compatibility's own CAPTURE_POLL_READ case (0x0315) is
+        # handled inline inside mtek_compat_dispatch_request itself (no
+        # separate wrapper function the way RAW_TX has one) -- its own
+        # locals are already folded into that function's own measured
+        # frame below, so only the canonical tail past mtk_router_dispatch
+        # is new here.
+        "task": "spi_runtime_task (Legacy SPI Compatibility: CAPTURE_POLL_READ canonical dispatch tail)",
+        "stack_bytes": 12288,
+        "margin": 0.60,
+        "members": [
+            ("main/mtek_spi_runtime.c", "spi_runtime_task"),
+            ("components/mtek_transport_spi_compat/mtek_compat_dispatch.c", "mtek_compat_dispatch_request"),
+            ("components/mtek_router/mtek_router.c", "mtk_router_dispatch"),
+            ("components/mtek_capture_service/mtek_capture_logic.c", "mtek_capture_dispatch"),
+            ("components/mtek_capture_service/mtek_capture_logic.c", "handle_capture_poll_read"),
+        ],
+    },
+    {
         "task": "uart_repl_task (worst UART command-formatting path)",
         "stack_bytes": 12288,
         "margin": 0.60,
@@ -121,11 +214,12 @@ CHAINS = [
         # RC8 independent audit P0-6 "BLE list <id>/list -d detail block":
         # format_ble_device_detail's own ble_ad_info_t local (Service
         # UUID16/128 lists, Service Data, unknown-AD-type text buffer) is
-        # a genuinely new, non-trivial stack frame this round added --
+        # a genuinely new, non-trivial stack frame added --
         # audited here rather than left as an unmeasured new UART path
         # (RC8's own "audit every task/callback entry path... not just
         # the 3 named functions" instruction).
         "task": "uart_repl_task (BLE list-detail worst path)",
+        "requires_sdkconfig": "CONFIG_BT_ENABLED",
         "stack_bytes": 12288,
         "margin": 0.60,
         "members": [
@@ -135,12 +229,13 @@ CHAINS = [
         ],
     },
     {
-        # RC8 independent audit P0-6 "BLE connection discovery lacks
+        # "BLE connection discovery lacks
         # nested service/char/descriptor counts/listing": gatt_discover_
         # tree's own decoded-response locals (services/chars/descs pages)
-        # are a new stack frame this round added -- audited here for the
+        # are a new stack frame added -- audited here for the
         # same reason as the entry above.
         "task": "uart_repl_task (BLE nested GATT discovery worst path)",
+        "requires_sdkconfig": "CONFIG_BT_ENABLED",
         "stack_bytes": 12288,
         "margin": 0.60,
         "members": [
@@ -164,7 +259,7 @@ CHAINS = [
         "task": "Wi-Fi driver promiscuous RX callback (promisc_trampoline)",
         # This context's real stack budget is still owned by the Wi-Fi
         # driver, not this project's own task creation -- not independently
-        # confirmed this session (disclosed hardware/ESP-IDF-internals
+        # confirmed (disclosed hardware/ESP-IDF-internals
         # gap, docs/PROVENANCE.md). Conservatively assumed no larger than
         # CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE (2304 bytes on this
         # sdkconfig), the smallest real task stack this project's own
@@ -177,7 +272,7 @@ CHAINS = [
         ],
     },
     {
-        # RC10 independent correction order P0 "STA scan cancel and
+        # "STA scan cancel and
         # callback state are target data races": sta_scan_promisc_cb is a
         # SEPARATE, still-direct Wi-Fi driver RX callback registration
         # (STA_SCAN's own, via esp32_sta_scan -- unrelated to promisc_
@@ -225,6 +320,22 @@ CHAINS = [
     },
 ]
 
+
+
+def sdkconfig_has(build_dir, option):
+    """True if `option` is set to y in the build's own generated sdkconfig.
+    A chain may declare requires_sdkconfig so that a build variant which
+    deliberately compiles a subsystem out skips that chain instead of
+    reporting CHAIN_FAILURE. A symbol missing while its option IS enabled
+    still fails loud, which is the behaviour that catches a real rename."""
+    # The build directory's own generated header is authoritative per build.
+    # The project-level sdkconfig reflects whichever variant was configured
+    # last, so it must not be used to judge a specific build directory.
+    header = os.path.join(build_dir, "config", "sdkconfig.h")
+    if os.path.isfile(header):
+        with open(header) as f:
+            return f"#define {option} 1" in f.read()
+    return True   # cannot tell: assume present so nothing is silently skipped
 
 def find_compile_command(compile_commands, rel_path):
     needle = rel_path.replace("\\", "/")
@@ -285,7 +396,12 @@ def main():
         return 2
 
     overall_ok = True
+    skipped = []
     for chain in CHAINS:
+        req = chain.get("requires_sdkconfig")
+        if req and not sdkconfig_has(build_dir, req):
+            skipped.append((chain["task"], req))
+            continue
         total = 0
         rows = []
         chain_ok = True
@@ -324,6 +440,11 @@ def main():
         else:
             print(f"  OK -- under the {limit:.0f}-byte ({chain['margin']*100:.0f}%) safety margin")
 
+    # Skipped chains are always reported: a variant losing coverage silently
+    # is the failure this tool exists to prevent.
+    for task, req in skipped:
+        print(f"check_stack_budget: SKIPPED -- '{task}': {req} is not enabled in this build")
+    print(f"check_stack_budget: {len(CHAINS) - len(skipped)} chain(s) measured, {len(skipped)} skipped")
     return 0 if overall_ok else 1
 
 

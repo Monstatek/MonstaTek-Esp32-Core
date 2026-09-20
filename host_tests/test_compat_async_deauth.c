@@ -201,14 +201,13 @@ MTK_TEST_MAIN_BEGIN
     mtk_router_init();
     mtk_router_set_async_runner(tracked_runner);
     mtk_router_set_lock(router_lock, router_unlock);
-    /* RC11 independent correction order P0 verification fallout (same
-     * real TSan-caught gap as test_spi_native_dup_cache.c/test_spi_
-     * native_async.c's own identical fix): a real async runner is
-     * registered above, and DEAUTH_START's own completion path
-     * (deauth_finalize) genuinely touches shared operation-table/wifi-
+    /* Verification fallout (same real TSan-caught gap as
+     * test_spi_native_dup_cache.c/test_spi_ native_async.c's own identical fix):
+     * a real async runner is registered above, and DEAUTH_START's own completion
+     * path (deauth_finalize) genuinely touches shared operation-table/wifi-
      * service/fake-HAL state from a different thread than a concurrent
-     * DEAUTH_STOP/status request -- every one of these must share the
-     * SAME real mutex as mtk_router_set_lock above. */
+     * DEAUTH_STOP/status request -- every one of these must share the SAME real
+     * mutex as mtk_router_set_lock above. */
     mtk_core_set_lock(router_lock, router_unlock);
     mtek_wifi_service_set_lock(router_lock, router_unlock);
     mtk_fake_wifi_set_lock(router_lock, router_unlock);

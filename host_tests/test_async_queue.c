@@ -22,7 +22,7 @@ static void frame_with_seq(mtk_async_frame_t *f, uint32_t seq) {
     f->body[0] = (uint8_t)seq; f->body[1] = (uint8_t)(seq >> 8); f->body[2] = (uint8_t)(seq >> 16); f->body[3] = (uint8_t)(seq >> 24);
 }
 
-/* ---- Ordering (single-threaded) ---------------------------------------- */
+/* Ordering (single-threaded) -------------------- */
 static void test_ordering(void) {
     mtk_async_queue_t q;
     mtk_async_queue_init(&q);
@@ -40,7 +40,7 @@ static void test_ordering(void) {
     MTK_CHECK_EQ(mtk_async_queue_pop(&q, &(mtk_async_frame_t){0}), 0); /* empty */
 }
 
-/* ---- Overflow / backpressure -------------------------------------------- */
+/* Overflow / backpressure ---------------------- */
 static void test_overflow_backpressure(void) {
     mtk_async_queue_t q;
     mtk_async_queue_init(&q);
@@ -69,7 +69,7 @@ static void test_overflow_backpressure(void) {
     MTK_CHECK_EQ(mtk_async_queue_count(&q), 0);
 }
 
-/* ---- Reset / cancellation ------------------------------------------------ */
+/* Reset / cancellation ------------------------ */
 static void test_reset_cancellation(void) {
     mtk_async_queue_t q;
     mtk_async_queue_init(&q);
@@ -92,7 +92,7 @@ static void test_reset_cancellation(void) {
     MTK_CHECK_EQ(out.seq_or_status, 99);
 }
 
-/* ---- Real cross-thread lifetime/ownership under a real mutex ------------ */
+/* Real cross-thread lifetime/ownership under a real mutex ------ */
 #define THREAD_TEST_N 2000
 
 static pthread_mutex_t s_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -148,10 +148,9 @@ static void test_real_cross_thread(void) {
     free(q); /* no leak, no use-after-free: the producer has fully joined before this line */
 }
 
-/* ---- RC7 independent audit P0 "Native scheduling can starve or drop
- * control and terminal traffic": responses/events must never be dropped
- * or delayed by a stream flood, and pop order must be priority-first
- * (RESPONSE > EVENT > STREAM), not strict FIFO. ------------------------- */
+/* responses/events must never be dropped or delayed by a stream flood, and pop
+ * order must be priority-first (RESPONSE > EVENT > STREAM), not strict FIFO.
+ * ------------- */
 static void frame_of_kind(mtk_async_frame_t *f, mtk_async_frame_kind_t kind, uint32_t seq) {
     memset(f, 0, sizeof(*f));
     f->kind = kind;
@@ -177,9 +176,9 @@ static void test_priority_scheduling(void) {
     MTK_CHECK_EQ(mtk_async_queue_push(&q, &resp), 1); /* accepted, not dropped */
     MTK_CHECK_EQ(mtk_async_queue_count(&q), MTK_ASYNC_QUEUE_DEPTH); /* one STREAM slot was evicted to make room */
 
-    /* pop() returns the RESPONSE first, ahead of every still-queued
-     * STREAM chunk, regardless of FIFO arrival order -- closing "FIFO
-     * delivery can also send a stream before a queued response". */
+    /* pop returns the RESPONSE first, ahead of every still-queued STREAM chunk,
+     * regardless of FIFO arrival order -- closing "FIFO delivery can also send a
+     * stream before a queued response". */
     mtk_async_frame_t out;
     MTK_CHECK_EQ(mtk_async_queue_pop(&q, &out), 1);
     MTK_CHECK_EQ(out.kind, MTK_ASYNC_FRAME_RESPONSE);

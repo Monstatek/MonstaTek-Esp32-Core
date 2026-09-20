@@ -1,6 +1,5 @@
-/* BLE scan and advertising (002-ble-gatt-service.md Sec 2.1/2.2): scan
- * result paging, advertising start/status/stop, and the shared BA-class
- * single-advertising-slot exclusion. */
+/* BLE scan and advertising: scan result paging, advertising start/status/stop,
+ * and the shared BA-class single-advertising-slot exclusion. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtek_schema_message_descs.h"
@@ -69,10 +68,9 @@ MTK_TEST_MAIN_BEGIN
     mtk_ble_adv_status_resp_t st = {0};
     mtk_decode(adv_status->resp_desc, &st, asink.response.body, asink.response.body_len, NULL);
     MTK_CHECK_EQ(st.name.len, 4);
-    /* RC5 independent audit P0 "BLE advertising breaks the frozen shipped
-     * interface": the frozen List A parity record requires non-connectable
-     * advertising with no scan response -- must agree with the real HAL's
-     * esp32_ble_adv_start (BLE_GAP_CONN_MODE_NON, no adv-rsp fields set). */
+    /* The frozen List A parity record requires non-connectable advertising with
+     * no scan response -- must agree with the real HAL's esp32_ble_adv_start
+     * (BLE_GAP_CONN_MODE_NON, no adv-rsp fields set). */
     MTK_CHECK_EQ(st.connectable, 0);
     MTK_CHECK_EQ(st.has_scan_response, 0);
 

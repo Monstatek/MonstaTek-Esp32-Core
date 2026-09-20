@@ -1,5 +1,5 @@
-/* GATT client: connect/discover/read/write/subscribe/unsubscribe/disconnect
- * (002-ble-gatt-service.md Sec 3), including the drop/notify tick path. */
+/* GATT client: connect/discover/read/write/subscribe/unsubscribe/disconnect,
+ * including the drop/notify tick path. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtek_schema_message_descs.h"
@@ -13,14 +13,12 @@ MTK_TEST_MAIN_BEGIN
     g_fake_ble.gatt_vendor_handle = 42;
     g_fake_ble.gatt_service_count = 1;
     g_fake_ble.gatt_services[0].uuid_width = 0;
-    /* RC8 independent audit P0-5 "Stop GATT UUID stack-data leakage":
-     * poison the tail a 16-bit UUID never legitimately uses (bytes
-     * [2..15]) to 0xEE -- simulating exactly the real bug
-     * (mtek_ble_hal_esp32.c's disc_svc_cb once left these as whatever
-     * uninitialized/stale memory preceded them) via this fake HAL's own
-     * data instead. The wire response must show these as a defined 0
-     * regardless, proving mtek_ble_logic.c's own defensive truncation
-     * (not merely trusting the HAL) actually works. */
+    /* Poison the tail a 16-bit UUID never legitimately uses (bytes [2..15]) to
+     * 0xEE -- simulating exactly the real bug (mtek_ble_hal_esp32.c's
+     * disc_svc_cb once left these as whatever uninitialized/stale memory
+     * preceded them) via this fake HAL's own data instead. The wire response
+     * must show these as a defined 0 regardless, proving mtek_ble_logic.c's own
+     * defensive truncation (not merely trusting the HAL) actually works. */
     memset(g_fake_ble.gatt_services[0].uuid_value, 0xEE, sizeof(g_fake_ble.gatt_services[0].uuid_value));
     g_fake_ble.gatt_services[0].uuid_value[0] = 0x0F; g_fake_ble.gatt_services[0].uuid_value[1] = 0x18;
     g_fake_ble.gatt_services[0].start_handle = 1; g_fake_ble.gatt_services[0].end_handle = 10;
@@ -56,9 +54,9 @@ MTK_TEST_MAIN_BEGIN
     MTK_CHECK_EQ(dr.services.count, 1);
     MTK_CHECK_EQ(dr.services.items[0].start_handle, 1);
     MTK_CHECK_EQ(dr.services.items[0].end_handle, 10);
-    /* RC8 independent audit P0-5: uuid.value[2..15] must never leak the
-     * poisoned 0xEE tail above -- a 16-bit UUID's unused bytes are a
-     * defined 0 on the wire, not whatever memory preceded them. */
+    /* Uuid.value[2..15] must never leak the poisoned 0xEE tail above -- a 16-bit
+     * UUID's unused bytes are a defined 0 on the wire, not whatever memory
+     * preceded them. */
     MTK_CHECK_EQ(dr.services.items[0].uuid.width, 0);
     MTK_CHECK_EQ(dr.services.items[0].uuid.value[0], 0x0F);
     MTK_CHECK_EQ(dr.services.items[0].uuid.value[1], 0x18);
@@ -85,7 +83,7 @@ MTK_TEST_MAIN_BEGIN
     mtk_test_call(&wctx, write_op, &wreq);
     MTK_CHECK_EQ(wsink.response.status, MTK_STATUS_OK);
 
-    /* GATT_SUBSCRIBE, then a delivered notification via mtek_ble_gatt_tick(). */
+    /* GATT_SUBSCRIBE, then a delivered notification via mtek_ble_gatt_tick. */
     const mtk_opcode_entry_t *sub_op = mtk_test_find_op("GATT_SUBSCRIBE");
     mtk_gatt_subscribe_req_t sreq = {0}; sreq.connection_token = conn_tok; sreq.handle = 7; sreq.mode = 0;
     mtk_fake_sink_state_t subsink; mtk_fake_sink_reset(&subsink);
@@ -98,12 +96,11 @@ MTK_TEST_MAIN_BEGIN
     MTK_CHECK_EQ(g_fake_ble.last_subscribe_attr_handle, 7);
     MTK_CHECK_EQ(g_fake_ble.last_subscribe_end_handle, 10);
 
-    /* RC8 independent audit P0-6 "Preserve exact shipped UART behavior":
-     * the accepted baseline requires a DISTINCT "no CCCD" error, never
-     * conflated with an ordinary write failure. MTK_HAL_GATT_SUBSCRIBE_
-     * NO_CCCD from the HAL must surface as MTK_STATUS_NOT_FOUND here
-     * (mtek_ble_logic.c's own new distinction), not the generic IO_ERROR
-     * an unrelated write failure would produce. */
+    /* The accepted baseline requires a DISTINCT "no CCCD" error, never conflated
+     * with an ordinary write failure. MTK_HAL_GATT_SUBSCRIBE_ NO_CCCD from the
+     * HAL must surface as MTK_STATUS_NOT_FOUND here (mtek_ble_logic.c's own new
+     * distinction), not the generic IO_ERROR an unrelated write failure would
+     * produce. */
     {
         g_fake_ble.gatt_subscribe_rc = MTK_HAL_GATT_SUBSCRIBE_NO_CCCD;
         mtk_gatt_subscribe_req_t nocccd_req = {0}; nocccd_req.connection_token = conn_tok; nocccd_req.handle = 7; nocccd_req.mode = 0;
@@ -157,11 +154,9 @@ MTK_TEST_MAIN_BEGIN
     MTK_CHECK_EQ(sr.connected, 1);
     MTK_CHECK_EQ(sr.dropped_notification_count, 0); /* nothing dropped yet */
 
-    /* RC7 independent audit item 9 "notification queue overflow is
-     * silent and never increments the public dropped counter": GATT_
-     * STATUS's own dropped_notification_count now reads live from the
-     * HAL (previously a service-layer field nothing ever incremented --
-     * always reported 0 regardless of real overflow). */
+    /* GATT_ STATUS's own dropped_notification_count now reads live from the HAL
+     * (previously a service-layer field nothing ever incremented -- always
+     * reported 0 regardless of real overflow). */
     g_fake_ble.notify_dropped_count = 7;
     mtk_fake_sink_state_t stsink2; mtk_fake_sink_reset(&stsink2);
     mtk_request_ctx_t stctx2 = mtk_test_ctx(&stsink2, 12);
@@ -185,13 +180,12 @@ MTK_TEST_MAIN_BEGIN
     mtk_test_call(&rctx2, read_op, &rreq);
     MTK_CHECK_EQ(rsink.response.status, MTK_STATUS_NOT_FOUND);
 
-    /* RC5 independent audit P1 "BLE/GATT implementation is not yet
-     * parity-complete": "Remote disconnect is ignored... leaving
-     * connection/arbiter state stale." A genuine peer-initiated
-     * disconnect (never a caller-issued GATT_DISCONNECT) must still
-     * release the GC arbiter lease and clear connected-state bookkeeping
-     * via mtek_ble_gatt_tick's own poll, so a subsequent GATT_STATUS
-     * correctly reports disconnected rather than staying stale. */
+    /* "Remote disconnect is ignored... leaving connection/arbiter state stale."
+     * A genuine peer-initiated disconnect (never a caller-issued
+     * GATT_DISCONNECT) must still release the GC arbiter lease and clear
+     * connected-state bookkeeping via mtek_ble_gatt_tick's own poll, so a
+     * subsequent GATT_STATUS correctly reports disconnected rather than staying
+     * stale. */
     {
         mtk_fake_sink_state_t csink; mtk_fake_sink_reset(&csink);
         mtk_request_ctx_t cctx = mtk_test_ctx(&csink, 10);

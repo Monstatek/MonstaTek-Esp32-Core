@@ -1,41 +1,35 @@
-/* Release-tooling-round P0 correction, ROUND 2 (follow-up read-only audit,
- * "the same slot-reuse/ABA hazard remains through all 11 production
- * mtk_op_alloc() call sites"): the prior round fixed every mtk_op_find()
- * call site (never retain a raw pointer past the lock that produced it)
- * but left mtk_op_alloc()'s own 11 production callers dereferencing the
- * freshly-minted record's pointer for everything from the initial RUNNING
- * transition through the ACCEPTED response and any HAL call that follows
- * it -- the identical hazard, just at mint time instead of lookup time.
- * That round's fix: mtk_op_alloc_id() (mtek_core.h) copies out the
- * operation's immutable {token, boot_epoch} identity atomically at mint
- * time, under the same lock that allocated it, and every one of the 11
- * production call sites now uses ONLY that identity thereafter -- never a
- * retained mtk_operation_record_t* past the allocating expression.
+/* ROUND 2 (follow-up read-only audit, "the same slot-reuse/ABA hazard remains
+ * through all 11 production mtk_op_alloc call sites"): the prior round fixed
+ * every mtk_op_find call site (never retain a raw pointer past the lock that
+ * produced it) but left mtk_op_alloc's own 11 production callers dereferencing
+ * the freshly-minted record's pointer for everything from the initial RUNNING
+ * transition through the ACCEPTED response and any HAL call that follows it --
+ * the identical hazard, just at mint time instead of lookup time. That round's
+ * fix: mtk_op_alloc_id (mtek_core.h) copies out the operation's immutable
+ * {token, boot_epoch} identity atomically at mint time, under the same lock that
+ * allocated it, and every one of the 11 production call sites now uses ONLY that
+ * identity thereafter -- never a retained mtk_operation_record_t* past the
+ * allocating expression.
  *
- * This is the deterministic, SERVICE-LEVEL proof the audit asked for: it
- * forces genuine table-slot reuse (fills the fixed 8-slot table with
- * terminal records, then allocates a 9th, forcing mtk_op_alloc's own
- * documented "evict the oldest terminal record" path to free and reuse a
- * REAL slot for a brand-new, unrelated operation) and proves, entirely
- * through the public request/response wire-shape API (GET_OPERATION_
- * STATUS, DEAUTH_STOP) rather than any mtek_core.c internal:
- *   1. The evicted ("victim") operation's own OLD token is genuinely
- *      unusable afterward -- GET_OPERATION_STATUS/DEAUTH_STOP against it
- *      both report NOT_FOUND, never silently resolving to whatever now
- *      occupies its former slot.
- *   2. The replacement operation (freshly minted into that same reused
- *      slot) reports its own correct, independent state via STATUS,
- *      genuinely RUNNING, never contaminated by the victim's own final
- *      FAILED status.
- *   3. Attempting to STOP the replacement using the victim's OLD (now
- *      unrelated) token is rejected (NOT_FOUND) and provably does NOT
- *      mutate the replacement's own real state -- confirmed by a
- *      follow-up STATUS call on the replacement's own token showing it is
- *      still exactly as it was, unaffected.
- *   4. STOPping the replacement with its OWN correct token succeeds
- *      normally (STOPPED), completing a full alloc -> STATUS -> STOP path
- *      entirely through the post-reuse slot with no cross-contamination
- *      at any step. */
+ * This is the deterministic, SERVICE-LEVEL proof the audit asked for: it forces
+ * genuine table-slot reuse (fills the fixed 8-slot table with terminal records,
+ * then allocates a 9th, forcing mtk_op_alloc's own documented "evict the oldest
+ * terminal record" path to free and reuse a REAL slot for a brand-new, unrelated
+ * operation) and proves, entirely through the public request/response wire-shape
+ * API (GET_OPERATION_ STATUS, DEAUTH_STOP) rather than any mtek_core.c internal:
+ * 1. The evicted ("victim") operation's own OLD token is genuinely unusable
+ * afterward -- GET_OPERATION_STATUS/DEAUTH_STOP against it both report
+ * NOT_FOUND, never silently resolving to whatever now occupies its former slot.
+ * 2. The replacement operation (freshly minted into that same reused slot)
+ * reports its own correct, independent state via STATUS, genuinely RUNNING,
+ * never contaminated by the victim's own final FAILED status. 3. Attempting to
+ * STOP the replacement using the victim's OLD (now unrelated) token is rejected
+ * (NOT_FOUND) and provably does NOT mutate the replacement's own real state --
+ * confirmed by a follow-up STATUS call on the replacement's own token showing it
+ * is still exactly as it was, unaffected. 4. STOPping the replacement with its
+ * OWN correct token succeeds normally (STOPPED), completing a full alloc ->
+ * STATUS -> STOP path entirely through the post-reuse slot with no
+ * cross-contamination at any step. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtk_test_async_fixture.h"
@@ -93,19 +87,20 @@ MTK_TEST_MAIN_BEGIN
      * -- registered only later, right before the one call (DEAUTH_START)
      * that actually needs genuine backgrounding. */
 
-    const mtk_opcode_entry_t *ts_start_op = mtk_test_async_fixture_install() /* RC12 item 5: test-only overlay async op, was TIME_SYNC_START */;
+    const mtk_opcode_entry_t *ts_start_op = mtk_test_async_fixture_install() /* Test-only overlay async op, was
+                                                                              * TIME_SYNC_START */;
     const mtk_opcode_entry_t *status_op = mtk_test_find_op("GET_OPERATION_STATUS");
     const mtk_opcode_entry_t *deauth_start_op = mtk_test_find_op("DEAUTH_START");
     const mtk_opcode_entry_t *deauth_stop_op = mtk_test_find_op("DEAUTH_STOP");
     MTK_CHECK(ts_start_op && status_op && deauth_start_op && deauth_stop_op);
 
-    /* ---- 1. Fill all 8 operation-table slots with immediately-terminal
+    /* 1. Fill all 8 operation-table slots with immediately-terminal
      * TIME_SYNC_START operations (no SNTP client wired in -> each one
-     * synchronously transitions FAILED before its own request even
-     * returns). Slot/eviction order is by terminal_at_ms, oldest first --
-     * these 8 calls execute strictly in sequence on this single thread, so
-     * victim_token (the FIRST one minted) is unambiguously the oldest
-     * terminal record once the table is full. ---------------------------- */
+     * synchronously transitions FAILED before its own request even returns).
+     * Slot/eviction order is by terminal_at_ms, oldest first -- these 8 calls
+     * execute strictly in sequence on this single thread, so victim_token (the
+     * FIRST one minted) is unambiguously the oldest terminal record once the
+     * table is full. -------------- */
     uint32_t victim_token = 0;
     for (int i = 0; i < 8; i++) {
         mtk_fake_sink_state_t sink; mtk_fake_sink_reset(&sink);
@@ -134,12 +129,12 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(st.state, MTK_OPS_FAILED);
     }
 
-    /* ---- 2. The table is now genuinely FULL (8/8, all terminal). A 9th
-     * allocation -- a genuinely long-running DEAUTH_START -- forces
-     * mtk_op_alloc's own documented eviction of the oldest terminal record
-     * (victim_token's own slot) to mint this new, unrelated operation.
-     * ACCEPTED (never NO_MEMORY) here is itself proof the eviction really
-     * happened. ------------------------------------------------------------ */
+    /* 2. The table is now genuinely FULL (8/8, all terminal). A 9th allocation
+     * -- a genuinely long-running DEAUTH_START -- forces mtk_op_alloc's own
+     * documented eviction of the oldest terminal record (victim_token's own
+     * slot) to mint this new, unrelated operation. ACCEPTED (never NO_MEMORY)
+     * here is itself proof the eviction really happened.
+     * ------------------------------ */
     uint32_t replacement_token = 0;
     mtk_router_set_async_runner(pthread_runner); /* only now -- DEAUTH_START needs genuine backgrounding */
     /* start_sink/start_ctx are declared here, NOT inside a nested block --
@@ -180,8 +175,8 @@ MTK_TEST_MAIN_BEGIN
     }
     wait_for_deauth_count(1); /* the replacement is genuinely running in the background */
 
-    /* ---- 3. The victim's OLD token is now unusable: NOT_FOUND, never
-     * silently resolving to the replacement now occupying its old slot. */
+    /* 3. The victim's OLD token is now unusable: NOT_FOUND, never silently
+     * resolving to the replacement now occupying its old slot. */
     {
         mtk_fake_sink_state_t sink; mtk_fake_sink_reset(&sink);
         mtk_request_ctx_t ctx = mtk_test_ctx(&sink, 4000);
@@ -190,8 +185,8 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(sink.response.status, MTK_STATUS_NOT_FOUND);
     }
 
-    /* ---- 4. The replacement reports its OWN correct state (RUNNING),
-     * never the victim's stale FAILED status. --------------------------- */
+    /* 4. The replacement reports its OWN correct state (RUNNING), never the
+     * victim's stale FAILED status. --------------- */
     {
         mtk_fake_sink_state_t sink; mtk_fake_sink_reset(&sink);
         mtk_request_ctx_t ctx = mtk_test_ctx(&sink, 5000);
@@ -203,9 +198,9 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(st.state, MTK_OPS_RUNNING);
     }
 
-    /* ---- 5. Attempting to STOP the replacement using the VICTIM's own
-     * (now stale/unrelated) token is rejected -- and, critically, does NOT
-     * mutate the replacement's own real state. --------------------------- */
+    /* 5. Attempting to STOP the replacement using the VICTIM's own (now
+     * stale/unrelated) token is rejected -- and, critically, does NOT mutate the
+     * replacement's own real state. --------------- */
     {
         mtk_fake_sink_state_t sink; mtk_fake_sink_reset(&sink);
         mtk_request_ctx_t ctx = mtk_test_ctx(&sink, 6000);
@@ -228,9 +223,9 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(st.state, MTK_OPS_RUNNING);
     }
 
-    /* ---- 6. STOPping the replacement with its OWN correct token succeeds
-     * normally, completing the full alloc -> STATUS -> STOP path through
-     * the reused slot with no cross-contamination at any step. ---------- */
+    /* 6. STOPping the replacement with its OWN correct token succeeds normally,
+     * completing the full alloc -> STATUS -> STOP path through the reused slot
+     * with no cross-contamination at any step. ------ */
     {
         mtk_fake_sink_state_t sink; mtk_fake_sink_reset(&sink);
         mtk_request_ctx_t ctx = mtk_test_ctx(&sink, 8000);

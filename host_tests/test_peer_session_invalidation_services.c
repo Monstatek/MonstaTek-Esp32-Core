@@ -1,48 +1,41 @@
-/* Release-tooling-round P0 correction, ROUND 3 (follow-up read-only audit,
- * "genuine peer-session generation ownership"): the prior round's peer-
- * session invalidation cancelled the single currently arbiter-active
- * operation, but a further read-only re-audit found this incomplete:
- *  - AP/STA scan's own blocking HAL call was raced by touching the radio
- *    directly instead of signalling cancellation and quiescing first.
- *  - STA_CONNECT/BLE_SCAN/GATT_CONNECT have NO cancel hook for their own
- *    blocking HAL calls at all -- their handlers published shared session
- *    state, emitted terminal events, and released their arbiter class
- *    UNCONDITIONALLY once the call returned, with no check that a
- *    concurrent peer-session reset had not already invalidated them.
- *  - only the ONE active operation was ever touched -- any OTHER
- *    terminal-but-retained token from earlier in the same session
- *    remained fully queryable.
+/* ROUND 3 (follow-up read-only audit, "genuine peer-session generation
+ * ownership"): the prior round's peer- session invalidation cancelled the single
+ * currently arbiter-active operation, but a further read-only re-audit found
+ * this incomplete: - AP/STA scan's own blocking HAL call was raced by touching
+ * the radio directly instead of signalling cancellation and quiescing first. -
+ * STA_CONNECT/BLE_SCAN/GATT_CONNECT have NO cancel hook for their own blocking
+ * HAL calls at all -- their handlers published shared session state, emitted
+ * terminal events, and released their arbiter class UNCONDITIONALLY once the
+ * call returned, with no check that a concurrent peer-session reset had not
+ * already invalidated them. - only the ONE active operation was ever touched --
+ * any OTHER terminal-but-retained token from earlier in the same session
+ * remained fully queryable.
  *
- * This file proves, directly against the exported per-service cancel
- * functions and mtk_op_evict_all_terminal (exactly what mtek_spi_native_
- * dispatch.c's own cancel_active_operations_for_peer_reset orchestrates
- * on a real peer reboot -- see that function's own doc comment for the
- * full design), each of:
- *   1. AP_SCAN: a genuine quiescence handshake (signal cancel, bounded
- *      wait) -- the radio is properly restored/released by the WORKER
- *      itself, never touched directly by the invalidation path, and the
- *      worker's own blocking call is shown to return EARLY (fewer polls
- *      consumed than its configured full duration), not by luck.
- *   2. STA_CONNECT: no cancel hook exists, so the operation is fenced
- *      instead -- cancelled/evicted promptly WITHOUT waiting for the
- *      still-blocked connect() call, and when that call eventually
- *      returns "connected", the stale worker (a) never publishes
- *      s_sta_connected, (b) never emits STA_CONNECT_COMPLETE, and (c)
- *      tears the real HAL-level association back down itself. A
- *      subsequent NEW STA_CONNECT then completes normally end-to-end.
- *   3. CAPTURE and HANDSHAKE: cancelled/finalized directly (no blocking
- *      call to race), radio genuinely restored (promisc_stop observed).
- *   4. BLE_SCAN: a retained COMPLETED token is genuinely evicted by a
- *      peer-session invalidation sweep, not merely left queryable.
- *   5. GATT_CONNECT, already connected: torn down (gatt_disconnect
- *      observed, GATT_STATUS reports disconnected) on invalidation.
- *   6. GATT_CONNECT, still mid-connect (no cancel hook exists for this
- *      HAL call either): fenced/evicted promptly, arbiter released.
- *   7. Every one of the above ALSO proves "invalidate every old-session
- *      operation token, including terminal retained tokens" via a final
- *      mtk_op_evict_all_terminal() sweep alongside several already-
- *      terminal TIME_SYNC tokens minted earlier in the same simulated
- *      session. */
+ * This file proves, directly against the exported per-service cancel functions
+ * and mtk_op_evict_all_terminal (exactly what mtek_spi_native_ dispatch.c's own
+ * cancel_active_operations_for_peer_reset orchestrates on a real peer reboot --
+ * see that function's own doc comment for the full design), each of: 1. AP_SCAN:
+ * a genuine quiescence handshake (signal cancel, bounded wait) -- the radio is
+ * properly restored/released by the WORKER itself, never touched directly by the
+ * invalidation path, and the worker's own blocking call is shown to return EARLY
+ * (fewer polls consumed than its configured full duration), not by luck. 2.
+ * STA_CONNECT: no cancel hook exists, so the operation is fenced instead --
+ * cancelled/evicted promptly WITHOUT waiting for the still-blocked connect call,
+ * and when that call eventually returns "connected", the stale worker (a) never
+ * publishes s_sta_connected, (b) never emits STA_CONNECT_COMPLETE, and (c) tears
+ * the real HAL-level association back down itself. A subsequent NEW STA_CONNECT
+ * then completes normally end-to-end. 3. CAPTURE and HANDSHAKE:
+ * cancelled/finalized directly (no blocking call to race), radio genuinely
+ * restored (promisc_stop observed). 4. BLE_SCAN: a retained COMPLETED token is
+ * genuinely evicted by a peer-session invalidation sweep, not merely left
+ * queryable. 5. GATT_CONNECT, already connected: torn down (gatt_disconnect
+ * observed, GATT_STATUS reports disconnected) on invalidation. 6. GATT_CONNECT,
+ * still mid-connect (no cancel hook exists for this HAL call either):
+ * fenced/evicted promptly, arbiter released. 7. Every one of the above ALSO
+ * proves "invalidate every old-session operation token, including terminal
+ * retained tokens" via a final mtk_op_evict_all_terminal sweep alongside several
+ * already- terminal TIME_SYNC tokens minted earlier in the same simulated
+ * session. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtk_test_async_fixture.h"
@@ -55,11 +48,9 @@ static pthread_mutex_t s_mutex = PTHREAD_MUTEX_INITIALIZER;
 static void router_lock(void) { pthread_mutex_lock(&s_mutex); }
 static void router_unlock(void) { pthread_mutex_unlock(&s_mutex); }
 
-/* P0 correction (follow-up read-only audit, "one P0 race remains"): a
- * SEPARATE mutex for mtk_op_set_publish_lock, distinct from s_mutex
- * above -- see mtek_core.h's own doc comment on mtk_op_begin_publish_
- * guard for why it must never share a lock with anything a sink's own
- * emit call can reach. */
+/* A SEPARATE mutex for mtk_op_set_publish_lock, distinct from s_mutex above --
+ * see mtek_core.h's own doc comment on mtk_op_begin_publish_ guard for why it
+ * must never share a lock with anything a sink's own emit call can reach. */
 static pthread_mutex_t s_pub_mutex = PTHREAD_MUTEX_INITIALIZER;
 static void pub_lock_fn(void) { pthread_mutex_lock(&s_pub_mutex); }
 static void pub_unlock_fn(void) { pthread_mutex_unlock(&s_pub_mutex); }
@@ -154,7 +145,8 @@ MTK_TEST_MAIN_BEGIN
     const mtk_opcode_entry_t *ble_scan_start = mtk_test_find_op("BLE_SCAN_START");
     const mtk_opcode_entry_t *gatt_connect_op = mtk_test_find_op("GATT_CONNECT");
     const mtk_opcode_entry_t *gatt_status_op = mtk_test_find_op("GATT_STATUS");
-    const mtk_opcode_entry_t *ts_start = mtk_test_async_fixture_install() /* RC12 item 5: test-only overlay async op, was TIME_SYNC_START */;
+    const mtk_opcode_entry_t *ts_start = mtk_test_async_fixture_install() /* Test-only overlay async op, was
+                                                                           * TIME_SYNC_START */;
     MTK_CHECK(ap_start && sta_connect_op && capture_start && handshake_start &&
               ble_scan_start && gatt_connect_op && gatt_status_op && ts_start);
 
@@ -201,30 +193,27 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK(tok != 0);
         MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_WMC);
 
-        /* Cancel immediately -- does NOT wait for connect() (still 200ms
-         * from finishing) to return; the operation is fenced, not
-         * quiesced. */
+        /* Cancel immediately -- does NOT wait for connect (still 200ms from
+         * finishing) to return; the operation is fenced, not quiesced. */
         mtk_op_id_t cancelled = mtek_wifi_cancel_active_for_peer_reset();
         MTK_CHECK_EQ(cancelled.token, tok);
-        /* P0 correction (follow-up read-only audit, "final focused
-         * concurrency-correction round", issue 2): the arbiter is
-         * deliberately NOT released here -- the old connect() call has no
-         * cancel hook and may still genuinely be running on another
+        /* The arbiter is deliberately NOT released here -- the old connect call
+         * has no cancel hook and may still genuinely be running on another
          * thread (it has 200ms left); only the TOKEN is fenced/evicted.
-         * Releasing MTK_ARB_WMC here (the prior, now-corrected behavior)
-         * would let a brand-new STA_CONNECT acquire it and start a
-         * second, overlapping connect() against the same radio while the
-         * old one is still in flight. */
+         * Releasing MTK_ARB_WMC here (the prior, now-corrected behavior) would
+         * let a brand-new STA_CONNECT acquire it and start a second, overlapping
+         * connect against the same radio while the old one is still in flight. */
         MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_WMC);
         mtk_op_evict_all_terminal();
         MTK_CHECK_EQ(op_status(tok), MTK_STATUS_NOT_FOUND); /* evicted */
-        MTK_CHECK(!mtek_wifi_is_sta_connected()); /* not yet published (connect() still in flight) */
+        MTK_CHECK(!mtek_wifi_is_sta_connected()); /* not yet published (connect still in
+                                                   * flight) */
 
         /* Adversarial proof for issue 2 ("Blocked STA connect -> reset ->
          * immediate replacement STA operation"): an immediate replacement
-         * STA_CONNECT attempt, issued while the old connect() call is
-         * STILL genuinely blocked, must be refused (BUSY) -- never
-         * admitted to start a second, overlapping connect(). */
+         * STA_CONNECT attempt, issued while the old connect call is STILL
+         * genuinely blocked, must be refused (BUSY) -- never admitted to start a
+         * second, overlapping connect. */
         {
             mtk_fake_sink_state_t busy_sink; mtk_fake_sink_reset(&busy_sink);
             mtk_request_ctx_t busy_ctx = mtk_test_ctx(&busy_sink, 20);
@@ -240,10 +229,10 @@ MTK_TEST_MAIN_BEGIN
             MTK_CHECK_EQ(poll_for_response_status(&busy_sink), MTK_STATUS_BUSY);
         }
 
-        /* Let the stale worker's connect() call finally return
-         * "connected" -- it must never publish s_sta_connected, never
-         * emit STA_CONNECT_COMPLETE, and must tear the real HAL-level
-         * association it just formed back down itself. */
+        /* Let the stale worker's connect call finally return "connected" -- it
+         * must never publish s_sta_connected, never emit STA_CONNECT_COMPLETE,
+         * and must tear the real HAL-level association it just formed back down
+         * itself. */
         usleep(400000);
         MTK_CHECK(!mtek_wifi_is_sta_connected()); /* still never published -- the stale worker lost the race */
         MTK_CHECK(g_fake_wifi.disconnect_call_count >= 1); /* the stale worker's own fallback teardown fired */
@@ -376,16 +365,16 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(st2.connected, 0); /* genuinely torn down */
     }
 
-    /* ==== 7. GATT_CONNECT, still mid-connect: no cancel hook exists for
-     * this HAL call either -- fenced/evicted promptly, exactly mirroring
-     * how handle_gatt_connect's own tail is now gated. This mints the
-     * SAME state a real mid-connect operation would have (arbiter
-     * transferred, operation RUNNING, s_gatt NOT yet updated) via the
-     * exact same production primitives handle_gatt_connect itself uses,
-     * up to (but not including) the blocking gatt_connect() HAL call --
-     * a direct, deterministic proof of the cancel path's own mechanism,
-     * without needing a real concurrent thread against BLE's own
-     * currently-unlocked shared state. ================================== */
+    /* ==== 7. GATT_CONNECT, still mid-connect: no cancel hook exists for this
+     * HAL call either -- fenced/evicted promptly, exactly mirroring how
+     * handle_gatt_connect's own tail is now gated. This mints the SAME state a
+     * real mid-connect operation would have (arbiter transferred, operation
+     * RUNNING, s_gatt NOT yet updated) via the exact same production primitives
+     * handle_gatt_connect itself uses, up to (but not including) the blocking
+     * gatt_connect HAL call -- a direct, deterministic proof of the cancel
+     * path's own mechanism, without needing a real concurrent thread against
+     * BLE's own currently-unlocked shared state.
+     * ================================== */
     {
         mtk_fake_ble_reset();
         int no_mem = 0;
@@ -398,13 +387,11 @@ MTK_TEST_MAIN_BEGIN
 
         mtk_op_id_t cancelled = mtek_ble_cancel_active_for_peer_reset();
         MTK_CHECK_EQ(cancelled.token, id.token);
-        /* P0 correction (follow-up read-only audit, "final focused
-         * concurrency-correction round", issues 2/3): the arbiter is
-         * deliberately NOT released here -- a real mid-connect worker's
-         * blocking gatt_connect() call has no cancel hook and may still
-         * genuinely be running; only the TOKEN is fenced/evicted. An
-         * immediate replacement GATT_CONNECT must be refused (BUSY),
-         * never admitted to start a second, overlapping connect. */
+        /* The arbiter is deliberately NOT released here -- a real mid-connect
+         * worker's blocking gatt_connect call has no cancel hook and may still
+         * genuinely be running; only the TOKEN is fenced/evicted. An immediate
+         * replacement GATT_CONNECT must be refused (BUSY), never admitted to
+         * start a second, overlapping connect. */
         MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_GC);
         mtk_op_evict_all_terminal();
         MTK_CHECK_EQ(op_status(id.token), MTK_STATUS_NOT_FOUND);
@@ -434,15 +421,14 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_NONE);
     }
 
-    /* ==== 8. "Invalidate every old-session operation token, including
-     * terminal retained tokens": several already-terminal TIME_SYNC
-     * tokens AND a freshly-completed BLE_SCAN token, all minted from
-     * DIFFERENT services, are ALL genuinely evicted by one single
-     * mtk_op_evict_all_terminal() sweep -- exactly what cancel_active_
-     * operations_for_peer_reset() calls last, after every per-service
-     * cancel above (already proven individually in steps 1-5/7; this
-     * step proves the sweep genuinely covers MULTIPLE retained tokens
-     * from unrelated services in one pass, not merely one at a time). == */
+    /* ==== 8. "Invalidate every old-session operation token, including terminal
+     * retained tokens": several already-terminal TIME_SYNC tokens AND a
+     * freshly-completed BLE_SCAN token, all minted from DIFFERENT services, are
+     * ALL genuinely evicted by one single mtk_op_evict_all_terminal sweep --
+     * exactly what cancel_active_ operations_for_peer_reset calls last, after
+     * every per-service cancel above (already proven individually in steps
+     * 1-5/7; this step proves the sweep genuinely covers MULTIPLE retained
+     * tokens from unrelated services in one pass, not merely one at a time). == */
     {
         uint32_t ts_tokens[4];
         for (int i = 0; i < 4; i++) {

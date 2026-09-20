@@ -1,6 +1,6 @@
-/* MonstaShark capture (002-capture-diagnostics-service.md): poll-mode
- * lifecycle (start/poll/stop, tagged EMPTY/RECORD response), push-mode
- * credit gating and stream fragmentation, and counters/drops. */
+/* MonstaShark capture: poll-mode lifecycle (start/poll/stop, tagged EMPTY/RECORD
+ * response), push-mode credit gating and stream fragmentation, and
+ * counters/drops. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtek_capture_service.h"
@@ -15,7 +15,7 @@ MTK_TEST_MAIN_BEGIN
     mtek_capture_service_init(mtk_test_now_ms);
     mtek_capture_service_register();
 
-    /* ---- Poll mode ---- */
+    /* Poll mode -- */
     mtk_fake_wifi_reset();
     make_frame(g_fake_wifi.frames[0].data, 100, 0xAB); g_fake_wifi.frames[0].len = 100; g_fake_wifi.frames[0].channel = 6; g_fake_wifi.frames[0].rssi = -30;
     make_frame(g_fake_wifi.frames[1].data, 200, 0xCD); g_fake_wifi.frames[1].len = 200; g_fake_wifi.frames[1].channel = 6;
@@ -75,7 +75,7 @@ MTK_TEST_MAIN_BEGIN
     for (unsigned i = 0; i < sink.event_count; i++) if (strcmp(sink.events[i].name, "CAPTURE_STOPPED") == 0) stopped_count2++;
     MTK_CHECK_EQ(stopped_count2, 0); /* repeat_stop_emits_terminal_event: false */
 
-    /* ---- Push mode: credit gating and fragmentation ---- */
+    /* Push mode: credit gating and fragmentation -- */
     /* No credit granted before the frame arrives -> dropped, credit_stalls++. */
     mtk_fake_wifi_reset();
     make_frame(g_fake_wifi.frames[0].data, 1000, 0x11); g_fake_wifi.frames[0].len = 1000; g_fake_wifi.frames[0].channel = 1; /* forces 2 fragments */
@@ -100,15 +100,12 @@ MTK_TEST_MAIN_BEGIN
         mtk_capture_stats_resp_t stats0 = {0};
         mtk_decode(stats_op2->resp_desc, &stats0, stsink0.response.body, stsink0.response.body_len, NULL);
         MTK_CHECK_EQ(stats0.credit_stalls, 1);
-        /* RC7 independent audit item 11 "PUSH mode bypasses the required
-         * common ring and drops a frame immediately when credit is
-         * absent": the frame is no longer actually LOST when PUSH mode
-         * lacks credit -- it still lands in the shared bounded ring
-         * (frame_cb, mtek_capture_logic.c), just not delivered as a
-         * STREAM chunk this instant. dropped_frames only increments on a
-         * genuine ring-overflow now (this session's very first frame,
-         * with an empty ring, can never overflow it) -- credit_stalls
-         * alone reflects "STREAM delivery was skipped for lack of
+        /* The frame is no longer actually LOST when PUSH mode lacks credit -- it
+         * still lands in the shared bounded ring (frame_cb,
+         * mtek_capture_logic.c), just not delivered as a STREAM chunk this
+         * instant. dropped_frames only increments on a genuine ring-overflow now
+         * ('s very first frame, with an empty ring, can never overflow it) --
+         * credit_stalls alone reflects "STREAM delivery was skipped for lack of
          * credit", a real, distinct condition from "this frame is gone". */
         MTK_CHECK_EQ(stats0.dropped_frames, 0);
 
@@ -138,13 +135,12 @@ MTK_TEST_MAIN_BEGIN
     MTK_CHECK_EQ(psh2.streams[1].len, 8 + 104);
     MTK_CHECK_EQ(psh2.streams[0].session_token, s2.operation_token);
     MTK_CHECK_EQ(psh2.streams[1].sequence, psh2.streams[0].sequence + 1);
-    /* RC5 independent audit P1 "MonstaShark capture path is incomplete":
-     * byte 24 of the 25-byte first-fragment header (the reserved/padding
-     * byte between the fixed fields ending at offset 23 and the data
-     * payload starting at offset 25) used to be emitted straight off an
-     * uninitialized stack array -- a real information leak of whatever
-     * happened to be on the stack. The header is now zero-initialized, so
-     * this reserved byte is always a defined 0. */
+    /* Byte 24 of the 25-byte first-fragment header (the reserved/padding byte
+     * between the fixed fields ending at offset 23 and the data payload starting
+     * at offset 25) used to be emitted straight off an uninitialized stack array
+     * -- a real information leak of whatever happened to be on the stack. The
+     * header is now zero-initialized, so this reserved byte is always a defined
+     * 0. */
     MTK_CHECK_EQ(psh2.streams[0].data[24], 0);
 
     const mtk_opcode_entry_t *stats_op = mtk_test_find_op("CAPTURE_STATS");
@@ -165,11 +161,10 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(stopsink.response.status, MTK_STATUS_OK);
     }
 
-    /* ---- BSSID filter: RC5 independent audit P1 "MonstaShark capture
-     * path is incomplete" -- "capture filters ... are stored but not
-     * applied". A set filter_bssid must exclude frames whose addr1/2/3
-     * don't match it, and never count them as captured/dropped/
-     * truncated (a real, distinct "filtered out" outcome). ---- */
+    /* BSSID filter: "capture filters... are stored but not applied". A set
+     * filter_bssid must exclude frames whose addr1/2/3 don't match it, and never
+     * count them as captured/dropped/ truncated (a real, distinct "filtered out"
+     * outcome). -- */
     {
         mtk_fake_wifi_reset();
         static const uint8_t target_bssid[6] = {0x10,0x20,0x30,0x40,0x50,0x60};
@@ -227,10 +222,9 @@ MTK_TEST_MAIN_BEGIN
         mtk_test_call(&fstopctx, stop_op, &fstopreq);
     }
 
-    /* ---- Channel hop: RC5 independent audit P1 -- a hop-mode
-     * (channel_plan.mode==1) session must actually switch channel via
-     * the HAL once hop_dwell_ms elapses, driven by
-     * mtek_capture_channel_hop_tick. ---- */
+    /* Channel hop: a hop-mode (channel_plan.mode==1) session must actually
+     * switch channel via the HAL once hop_dwell_ms elapses, driven by
+     * mtek_capture_channel_hop_tick. -- */
     {
         mtk_fake_wifi_reset();
         mtk_fake_sink_state_t hsink; mtk_fake_sink_reset(&hsink);
@@ -261,10 +255,9 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(g_fake_wifi.set_channel_call_count, before);
     }
 
-    /* ---- RC7 independent audit item 11 "duration_ms is ignored": a
-     * session with a real requested duration must automatically stop
-     * once that much wall-clock time has genuinely elapsed, driven by
-     * the same periodic tick as channel hopping above. ------------------ */
+    /* a session with a real requested duration must automatically stop once that
+     * much wall-clock time has genuinely elapsed, driven by the same periodic
+     * tick as channel hopping above. ---------- */
     {
         mtk_fake_wifi_reset();
         mtk_fake_sink_state_t dsink; mtk_fake_sink_reset(&dsink);
@@ -318,14 +311,12 @@ MTK_TEST_MAIN_BEGIN
         mtk_test_call(&nstopctx, stop_op, &nstopreq);
     }
 
-    /* ---- RC8 independent audit P0-9 "Correct raw-radio channel and
-     * monitor-mode entry behavior": "Make monitor entry transactional:
-     * on any step failure, restore the prior mode/session and return an
-     * error." A hal->promisc_start failure must not leave a capture
-     * session marked RUNNING forever with no real frame delivery ever
-     * possible -- torn down immediately (arbiter released, a real
-     * CAPTURE_STOPPED terminal event with an honest failure status),
-     * exactly as if it had failed moments after a successful start. ---- */
+    /* "Make monitor entry transactional: on any step failure, restore the prior
+     * mode/session and return an error." A hal->promisc_start failure must not
+     * leave a capture session marked RUNNING forever with no real frame delivery
+     * ever possible -- torn down immediately (arbiter released, a real
+     * CAPTURE_STOPPED terminal event with an honest failure status), exactly as
+     * if it had failed moments after a successful start. -- */
     {
         mtk_fake_wifi_reset();
         g_fake_wifi.promisc_start_rc = -1;
@@ -347,9 +338,9 @@ MTK_TEST_MAIN_BEGIN
             MTK_CHECK_EQ(sev.status, MTK_STATUS_IO_ERROR);
             MTK_CHECK_EQ(sev.reason, 2); /* START_FAILED -- distinct from USER_REQUEST=0/DURATION_ELAPSED=1 */
         }
-        /* The arbiter lease this session took is genuinely released, not
-         * leaked -- a subsequent capture/deauth/handshake session (any
-         * MTK_ARB_M-class op) must be able to acquire it. */
+        /* The arbiter lease took is genuinely released, not leaked -- a
+         * subsequent capture/deauth/handshake session (any MTK_ARB_M-class op)
+         * must be able to acquire it. */
         MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_NONE);
         g_fake_wifi.promisc_start_rc = 0;
     }

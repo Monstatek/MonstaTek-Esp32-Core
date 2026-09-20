@@ -1,11 +1,9 @@
-/* RC9 independent correction order P0 "station-target scan bypasses the
- * transactional radio lifecycle": proves esp32_sta_scan's own new
- * transactional contract (mirrored by mtk_fake_wifi_hal.h's
- * fake_wifi_sta_scan) -- a real prior-state snapshot/restore round trip,
- * a real transactional-entry failure surfaced honestly (never silently
- * reported as "0 stations found"), and a genuine early-return when
- * STA_SCAN_STOP is dispatched from another thread while a real async
- * worker is still inside the blocking sta_scan call. */
+/* Proves esp32_sta_scan's own new transactional contract (mirrored by
+ * mtk_fake_wifi_hal.h's fake_wifi_sta_scan) -- a real prior-state
+ * snapshot/restore round trip, a real transactional-entry failure surfaced
+ * honestly (never silently reported as "0 stations found"), and a genuine
+ * early-return when STA_SCAN_STOP is dispatched from another thread while a real
+ * async worker is still inside the blocking sta_scan call. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtek_schema_message_descs.h"
@@ -40,10 +38,10 @@ MTK_TEST_MAIN_BEGIN
     mtk_router_set_lock(router_lock, router_unlock);
     mtek_wifi_service_set_lock(router_lock, router_unlock);
     mtk_fake_wifi_set_lock(router_lock, router_unlock);
-    /* RC9 independent correction order verification sweep: a real TSan run
-     * caught this test's own polling reads of a stack-local fake sink
-     * racing the async worker thread's own writes into it -- see
-     * mtk_fake_sink.h's own doc comment on mtk_fake_sink_set_lock. */
+    /* Verification sweep: a real TSan run caught this test's own polling reads
+     * of a stack-local fake sink racing the async worker thread's own writes
+     * into it -- see mtk_fake_sink.h's own doc comment on
+     * mtk_fake_sink_set_lock. */
     mtk_fake_sink_set_lock(router_lock, router_unlock);
 
     const mtk_opcode_entry_t *start_op = mtk_test_find_op("STA_SCAN_START");
@@ -51,8 +49,8 @@ MTK_TEST_MAIN_BEGIN
     const mtk_opcode_entry_t *status_op = mtk_test_find_op("STA_SCAN_STATUS");
     MTK_CHECK(start_op && stop_op && status_op);
 
-    /* ---- Part 1: transactional-entry failure is surfaced honestly --
-     * never silently rewritten to "0 stations found". */
+    /* Part 1: transactional-entry failure is surfaced honestly -- never silently
+     * rewritten to "0 stations found". */
     {
         mtk_fake_sink_state_t sink; memset(&sink, 0, sizeof(sink));
         mtk_request_ctx_t ctx = mtk_test_ctx(&sink, 1);
@@ -81,9 +79,9 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(sink.response.status, MTK_STATUS_ACCEPTED);
     }
 
-    /* ---- Part 2: prior-state snapshot/restore round trip for a
-     * SUCCESSFUL scan (a non-default mode/channel, genuinely disturbed
-     * by the scan's own channel select, must come back exactly). */
+    /* Part 2: prior-state snapshot/restore round trip for a SUCCESSFUL scan (a
+     * non-default mode/channel, genuinely disturbed by the scan's own channel
+     * select, must come back exactly). */
     {
         mtk_fake_sink_state_t sink; memset(&sink, 0, sizeof(sink));
         mtk_request_ctx_t ctx = mtk_test_ctx(&sink, 1);
@@ -107,9 +105,9 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK(g_fake_wifi.reconnect_attempted_count >= 1);
     }
 
-    /* ---- Part 3: STOP genuinely interrupts a live blocking scan -- a
-     * real async worker (pthread_runner) is still inside the fake HAL's
-     * own poll loop when STOP is dispatched from this thread. */
+    /* Part 3: STOP genuinely interrupts a live blocking scan -- a real async
+     * worker (pthread_runner) is still inside the fake HAL's own poll loop when
+     * STOP is dispatched from this thread. */
     {
         mtk_router_set_async_runner(pthread_runner);
         mtk_fake_sink_state_t sink; memset(&sink, 0, sizeof(sink));

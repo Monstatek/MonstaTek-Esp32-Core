@@ -1,22 +1,18 @@
-/* Clean-room implementation from MonstaTek contract
- * (001-command-behavior-matrix.md Sec A/B/C). Portable: no ESP-IDF
+/* Clean-room implementation from MonstaTek contract. Portable: no ESP-IDF
  * dependency, host-testable.
  *
  * Scope note (see docs/PROVENANCE.md): this adapter wires the List A
- * release-blocking surface (Wi-Fi AP/station scan, select, deauth with
- * real cached-table targeting, BLE scan/advertise/signal/GATT) plus the
- * List B console verbs the matrix documents (beacon, handshake, stop).
- * `list -h` (handshake hex dump) is reduced to a summary line -- the
- * underlying canonical data is available (HANDSHAKE_READ) but the exact
- * field-by-field text layout was not fully specified in the accepted
- * contract package. BLE `list <id>`/`list -d` (full per-AD-type detail
- * block, RC8 P0-6) and `connect`/`services` (nested service/
- * characteristic/descriptor discovery, RC8 P0-6) are now implemented in
- * full against `001-command-behavior-matrix.md`'s own evidence -- see
- * `format_ble_device_detail` and `gatt_discover_tree` below for exactly
- * what is a confirmed field vs. a disclosed, reasonable engineering
- * choice.
- */
+ * release-blocking surface (Wi-Fi AP/station scan, select, deauth with real
+ * cached-table targeting, BLE scan/advertise/signal/GATT) plus the List B
+ * console verbs the matrix documents (beacon, handshake, stop). `list -h`
+ * (handshake hex dump) is reduced to a summary line -- the underlying canonical
+ * data is available (HANDSHAKE_READ) but the exact field-by-field text layout
+ * was not fully specified in the accepted contract package. BLE `list
+ * <id>`/`list -d` (full per-AD-type detail block) and
+ * `connect`/`services` (nested service/characteristic/descriptor discovery)
+ * are implemented in full against evidence -- see
+ * `format_ble_device_detail` and `gatt_discover_tree` below for exactly what is
+ * a confirmed field vs. a disclosed, reasonable engineering choice. */
 #include "mtek_uart_adapter.h"
 #include "mtek_uart_pcap.h"
 #include "mtek_router.h"
@@ -44,36 +40,31 @@ typedef struct {
     int have_event;
 } uart_capture_t;
 
-/* RC6 independent audit P0 "Target stack usage is catastrophically larger
- * than the configured stacks" (fixed) + RC7 independent audit P0 "The
- * release artifact starts the wrong transport for shipped M1
- * compatibility" (this file's OWN follow-on measurement): every command
- * handler below uses one or two `uart_capture_t` values (~4.1KB each) to
- * capture a synchronous mtk_router_dispatch call's response. RC6 made
- * each of those ~25 call sites' own local `static uart_capture_t
- * cap`/`cap2`/`ev` -- safe (this REPL is strictly single-threaded,
- * processing one command line to completion, including every nested
- * dispatch call, before the next is read -- no concurrent or re-entrant
- * caller ever observes a torn or unexpectedly-shared value), but a real
- * `idf.py size` measurement after RC7 made the UART REPL task start
- * unconditionally (previously it was `#if`'d out entirely whenever SPI
- * was the build-time "primary transport", so RC6's own measurement never
- * actually counted this) showed those ~25 independently-named statics
- * cost ~103KB of DIRAM by themselves -- on a chip already tight on SRAM
- * (docs/RESOURCE_BUDGET.md's own "RC6 measured SRAM conflict" section).
- * Since the same single-threaded-non-reentrant safety argument that
- * justified `static` in the first place applies equally to SHARING one
- * instance across every call site (nothing here is ever concurrent with
- * itself), this file now declares exactly THREE shared file-scope
- * instances below (matching the real maximum ever simultaneously live in
- * one call -- no handler needs more than two, e.g. handle_ble_signal's
- * `cap`+`ev`) and every handler below simply reuses them by NOT
- * redeclaring a local `cap`/`cap2`/`ev` of its own -- plain C scoping
- * means an undeclared identifier used inside a function resolves to the
- * file-scope one. This cuts the same real memory from ~103KB to ~12KB
- * (three instances instead of twenty-five) with no change in behavior:
- * each handler still fully owns and resets "its" capture(s) for the
- * duration of its own synchronous call, exactly as before. */
+/* (fixed) + (this file's OWN follow-on measurement): every command handler below
+ * uses one or two `uart_capture_t` values (~4.1KB each) to capture a synchronous
+ * mtk_router_dispatch call's response. RC6 made each of those ~25 call sites'
+ * own local `static uart_capture_t cap`/`cap2`/`ev` -- safe (this REPL is
+ * strictly single-threaded, processing one command line to completion, including
+ * every nested dispatch call, before the next is read -- no concurrent or
+ * re-entrant caller ever observes a torn or unexpectedly-shared value), but a
+ * real `idf.py size` measurement after RC7 made the UART REPL task start
+ * unconditionally (previously it was `#if`'d out entirely whenever SPI was the
+ * build-time "primary transport", so RC6's own measurement never actually
+ * counted this) showed those ~25 independently-named statics cost ~103KB of
+ * DIRAM by themselves -- on a chip already tight on SRAM
+ * (docs/RESOURCE_BUDGET.md's own "RC6 measured SRAM conflict" section). Since
+ * the same single-threaded-non-reentrant safety argument that justified `static`
+ * in the first place applies equally to SHARING one instance across every call
+ * site (nothing here is ever concurrent with itself), this file now declares
+ * exactly THREE shared file-scope instances below (matching the real maximum
+ * ever simultaneously live in one call -- no handler needs more than two, e.g.
+ * handle_ble_signal's `cap`+`ev`) and every handler below simply reuses them by
+ * NOT redeclaring a local `cap`/`cap2`/`ev` of its own -- plain C scoping means
+ * an undeclared identifier used inside a function resolves to the file-scope
+ * one. This cuts the same real memory from ~103KB to ~12KB (three instances
+ * instead of twenty-five) with no change in behavior: each handler still fully
+ * owns and resets "its" capture(s) for the duration of its own synchronous call,
+ * exactly as before. */
 static uart_capture_t cap, cap2, ev;
 
 static mtk_emit_result_t cap_resp(void *user, uint32_t correlation, uint8_t status, const void *body, const mtk_struct_desc_t *desc) {
@@ -201,26 +192,23 @@ static size_t emit(char *out, size_t out_cap, size_t used, const char *fmt, ...)
     return used + (size_t)n;
 }
 
-/* RC9 independent correction order P0 "strict List A UART parity is
- * still knowingly incomplete": the exact boot warning + full command
- * reference, reconstructed via clean-room OBSERVABLE INTERFACE
- * reimplementation from the accepted factory image (an external factory
- * compatibility artifact, `MtkEsp32-monstashark.bin`, held outside this
- * source tree) -- read-only `strings -a` / raw byte inspection of that
- * binary's own rodata (a behavioral-evidence
- * artifact, never opened as source, never copied into this tree or any
- * future git history), which stores each line below as its own separate
- * NUL-terminated string literal (confirmed by inspecting the raw bytes
- * around each string, not merely `strings`' line-per-string display --
- * i.e. this is genuinely one `puts`/`printf("%s\n", ...)` call per line
- * in the original firmware, not one giant multi-line literal with an
- * unconfirmed internal blank-line count). Every character, including
- * leading-space indentation and punctuation, is copied verbatim from
- * those bytes. Printed identically at boot (before the first `>> `
- * prompt) and by the `help` command -- both are observed, in the
- * accepted command-behavior matrix's own words, to print "before the
- * first prompt" / "on request", never independently confirmed to differ
- * in content between the two call sites. */
+/* The exact boot warning + full command reference, reconstructed via clean-room
+ * OBSERVABLE INTERFACE reimplementation from the accepted factory image (an
+ * external factory compatibility artifact, `MtkEsp32-monstashark.bin`, held
+ * outside this source tree) -- read-only `strings -a` / raw byte inspection of
+ * that binary's own rodata (a behavioral-evidence artifact, never opened as
+ * source, never copied into this tree or any future git history), which stores
+ * each line below as its own separate NUL-terminated string literal (confirmed
+ * by inspecting the raw bytes around each string, not merely `strings`'
+ * line-per-string display -- i.e. this is genuinely one
+ * `puts`/`printf("%s\n",...)` call per line in the original firmware, not one
+ * giant multi-line literal with an unconfirmed internal blank-line count). Every
+ * character, including leading-space indentation and punctuation, is copied
+ * verbatim from those bytes. Printed identically at boot (before the first `>> `
+ * prompt) and by the `help` command -- both are observed, in the accepted
+ * command-behavior matrix's own words, to print "before the first prompt" / "on
+ * request", never independently confirmed to differ in content between the two
+ * call sites. */
 static const char *const MTK_HELP_BLOCK_LINES[] = {
     "Warning! This program is designed solely for educational and ethical security research purposes.",
     "Please familiarize yourself with local laws and always obtain appropriate permissions before conducting network tests.",
@@ -566,12 +554,12 @@ static size_t handle_handshake(mtk_uart_adapter_state_t *st, char *out, size_t o
     req.target_bssid = st->ap_table[st->ap_selected].bssid;
     req.channel = st->ap_table[st->ap_selected].channel;
     req.deauth_count = 0;
-    /* Persistent, queue-backed sink (RC5 independent audit P0): the real
-     * target's promiscuous-mode callback delivers HANDSHAKE_EVENT frames
-     * from the Wi-Fi driver's own task, well after this dispatch returns
-     * -- mtek_wifi_logic.c's handshake_session_t retains a copy of
-     * ctx.sink for that whole capture's lifetime, so it must point at
-     * boot-session-persistent storage, never this function's own stack. */
+    /* Persistent, queue-backed sink : the real target's promiscuous-mode
+     * callback delivers HANDSHAKE_EVENT frames from the Wi-Fi driver's own task,
+     * well after this dispatch returns -- mtek_wifi_logic.c's
+     * handshake_session_t retains a copy of ctx.sink for that whole capture's
+     * lifetime, so it must point at boot-session-persistent storage, never this
+     * function's own stack. */
     mtk_request_ctx_t ctx = make_session_ctx(st);
     const mtk_opcode_entry_t *op = mtk_opcode_find(0x0001, 0x0013);
     uint8_t buf[32]; size_t blen = 0;
@@ -651,11 +639,10 @@ static size_t handle_stop(mtk_uart_adapter_state_t *st, char *out, size_t out_ca
 
 /* ===================== BLE mode ======================================== */
 
-/* RC8 independent audit P0-6 "Preserve exact shipped UART behavior": the
- * accepted baseline's own `scan` row -- "combinable flags -t <sec>,
- * -n <name>" -- alongside the existing -a/-p mode flag. A single
- * space-delimited token for -n's own name argument (no quoting grammar
- * is documented for this flag, unlike beacon's own quoted-SSID list). */
+/* The accepted baseline's own `scan` row -- "combinable flags -t <sec>, -n
+ * <name>" -- alongside the existing -a/-p mode flag. A single space-delimited
+ * token for -n's own name argument (no quoting grammar is documented for this
+ * flag, unlike beacon's own quoted-SSID list). */
 static uint32_t parse_scan_duration_ms(const char *rest) {
     const char *p = strstr(rest, "-t ");
     if (!p) return 5000;
@@ -728,34 +715,30 @@ static size_t handle_ble_list(mtk_uart_adapter_state_t *st, char *out, size_t ou
     return used;
 }
 
-/* RC8 independent audit P0-6 "Preserve exact shipped UART behavior",
- * evidence `001-command-behavior-matrix.md` line 68: "detail block: RSSI,
- * Flags, Shortened/Complete Local Name, Service UUID16/128, TX Power,
- * Service Data UUID16, Manufacturer Data, unknown-AD-type fallback,
- * `Raw ADV data :`, then additive `Raw SCAN_RSP data :`". The canonical
- * `mtk_ble_device_details_resp_t` schema (accepted Task 002 contract)
- * has no dedicated Service UUID16/128 or Service Data UUID16 fields --
- * but this is NOT an unfixable data-model gap: the response already
- * carries the complete raw AD byte streams (`raw_adv`/`raw_scan_rsp`),
- * which is exactly where a real console sources these fields too. This
- * UART layer therefore parses the standard length-prefixed BT AD
- * structures (Core Spec Vol 3 Part C Sec 11) directly out of both
- * buffers itself, closing the gap without any canonical-schema change.
- * Flags/Name-text/TxPower/Manufacturer-Data are NOT re-derived here --
- * they stay sourced from the HAL's own already-parsed schema fields (one
- * value, one source of truth); the AD walk below is used only for (a)
- * the Shortened-vs-Complete Local Name distinction (AD type 0x08 vs
- * 0x09, a bit the schema does not carry), (b) Service UUID16/128 lists
- * (0x02/0x03, 0x06/0x07), (c) Service Data 16-bit UUID (0x16), and (d)
- * the unknown-AD-type fallback for every other type byte encountered.
- * ADV and SCAN_RSP are walked and merged (duplicate UUIDs suppressed) --
- * a disclosed, reasonable choice for what "the detail block" aggregates
- * across both PDUs, not an independently confirmed byte-exact match.
- * The exact per-field label text below is likewise this session's own
- * reasonable choice, not confirmed against `m1_console.c` itself (out of
- * reach under this task's clean-room constraint) -- matches this tree's
- * established "disclosed engineering choice" pattern elsewhere (e.g.
- * HELLO_ACK's empty payload, MTK_SIGNAL_METER_MISS_TOLERANCE's value). */
+/* Evidence line 68: "detail block: RSSI, Flags, Shortened/Complete Local Name,
+ * Service UUID16/128, TX Power, Service Data UUID16, Manufacturer Data,
+ * unknown-AD-type fallback, `Raw ADV data :`, then additive `Raw SCAN_RSP data
+ * :`". The canonical `mtk_ble_device_details_resp_t` schema (accepted Task 002
+ * contract) has no dedicated Service UUID16/128 or Service Data UUID16 fields --
+ * but this is NOT an unfixable data-model gap: the response already carries the
+ * complete raw AD byte streams (`raw_adv`/`raw_scan_rsp`), which is exactly
+ * where a real console sources these fields too. This UART layer therefore
+ * parses the standard length-prefixed BT AD structures (Core Spec Vol 3 Part C
+ * Sec 11) directly out of both buffers itself, closing the gap without any
+ * canonical-schema change. Flags/Name-text/TxPower/Manufacturer-Data are NOT
+ * re-derived here -- they stay sourced from the HAL's own already-parsed schema
+ * fields (one value, one source of truth); the AD walk below is used only for
+ * (a) the Shortened-vs-Complete Local Name distinction (AD type 0x08 vs 0x09, a
+ * bit the schema does not carry), (b) Service UUID16/128 lists (0x02/0x03,
+ * 0x06/0x07), (c) Service Data 16-bit UUID (0x16), and (d) the unknown-AD-type
+ * fallback for every other type byte encountered. ADV and SCAN_RSP are walked
+ * and merged (duplicate UUIDs suppressed) -- a disclosed, reasonable choice for
+ * what "the detail block" aggregates across both PDUs, not an independently
+ * confirmed byte-exact match. The exact per-field label text below is likewise
+ * the reasonable choice, not confirmed against `m1_console.c` itself (out of
+ * reach under's clean-room constraint) -- matches this tree's established
+ * "disclosed engineering choice" pattern elsewhere (e.g. HELLO_ACK's empty
+ * payload, MTK_SIGNAL_METER_MISS_TOLERANCE's value). */
 #define BLE_AD_UUID16_MAX 8
 #define BLE_AD_UUID128_MAX 4
 typedef struct {
@@ -917,10 +900,9 @@ static size_t handle_ble_signal(mtk_uart_adapter_state_t *st, const char *arg, c
     if (!st->ble_scan_valid || id < 0 || (unsigned)id >= st->ble_count) return emit(out, out_cap, 0, "[!] Invalid BLE ID: %s\n", arg);
     mtk_signal_meter_start_req_t req = {0};
     req.target.addr = st->ble_addr[id]; req.target.addr_type = st->ble_addr_type[id];
-    /* Persistent, queue-backed sink (RC5 independent audit P0): every
-     * SIGNAL_METER_UPDATE/LOST after the first sample arrives from the
-     * periodic mtek_ble_signal_meter_tick() background task, not this
-     * call. */
+    /* Persistent, queue-backed sink : every SIGNAL_METER_UPDATE/LOST after the
+     * first sample arrives from the periodic mtek_ble_signal_meter_tick
+     * background task, not this call. */
     mtk_request_ctx_t ctx = make_session_ctx(st);
     const mtk_opcode_entry_t *op = mtk_opcode_find(0x0002, 0x0009);
     uint8_t buf[16]; size_t blen = 0;
@@ -940,34 +922,30 @@ static size_t handle_ble_signal(mtk_uart_adapter_state_t *st, const char *arg, c
     return used;
 }
 
-/* RC8 independent audit P0-6, evidence `001-command-behavior-matrix.md`
- * lines 74-75: `connect <id>` auto-discovery completes with
- * "[BLE:DISC] complete: S service(s), C characteristic(s), D
- * descriptor(s)]"; `services` prints nested `[SVC]` / `[CHR]` / `[DSC]`
- * rows. GATT_DISCOVER (0x0003/0x0004) only ever enumerated services --
- * closing this gap needed genuinely new characteristic/descriptor
- * discovery, added as the new, purely additive GATT_DISCOVER_CHARS
- * (0x0003/0x0009) and GATT_DISCOVER_DESCS (0x0003/0x000A) opcodes (see
- * schemas.json / mtek_ble_logic.c / mtek_ble_hal_esp32.c) -- no existing
- * opcode's command ID, framing, or response shape changed.
+/* Evidence lines 74-75: `connect <id>` auto-discovery completes with "[BLE:DISC]
+ * complete: S service(s), C characteristic(s), D descriptor(s)]"; `services`
+ * prints nested `[SVC]` / `[CHR]` / `[DSC]` rows. GATT_DISCOVER (0x0003/0x0004)
+ * only ever enumerated services -- closing this gap needed genuinely new
+ * characteristic/descriptor discovery, added as the new, purely additive
+ * GATT_DISCOVER_CHARS (0x0003/0x0009) and GATT_DISCOVER_DESCS (0x0003/0x000A)
+ * opcodes (see schemas.json / mtek_ble_logic.c / mtek_ble_hal_esp32.c) -- no
+ * existing opcode's command ID, framing, or response shape changed.
  *
- * `gatt_discover_tree` below performs the full services->chars->descs
- * walk once and both callers (connect's auto-discovery, `services`'s own
- * listing) reuse it. The result tree is a file-static scratch object
- * (this session's own P0-1 "large aggregate objects must never live in a
- * task's call stack" rule applies here too -- ~6.7KB, far past what
- * belongs in any UART command handler's own frame), not a per-adapter-
- * instance field: the whole UART REPL is single-threaded and processes
- * one command to completion before the next, so one shared static is
- * safe, matching this file's own established `cap`/`cap2`/`ev` pattern.
- * Bounded to GATT_TREE_MAX_SVC/_CHR/_DSC (8/8/4) -- a disclosed,
- * reasonable practical limit for a console-grade tool, not a claim that
- * every real peripheral's GATT database is always this small; the
- * canonical opcodes themselves support pagination (`next_index`) that
- * this bounded, single-page tree view does not use. Per-characteristic
- * descriptor search range mirrors gatt_subscribe's own established
- * contract: (val_handle+1 .. next characteristic's def_handle-1, or the
- * containing service's end_handle if this is the last characteristic). */
+ * `gatt_discover_tree` below performs the full services->chars->descs walk once
+ * and both callers (connect's auto-discovery, `services`'s own listing) reuse
+ * it. The result tree is a file-static scratch object (large aggregate
+ * objects must never live in a task's call stack --
+ * ~6.7KB, far past what belongs in any UART command handler's own frame), not a
+ * per-adapter- instance field: the whole UART REPL is single-threaded and
+ * processes one command to completion before the next, so one shared static is
+ * safe, matching this file's own established `cap`/`cap2`/`ev` pattern. Bounded
+ * to GATT_TREE_MAX_SVC/_CHR/_DSC (8/8/4) -- a disclosed, reasonable practical
+ * limit for a console-grade tool, not a claim that every real peripheral's GATT
+ * database is always this small; the canonical opcodes themselves support
+ * pagination (`next_index`) that this bounded, single-page tree view does not
+ * use. Per-characteristic descriptor search range mirrors gatt_subscribe's own
+ * established contract: (val_handle+1.. next characteristic's def_handle-1, or
+ * the containing service's end_handle if this is the last characteristic). */
 #define GATT_TREE_MAX_SVC 8
 #define GATT_TREE_MAX_CHR 8
 #define GATT_TREE_MAX_DSC 4
@@ -1061,9 +1039,9 @@ static size_t handle_ble_connect(mtk_uart_adapter_state_t *st, const char *arg, 
     size_t used = emit(out, out_cap, 0, "[*] Connecting to %s (30s timeout)...\n", mac);
     mtk_gatt_connect_req_t req = {0};
     req.target.addr = st->ble_addr[id]; req.target.addr_type = st->ble_addr_type[id];
-    /* Persistent, queue-backed sink (RC5 independent audit P0): GATT_VALUE_EVENT
-     * notifications/indications after a successful connect arrive from
-     * mtek_ble_gatt_tick()'s background polling, not this call. */
+    /* Persistent, queue-backed sink : GATT_VALUE_EVENT notifications/indications
+     * after a successful connect arrive from mtek_ble_gatt_tick's background
+     * polling, not this call. */
     mtk_request_ctx_t ctx = make_session_ctx(st);
     const mtk_opcode_entry_t *op = mtk_opcode_find(0x0003, 0x0001);
     uint8_t buf[16]; size_t blen = 0;
@@ -1184,16 +1162,14 @@ static size_t handle_ble_subscribe(mtk_uart_adapter_state_t *st, const char *arg
     uint8_t buf[8]; size_t blen = 0;
     mtk_encode(op->req_desc, &req, buf, sizeof(buf), &blen);
     mtk_router_dispatch(&ctx, 0x0003, 0x0007, buf, blen);
-    /* RC8 independent audit P0-6 "Preserve exact shipped UART behavior":
-     * the accepted baseline's own `subscribe`/`indicate` rows: a distinct
-     * "[!] Characteristic <h> has no CCCD (not subscribable)." error
-     * (MTK_STATUS_NOT_FOUND, mtek_ble_logic.c's own new distinction), and
-     * BOTH subscribe and indicate ack with "[BLE:SUB] ok" -- indicate's
-     * own ack column is explicitly "as above" (subscribe's), not a
-     * separate "[BLE:IND] ok"; "[BLE:IND]" is reserved for the later
-     * per-notification STREAM tag (format_background_frame below), a
-     * genuinely different message this ack was previously, incorrectly,
-     * reusing. */
+    /* The accepted baseline's own `subscribe`/`indicate` rows: a distinct "[!]
+     * Characteristic <h> has no CCCD (not subscribable)." error
+     * (MTK_STATUS_NOT_FOUND, mtek_ble_logic.c's own new distinction), and BOTH
+     * subscribe and indicate ack with "[BLE:SUB] ok" -- indicate's own ack
+     * column is explicitly "as above" (subscribe's), not a separate "[BLE:IND]
+     * ok"; "[BLE:IND]" is reserved for the later per-notification STREAM tag
+     * (format_background_frame below), a genuinely different message this ack
+     * was previously, incorrectly, reusing. */
     if (cap.status == MTK_STATUS_NOT_FOUND) return emit(out, out_cap, 0, "[!] Characteristic %ld has no CCCD (not subscribable).\n", handle);
     if (cap.status != MTK_STATUS_OK) return emit(out, out_cap, 0, "[BLE:ERR] subscribe failed status=%u\n", cap.status);
     return emit(out, out_cap, 0, "[BLE:SUB] ok\n");
@@ -1242,21 +1218,19 @@ static size_t handle_ble_disconnect(mtk_uart_adapter_state_t *st, char *out, siz
 
 /* ===================== top-level line dispatch ========================= */
 
-/* RC8 independent audit P0-7 "Claim AUTO transport only after valid
- * grammar recognition": "AUTO mode currently claims UART on any non-
- * empty input, despite its own contract saying the first valid legacy
- * command wins. Noise, partial input, boot chatter, or an unknown
- * command can permanently lock out SPI for that boot." A side-effect-
- * free recognizer -- checked by the REPL loop (app_main.c) BEFORE ever
- * attempting mtk_transport_claim_try, mirroring how the SPI side of this
- * same cross-transport race only ever claims after recognizing a real
- * protocol frame (mtk_transport_try_recognize_discovery), never on
- * arbitrary bytes. Mirrors mtek_uart_process_line's own dispatch grammar
- * exactly (mode-independent global commands, then the current mode's own
- * table) -- MUST be kept in sync with that function below if its own
- * command set ever changes; deliberately does not call into any handler
- * (no side effect, no radio/state mutation), so it is safe to call
- * speculatively before the cross-transport race is even decided. */
+/* "AUTO mode currently claims UART on any non- empty input, despite its own
+ * contract saying the first valid legacy command wins. Noise, partial input,
+ * boot chatter, or an unknown command can permanently lock out SPI for that
+ * boot." A side-effect- free recognizer -- checked by the REPL loop (app_main.c)
+ * BEFORE ever attempting mtk_transport_claim_try, mirroring how the SPI side of
+ * this same cross-transport race only ever claims after recognizing a real
+ * protocol frame (mtk_transport_try_recognize_discovery), never on arbitrary
+ * bytes. Mirrors mtek_uart_process_line's own dispatch grammar exactly
+ * (mode-independent global commands, then the current mode's own table) -- MUST
+ * be kept in sync with that function below if its own command set ever changes;
+ * deliberately does not call into any handler (no side effect, no radio/state
+ * mutation), so it is safe to call speculatively before the cross-transport race
+ * is even decided. */
 static int mtek_uart_line_is_recognized(const mtk_uart_adapter_state_t *st, const char *line) {
     if (line[0] == 0) return 0; /* an empty line is never itself a "valid legacy command" signal for the claim race */
     if (strcmp(line, "help") == 0 || strcmp(line, "version") == 0 || strcmp(line, "reboot") == 0) return 1;
@@ -1293,13 +1267,11 @@ int mtek_uart_adapter_line_is_recognized(const mtk_uart_adapter_state_t *st, con
 
 size_t mtek_uart_process_line(mtk_uart_adapter_state_t *st, const char *line, char *out, size_t out_cap) {
     if (out_cap) out[0] = 0;
-    /* RC5 independent audit P1 "Factory UART parity is incomplete": bare
-     * Enter (an empty line) stops a running List B operation, matching
-     * the shipped command-behavior matrix's documented bare-Enter attack
-     * stop -- a no-op otherwise. The REPL loop (app_main.c) must call
-     * this with an empty string on a bare Enter for this to take effect;
-     * previously it silently discarded a bare Enter before ever reaching
-     * this function at all. */
+    /* Bare Enter (an empty line) stops a running List B operation, matching the
+     * shipped command-behavior matrix's documented bare-Enter attack stop -- a
+     * no-op otherwise. The REPL loop (app_main.c) must call this with an empty
+     * string on a bare Enter for this to take effect; previously it silently
+     * discarded a bare Enter before ever reaching this function at all. */
     if (line[0] == 0) {
         if (st->deauth_running || st->handshake_running || st->beacon_running || st->ble_adv_running || st->ble_signal_running)
             return handle_stop(st, out, out_cap);
@@ -1367,13 +1339,13 @@ size_t mtek_uart_process_line(mtk_uart_adapter_state_t *st, const char *line, ch
 
 /* ===================== background (unsolicited) delivery =============== */
 
-/* RC5 independent audit P0/P1: real asynchronous delivery for the three
- * long-lived sessions (handshake capture, signal meter, GATT notify) that
- * can produce output while the REPL is idle at the prompt, not just at
- * the moment their `handshake`/`signal`/`connect` command was issued. The
- * exact console line formatting reuses the accepted baseline's own
- * confirmed tags (`[BLE:SIG]`/`[BLE:NTF]`/`[BLE:IND]`/handshake phase
- * tags, 001-command-behavior-matrix.md), not an invented format. */
+/* /P1: real asynchronous delivery for the three long-lived sessions (handshake
+ * capture, signal meter, GATT notify) that can produce output while the REPL is
+ * idle at the prompt, not just at the moment their
+ * `handshake`/`signal`/`connect` command was issued. The exact console line
+ * formatting reuses the accepted baseline's own confirmed tags
+ * (`[BLE:SIG]`/`[BLE:NTF]`/`[BLE:IND]`/handshake phase tags,), not an invented
+ * format. */
 static size_t format_background_frame(const mtk_async_frame_t *f, char *out, size_t out_cap) {
     if (f->kind == MTK_ASYNC_FRAME_EVENT && strcmp(f->event_name, "HANDSHAKE_EVENT") == 0) {
         mtk_handshake_event_ev_t ev = {0};
@@ -1398,12 +1370,10 @@ static size_t format_background_frame(const mtk_async_frame_t *f, char *out, siz
     if (f->kind == MTK_ASYNC_FRAME_EVENT && strcmp(f->event_name, "GATT_VALUE_EVENT") == 0) {
         mtk_gatt_value_event_ev_t ev = {0};
         mtk_decode(&mtk_gatt_value_event_ev_t_desc, &ev, f->body, f->body_len, NULL);
-        /* RC8 independent audit P0-6 "Preserve exact shipped UART
-         * behavior": the accepted baseline's own subscribe/indicate rows
-         * require "[BLE:NTF] handle=H len=N data=<hex>" /
-         * "[BLE:IND] handle=H len=N data=<hex>" verbatim -- this
-         * previously used "[BLE:NOTIFY]"/"[BLE:INDICATE]" (invented
-         * names, not the shipped ones) and omitted len=N entirely. */
+        /* The accepted baseline's own subscribe/indicate rows require "[BLE:NTF]
+         * handle=H len=N data=<hex>" / "[BLE:IND] handle=H len=N data=<hex>"
+         * verbatim -- this previously used "[BLE:NOTIFY]"/"[BLE:INDICATE]"
+         * (invented names, not the shipped ones) and omitted len=N entirely. */
         char hex[130]; bytes_to_hex(ev.data.data, ev.data.len, hex, sizeof(hex));
         return emit(out, out_cap, 0, "[BLE:%s] handle=%u len=%u data=%s\n", ev.mode == 0 ? "NTF" : "IND", ev.handle, ev.data.len, hex);
     }
@@ -1416,15 +1386,11 @@ static size_t format_background_frame(const mtk_async_frame_t *f, char *out, siz
 
 size_t mtek_uart_adapter_poll_background(mtk_uart_adapter_state_t *st, char *out, size_t out_cap) {
     if (out_cap) out[0] = 0;
-    /* RC7 independent audit item 9 "remote disconnect clears state but
-     * emits no frozen '[BLE:CONN] disconnected reason=R' output" -- see
-     * mtek_ble_service.h's own doc comment on this accessor for why it
-     * is polled directly here instead of flowing through session_queue
-     * like every other background delivery below. Checked first so it
-     * is never starved by other pending traffic.
-     * RC8 independent audit P0-6 "Remote disconnect currently loses the
-     * real reason and emits a hard-coded reason": the real HCI-level
-     * reason, threaded all the way from the HAL's own GAP callback. */
+    /* See mtek_ble_service.h's own doc comment on this accessor for why it is
+     * polled directly here instead of flowing through session_queue like every
+     * other background delivery below. Checked first so it is never starved by
+     * other pending traffic. the real HCI-level reason, threaded all the way
+     * from the HAL's own GAP callback. */
     uint8_t disc_reason = 0;
     if (mtek_ble_gatt_take_remote_disconnect_notice(&disc_reason)) {
         return emit(out, out_cap, 0, "[BLE:CONN] disconnected reason=%u\n", disc_reason);

@@ -1,6 +1,6 @@
 /* Malformed inputs: unknown opcodes, capability-disabled opcodes, and
- * decode-time protocol errors are all rejected with the correct wire
- * status and no side effect (002-service-registry.md Sec 3.0a). */
+ * decode-time protocol errors are all rejected with the correct wire status and
+ * no side effect. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 

@@ -49,8 +49,8 @@ MTK_TEST_MAIN_BEGIN
     const mtk_opcode_entry_t *page_op = mtk_test_find_op("STA_SCAN_RESULTS_PAGE");
     MTK_CHECK(start_op && stop_op && status_op && page_op);
 
-    /* ---- Part 1: teardown-failure honesty -- real results were found,
-     * but a teardown step failed, so the whole call must fail. */
+    /* Part 1: teardown-failure honesty -- real results were found, but a
+     * teardown step failed, so the whole call must fail. */
     {
         mtk_fake_sink_state_t sink; mtk_fake_sink_reset(&sink);
         mtk_request_ctx_t ctx = mtk_test_ctx(&sink, 1);
@@ -87,11 +87,11 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_NONE);
     }
 
-    /* ---- Part 2: restore-step failure honesty + short-circuit + no
-     * double restore/release. Each restore step failure is injected in
-     * turn; a successful scan must still report IO_ERROR when its own
-     * post-scan restore fails, and restore_count must be exactly 1
-     * (never called twice for one operation). */
+    /* Part 2: restore-step failure honesty + short-circuit + no double
+     * restore/release. Each restore step failure is injected in turn; a
+     * successful scan must still report IO_ERROR when its own post-scan restore
+     * fails, and restore_count must be exactly 1 (never called twice for one
+     * operation). */
     const char *step_names[] = {"promisc_off", "stop", "mode", "start", "channel", "reconnect"};
     for (int step = 0; step < 6; step++) {
         mtk_fake_sink_state_t sink; mtk_fake_sink_reset(&sink);
@@ -117,18 +117,14 @@ MTK_TEST_MAIN_BEGIN
         mtk_decode(&mtk_sta_scan_complete_ev_t_desc, &ev, sink.events[0].body, sink.events[0].body_len, NULL);
         MTK_CHECK_EQ(ev.status, MTK_STATUS_IO_ERROR); /* truthful: this specific restore step failed */
         MTK_CHECK_EQ(g_fake_wifi.restore_count, 1u);  /* called exactly once -- never double-restored */
-        /* RC11 independent correction order P0 "if radio restoration
-         * fails, retain the prior-state snapshot and keep the radio lease
-         * quarantined -- never report/expose it as healthy/free": a
-         * restore-step failure must no longer release the arbiter (RC10's
-         * own "still released exactly once" expectation is exactly the
-         * defect this order fixes) -- the lease stays held against the
-         * SAME class that owned it, and mekt_wifi_radio_is_quarantined()
-         * reports the quarantine honestly. mtk_arbiter_reset() below is
-         * pure test-harness cleanup (mirrors mtk_fake_wifi_reset() already
-         * used to isolate each of these six independent scenarios from
-         * each other) -- production code never force-clears a quarantine
-         * this way; only a later confirmed-successful restore does. */
+        /* A restore-step failure must no longer release the arbiter -- the lease
+         * stays held against the SAME class that owned it, and
+         * mekt_wifi_radio_is_quarantined reports the quarantine honestly.
+         * mtk_arbiter_reset below is pure test-harness cleanup (mirrors
+         * mtk_fake_wifi_reset already used to isolate each of these six
+         * independent scenarios from each other) -- production code never
+         * force-clears a quarantine this way; only a later confirmed-successful
+         * restore does. */
         MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_WS);
         MTK_CHECK(mtek_wifi_radio_is_quarantined());
         mtk_arbiter_reset();
@@ -151,18 +147,17 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(g_fake_wifi.mode, 2);              /* untouched -- mode/start step never attempted */
         MTK_CHECK_EQ(g_fake_wifi.current_channel, 9);   /* untouched by restore (the fake's own sta_scan does not itself disturb current_channel, unlike send_deauth's) */
         MTK_CHECK_EQ(g_fake_wifi.reconnect_attempted_count, 0u); /* reconnect never attempted either */
-        /* RC11 independent correction order P0: same quarantine-on-
-         * restore-failure fix as the loop above -- this scenario's own
-         * injected "stop" failure must also leave the lease held, not
-         * released; clear it (test-harness only) before Part 3 needs a
+        /* Same quarantine-on- restore-failure fix as the loop above -- this
+         * scenario's own injected "stop" failure must also leave the lease held,
+         * not released; clear it (test-harness only) before Part 3 needs a
          * genuinely free arbiter to start its own fresh scan. */
         MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_WS);
         MTK_CHECK(mtek_wifi_radio_is_quarantined());
         mtk_arbiter_reset();
     }
 
-    /* ---- Part 3: a genuinely concurrent STA scan STOP racing result
-     * publication and STATUS/RESULTS_PAGE reads (real pthread worker). */
+    /* Part 3: a genuinely concurrent STA scan STOP racing result publication and
+     * STATUS/RESULTS_PAGE reads (real pthread worker). */
     {
         mtk_router_set_async_runner(pthread_runner);
         mtk_fake_sink_state_t sink; mtk_fake_sink_reset(&sink);

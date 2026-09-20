@@ -1,21 +1,19 @@
-/* RC12 hardening round, item 2 (P1) "Transport counters": proves the
- * transport diagnostics counters (mtk_transport_counters_* in mtek_core.c)
- * are concurrency-safe once real lock hooks are registered -- exact totals
- * under many concurrent incrementers, and internally-consistent snapshots
- * taken concurrently with those increments. On target, app_main now
- * registers a dedicated mutex via mtk_transport_counters_set_lock (which
- * was previously never called at all, leaving every increment/snapshot
- * lock-free); here that same registration is exercised with a pthread
- * mutex. Run under ThreadSanitizer (the suite's TSan build) this also
- * proves the increments and snapshots carry no data race.
+/* Proves the transport diagnostics counters
+ * (mtk_transport_counters_* in mtek_core.c) are concurrency-safe once real lock
+ * hooks are registered -- exact totals under many concurrent incrementers, and
+ * internally-consistent snapshots taken concurrently with those increments. On
+ * target, app_main now registers a dedicated mutex via
+ * mtk_transport_counters_set_lock (which was previously never called at all,
+ * leaving every increment/snapshot lock-free); here that same registration is
+ * exercised with a pthread mutex. Run under ThreadSanitizer (the suite's TSan
+ * build) this also proves the increments and snapshots carry no data race.
  *
- * The dedicated-mutex requirement is deliberately NOT reusing the shared
- * core mutex: on target, mtk_async_queue_push calls add_dropped_frame while
- * already holding the queue lock (which is the shared mutex), so a shared
- * counter lock would self-deadlock a non-recursive mutex. That structural
- * constraint is documented at the app_main registration site; this test
- * only needs to prove the counters themselves are exact and race-free under
- * their own lock. */
+ * The dedicated-mutex requirement is deliberately NOT reusing the shared core
+ * mutex: on target, mtk_async_queue_push calls add_dropped_frame while already
+ * holding the queue lock (which is the shared mutex), so a shared counter lock
+ * would self-deadlock a non-recursive mutex. That structural constraint is
+ * documented at the app_main registration site; this test only needs to prove
+ * the counters themselves are exact and race-free under their own lock. */
 #include "mtk_test.h"
 #include "mtek_core.h"
 #include <pthread.h>

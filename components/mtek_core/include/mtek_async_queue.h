@@ -24,13 +24,11 @@ extern "C" {
 
 #define MTK_ASYNC_QUEUE_DEPTH 8
 /* Large enough to carry MonstaShark's own largest PUSH-mode stream chunk
- * (mtek_capture_logic.c: up to 8-byte continuation header + 944-byte
- * payload = 952 bytes) without truncation when a capture session's
- * emit_stream calls are relayed through this queue on the native SPI v1
- * adapter (RC5 independent audit P0 "Native events and streams are not
- * implemented") -- a smaller cap here would silently corrupt captured
- * frame data by truncating every oversized chunk before it ever reaches
- * the wire. */
+ * (mtek_capture_logic.c: up to 8-byte continuation header + 944-byte payload =
+ * 952 bytes) without truncation when a capture session's emit_stream calls are
+ * relayed through this queue on the native SPI v1 adapter -- a smaller cap here
+ * would silently corrupt captured frame data by truncating every oversized chunk
+ * before it ever reaches the wire. */
 #define MTK_ASYNC_FRAME_MAX_BODY 960
 #define MTK_ASYNC_EVENT_NAME_MAX 24
 
@@ -52,33 +50,29 @@ typedef struct {
 typedef void (*mtk_async_lock_fn)(void *lock_ctx);
 typedef void (*mtk_async_notify_fn)(void *notify_ctx);
 
-/* RC7 independent audit P0 "Native scheduling can starve or drop control
- * and terminal traffic": responses, progress events, terminal events, and
- * streams used to share one plain FIFO -- a stream/progress flood could
- * fill it and cause a queued response or terminal event to be DROPPED
- * (silently, since a full queue previously always dropped the NEWEST
- * incoming frame regardless of its own or the buffer's contents'
- * relative importance), and strict FIFO order could deliver a stream
- * ahead of an already-queued response. mtk_async_frame_kind_t's own
- * numeric values (RESPONSE=0, EVENT=1, STREAM=2) are already in the
- * accepted protocol's own priority order (SPI_PROTOCOL_V1.md/
- * 002-canonical-core-contract.md Sec "response/link > event > stream"),
- * so this queue now stores frames as fixed slots (not a ring) and
- * enforces that order structurally at both ends: `mtk_async_queue_push`
- * evicts the LOWEST-priority occupied slot (if any is strictly lower
- * priority than the incoming frame) to make room when full, rather than
- * always dropping the newest arrival -- a response/event can now displace
- * a queued stream chunk, but nothing can ever displace a response;
- * `mtk_async_queue_pop` always returns the highest-priority occupied slot
- * (ties broken by insertion order via `seq`), not simply the oldest.
- * Total capacity is unchanged (MTK_ASYNC_QUEUE_DEPTH slots) -- this is a
- * selection-order change, not a bigger queue. Disclosed scope note: this
- * distinguishes RESPONSE/EVENT/STREAM (three tiers), not a further
- * "terminal vs. progress" sub-priority within EVENT specifically -- no
- * field on mtk_async_frame_t currently tags an event as terminal, and the
- * schema's terminal-reserve budget is not implemented. The unused core
- * reserve has been retired; terminal events retain this queue's existing
- * best-effort delivery behavior, with no dedicated delivery guarantee. */
+/* Responses, progress events, terminal events, and streams used to share one
+ * plain FIFO -- a stream/progress flood could fill it and cause a queued
+ * response or terminal event to be DROPPED (silently, since a full queue
+ * previously always dropped the NEWEST incoming frame regardless of its own or
+ * the buffer's contents' relative importance), and strict FIFO order could
+ * deliver a stream ahead of an already-queued response. mtk_async_frame_kind_t's
+ * own numeric values (RESPONSE=0, EVENT=1, STREAM=2) are already in the accepted
+ * protocol's own priority order (SPI_PROTOCOL_V1.md/ Sec "response/link > event
+ * > stream"), so this queue now stores frames as fixed slots (not a ring) and
+ * enforces that order structurally at both ends: `mtk_async_queue_push` evicts
+ * the LOWEST-priority occupied slot (if any is strictly lower priority than the
+ * incoming frame) to make room when full, rather than always dropping the newest
+ * arrival -- a response/event can now displace a queued stream chunk, but
+ * nothing can ever displace a response; `mtk_async_queue_pop` always returns the
+ * highest-priority occupied slot (ties broken by insertion order via `seq`), not
+ * simply the oldest. Total capacity is unchanged (MTK_ASYNC_QUEUE_DEPTH slots)
+ * -- this is a selection-order change, not a bigger queue. Disclosed scope note:
+ * this distinguishes RESPONSE/EVENT/STREAM (three tiers), not a further
+ * "terminal vs. progress" sub-priority within EVENT specifically -- no field on
+ * mtk_async_frame_t currently tags an event as terminal, and the schema's
+ * terminal-reserve budget is not implemented. The unused core reserve has been
+ * retired; terminal events retain this queue's existing best-effort delivery
+ * behavior, with no dedicated delivery guarantee. */
 typedef struct {
     uint8_t occupied;
     uint32_t seq; /* monotonic insertion order -- FIFO tie-break within the same priority tier */

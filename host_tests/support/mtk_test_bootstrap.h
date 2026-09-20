@@ -13,13 +13,19 @@
 #include "mtk_fake_sink.h"
 #include "mtk_fake_wifi_hal.h"
 #include "mtk_fake_ble_hal.h"
+#include "mtk_fake_espnow_hal.h"
+#include "mtk_fake_154_hal.h"
 
 #define MTK_TEST_BOOT_EPOCH 0xABCD1234u
 
 static uint64_t s_mtk_test_now_ms = 1000;
 static uint64_t mtk_test_now_ms(void) { return s_mtk_test_now_ms; }
+/* Advances the deterministic test clock so time-driven behaviour (capture
+ * channel hopping, duration deadlines) can be exercised without real waits. */
+static inline void mtk_test_advance_ms(uint64_t ms) { s_mtk_test_now_ms += ms; }
 
 static inline void mtk_test_bootstrap(void) {
+    s_mtk_test_now_ms = 1000;
     mtk_core_init(MTK_TEST_BOOT_EPOCH);
     mtk_arbiter_init();
     mtk_router_init();
@@ -31,16 +37,24 @@ static inline void mtk_test_bootstrap(void) {
     mtek_wifi_service_init(mtk_test_now_ms);
     mtek_ble_service_init(mtk_test_now_ms);
     mtek_capture_service_init(mtk_test_now_ms);
+    mtek_espnow_service_init(mtk_test_now_ms);
+    mtek_ieee802154_service_init(mtk_test_now_ms);
 
     mtk_fake_wifi_reset();
+    mtk_fake_espnow_reset();
+    mtk_fake_154_reset();
     mtk_fake_ble_reset();
     mtek_wifi_set_hal(&g_fake_wifi_hal);
     mtek_ble_set_hal(&g_fake_ble_hal);
+    mtek_espnow_set_hal(&g_fake_espnow_hal);
+    mtek_ieee802154_set_hal(&g_fake_154_hal);
 
     if (mtek_system_service_register() != MTK_REGISTER_OK ||
         mtek_wifi_service_register() != MTK_REGISTER_OK ||
         mtek_ble_service_register() != MTK_REGISTER_OK ||
-        mtek_capture_service_register() != MTK_REGISTER_OK) abort();
+        mtek_capture_service_register() != MTK_REGISTER_OK ||
+        mtek_espnow_service_register() != MTK_REGISTER_OK ||
+        mtek_ieee802154_service_register() != MTK_REGISTER_OK) abort();
 }
 
 static inline mtk_request_ctx_t mtk_test_ctx(mtk_fake_sink_state_t *sink_state, uint32_t correlation) {

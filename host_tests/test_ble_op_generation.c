@@ -1,15 +1,13 @@
-/* RC8 independent audit P0-4 "Fix NimBLE timeout/late-callback ABA
- * hazards": proves mtk_ble_op_generation_t's own contract directly --
- * the exact scenario the audit's own required test describes ("operation
- * A times out, operation B starts immediately, then A's delayed callback
- * arrives; B must not be completed or corrupted"), portably, without
- * needing real NimBLE/FreeRTOS. See mtek_ble_hal_esp32.c for how this
- * primitive is actually wired into each of its seven static-context
- * callback sites (scan, connect, GATT discover/read/write, CCCD
- * discovery, characteristic-bound search) -- target-only integration,
- * not itself host-testable, matching this tree's established
- * portable-primitive/target-glue split (e.g. mtk_native_cellsize_
- * negotiator_t, mtk_spi_native_packet_seq_tracker_t). */
+/* Proves mtk_ble_op_generation_t's own contract directly -- the exact scenario
+ * the audit's own required test describes ("operation A times out, operation B
+ * starts immediately, then A's delayed callback arrives; B must not be completed
+ * or corrupted"), portably, without needing real NimBLE/FreeRTOS. See
+ * mtek_ble_hal_esp32.c for how this primitive is actually wired into each of its
+ * seven static-context callback sites (scan, connect, GATT discover/read/write,
+ * CCCD discovery, characteristic-bound search) -- target-only integration, not
+ * itself host-testable, matching this tree's established
+ * portable-primitive/target-glue split (e.g. mtk_native_cellsize_ negotiator_t,
+ * mtk_spi_native_packet_seq_tracker_t). */
 #include "mtk_test.h"
 #include "mtk_ble_op_generation.h"
 
@@ -27,13 +25,13 @@ MTK_TEST_MAIN_BEGIN
     MTK_CHECK(gen_a != 0);
     MTK_CHECK_EQ(mtk_ble_op_generation_is_current(&g, gen_a), 1);
 
-    /* A times out (the caller gives up waiting) WITHOUT clearing the
-     * generation via a natural completion path -- exactly the real HAL's
-     * own shape (it just stops waiting and tears down its own context;
-     * it does not tell this primitive "A is done" separately, since arm()
-     * itself is what invalidates A once B calls it). Operation B starts
-     * immediately, re-arming the SAME underlying context storage in the
-     * real HAL (simulated here by simply calling arm() again). */
+    /* A times out (the caller gives up waiting) WITHOUT clearing the generation
+     * via a natural completion path -- exactly the real HAL's own shape (it just
+     * stops waiting and tears down its own context; it does not tell this
+     * primitive "A is done" separately, since arm itself is what invalidates A
+     * once B calls it). Operation B starts immediately, re-arming the SAME
+     * underlying context storage in the real HAL (simulated here by simply
+     * calling arm again). */
     uint32_t gen_b = mtk_ble_op_generation_arm(&g);
     MTK_CHECK(gen_b != gen_a); /* never reissued */
     MTK_CHECK_EQ(mtk_ble_op_generation_is_current(&g, gen_b), 1);

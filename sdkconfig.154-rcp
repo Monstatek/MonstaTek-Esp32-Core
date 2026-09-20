@@ -1,0 +1,35 @@
+# mtkcore-154-rcp: IEEE 802.15.4 variant in OpenThread Radio Co-Processor mode.
+#
+#   idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.154;sdkconfig.154-rcp" build
+#
+# Layered on sdkconfig.154, which already compiles the Bluetooth controller
+# and the captive portal out to fund the memory.
+#
+# The ESP32-C6 is the radio co-processor; the Thread stack runs on the host
+# over Spinel. Core builds no Thread application stack.
+#
+# The raw 802.15.4 opcodes (0x0007/0x0001..0x0007) are UNAVAILABLE in this
+# image: OpenThread's port layer owns the 802.15.4 driver's completion
+# callbacks, and the driver has exactly one owner, so raw radio access and
+# RCP cannot coexist in one binary. A host selects the image it needs and
+# discovers what it got through GET_CAPABILITIES, never by variant name.
+CONFIG_OPENTHREAD_ENABLED=y
+CONFIG_OPENTHREAD_RADIO=y
+
+# Spinel travels over the M1's existing STM32<->ESP32 SPI wires. The board
+# routes one SPI link and no second UART between the two parts, and the
+# ESP32-C6 has a single general-purpose SPI peripheral, so the RCP transport
+# must be SPI -- ESP-IDF's default here is UART, which the M1 cannot carry.
+# This choice is compiled in, not merely requested at runtime: the port layer
+# is #if-gated on it, so the pin/host fields in
+# components/mtek_ieee802154_service/mtek_154_rcp_esp32.c only take effect
+# with this set. main/mtek_spi_runtime.c stands the Core SPI transport down in
+# this image so the two do not contend for the peripheral.
+CONFIG_OPENTHREAD_RCP_SPI=y
+
+# A radio co-processor has no console of its own: the SPI link carries Spinel
+# and nothing else, and Core's factory UART0 REPL is separate from -- and
+# unaffected by -- OpenThread's console. Leaving the SDK's OpenThread console
+# enabled would also pull in its UART host path, which is not compiled when
+# the RCP transport is SPI.
+CONFIG_OPENTHREAD_CONSOLE_ENABLE=n

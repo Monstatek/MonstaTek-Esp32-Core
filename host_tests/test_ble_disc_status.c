@@ -1,20 +1,18 @@
-/* RC11 round 10 P0 correction, item 4 "propagate real NimBLE discovery
- * failures": proves mtek_ble_disc_failed's own decision table directly --
- * portably, without needing real NimBLE/FreeRTOS. See mtek_ble_hal_esp32.c
- * for how this exact same shared function is wired into each of its five
- * "discover all ..." call sites (services, characteristics, descriptors,
- * plus the two narrower internal CCCD-bound-characteristic/CCCD-
- * descriptor searches subscribe/unsubscribe use) -- target-only
- * integration (the real ble_gattc_disc_all_* calls, the real NimBLE
- * callback plumbing, the real xSemaphoreCreateBinary/xSemaphoreTake
- * machinery) is not itself host-testable, matching this tree's
- * established portable-primitive/target-glue split (e.g. mtk_ble_op_
- * generation_t, mtk_native_cellsize_negotiator_t) -- but the actual
- * classification logic this item's fix is really about (immediate start
- * error vs. timeout vs. callback-reported error vs. genuine, possibly-
- * empty success) is the SAME code on both sides, not a mirrored
- * duplicate, so this is a real proof of the production decision table,
- * not just of a copy of it. */
+/* Proves
+ * mtek_ble_disc_failed's own decision table directly -- portably, without
+ * needing real NimBLE/FreeRTOS. See mtek_ble_hal_esp32.c for how this exact same
+ * shared function is wired into each of its five "discover all..." call sites
+ * (services, characteristics, descriptors, plus the two narrower internal
+ * CCCD-bound-characteristic/CCCD- descriptor searches subscribe/unsubscribe use)
+ * -- target-only integration (the real ble_gattc_disc_all_* calls, the real
+ * NimBLE callback plumbing, the real xSemaphoreCreateBinary/xSemaphoreTake
+ * machinery) is not itself host-testable, matching this tree's established
+ * portable-primitive/target-glue split (e.g. mtk_ble_op_ generation_t,
+ * mtk_native_cellsize_negotiator_t) -- but the actual classification logic this
+ * item's fix is really about (immediate start error vs. timeout vs.
+ * callback-reported error vs. genuine, possibly- empty success) is the SAME code
+ * on both sides, not a mirrored duplicate, so this is a real proof of the
+ * production decision table, not just of a copy of it. */
 #include "mtk_test.h"
 #include "mtek_ble_disc_status.h"
 

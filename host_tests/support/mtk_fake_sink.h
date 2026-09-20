@@ -40,22 +40,20 @@ typedef struct {
 
 static inline void mtk_fake_sink_reset(mtk_fake_sink_state_t *s) { memset(s, 0, sizeof(*s)); }
 
-/* RC9 independent correction order (verification sweep): a real TSan run
- * against this round's own new async-worker tests (test_sta_scan_
- * lifecycle.c, test_handshake_monitor_entry_failure.c -- both poll a
- * stack-local mtk_fake_sink_state_t's own response.set/status/body from
- * the main thread while a real pthread worker thread's own dispatch call
- * writes into that exact same object via this header's own emit_*
- * functions) caught a genuine data race: this header had no locking of
- * any kind, unlike mtk_fake_wifi_hal.h's own already-established
- * mtk_fake_wifi_set_lock/mtk_fake_wifi_lock pattern for the identical
- * class of hazard. Optional lock hooks, same pattern, same safe no-op
- * default for every other (single-threaded) host test that never
- * registers one. A test with a real concurrent dispatch path must
- * register the SAME mutex here as it does for the router/service/HAL
- * locks it already needs, and must hold it across its own polling reads
- * of the sink fields too -- not just rely on this header locking its own
- * writes. */
+/* (verification sweep): a real TSan run against the new async-worker tests
+ * (test_sta_scan_ lifecycle.c, test_handshake_monitor_entry_failure.c -- both
+ * poll a stack-local mtk_fake_sink_state_t's own response.set/status/body from
+ * the main thread while a real pthread worker thread's own dispatch call writes
+ * into that exact same object via this header's own emit_* functions) caught a
+ * genuine data race: this header had no locking of any kind, unlike
+ * mtk_fake_wifi_hal.h's own already-established
+ * mtk_fake_wifi_set_lock/mtk_fake_wifi_lock pattern for the identical class of
+ * hazard. Optional lock hooks, same pattern, same safe no-op default for every
+ * other (single-threaded) host test that never registers one. A test with a real
+ * concurrent dispatch path must register the SAME mutex here as it does for the
+ * router/service/HAL locks it already needs, and must hold it across its own
+ * polling reads of the sink fields too -- not just rely on this header locking
+ * its own writes. */
 typedef void (*mtk_fake_sink_lock_fn)(void);
 static mtk_fake_sink_lock_fn s_fake_sink_lock_fn, s_fake_sink_unlock_fn;
 static inline void mtk_fake_sink_set_lock(mtk_fake_sink_lock_fn lock, mtk_fake_sink_lock_fn unlock) {

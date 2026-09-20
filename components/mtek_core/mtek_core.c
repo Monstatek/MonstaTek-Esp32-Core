@@ -1,4 +1,4 @@
-/* Clean-room implementation from MonstaTek contract (002-canonical-core-contract.md). */
+/* Clean-room implementation from MonstaTek contract. */
 #include "mtek_core.h"
 #include "mtek_codec_api.h"
 #include <string.h>
@@ -6,11 +6,10 @@
 static uint32_t s_boot_epoch;
 static uint32_t s_next_token_seq;
 static mtk_operation_record_t s_ops[MTK_BUDGET_MAX_OPERATION_TOKENS];
-/* P0 correction (follow-up read-only audit, "genuine peer-session
- * ownership"): see mtek_core.h's own doc comment on mtk_core_session_
- * generation/mtk_core_bump_session_generation -- deliberately separate
- * from s_boot_epoch above, never touched by anything but native SPI's
- * own peer-reboot detection. */
+/* See mtek_core.h's own doc comment on mtk_core_session_
+ * generation/mtk_core_bump_session_generation -- deliberately separate from
+ * s_boot_epoch above, never touched by anything but native SPI's own peer-reboot
+ * detection. */
 static uint32_t s_session_generation;
 
 
@@ -20,9 +19,9 @@ static void core_lock(void) { if (s_lock) s_lock(); }
 static void core_unlock(void) { if (s_unlock) s_unlock(); }
 
 /* Deterministic, host-testable boot_epoch generator: nonzero, distinct per
- * mtk_core_reset() call. A target build seeds the first call from a real
- * hardware RNG (Sec 3.4: "native: random nonzero u32"); the seed is
- * supplied by the caller so this component has no direct HAL dependency. */
+ * mtk_core_reset call. A target build seeds the first call from a real hardware
+ * RNG (Sec 3.4: "native: random nonzero u32"); the seed is supplied by the
+ * caller so this component has no direct HAL dependency. */
 void mtk_core_init(uint32_t boot_epoch) {
     s_boot_epoch = boot_epoch ? boot_epoch : 1;
     s_next_token_seq = 0;
@@ -43,16 +42,14 @@ uint32_t mtk_core_session_generation(void) {
     return g;
 }
 
-/* P0 correction (follow-up read-only audit, "one P0 race remains"): a
- * lock DISTINCT from s_lock/s_unlock above -- see mtk_op_begin_publish_
- * guard's own doc comment (mtek_core.h) for the full self-deadlock
- * rationale. Acquired here, briefly, around the bump itself (never
- * across anything slow/blocking), so that a bump cannot complete while
- * a worker's own mtk_op_begin_publish_guard()...mtk_op_end_publish_
- * guard() region is open, and a guard cannot open while a bump is
- * itself in progress -- making "check the generation" and "the
- * generation actually changes" genuinely mutually exclusive rather than
- * two independently-timed events with a gap between them. */
+/* A lock DISTINCT from s_lock/s_unlock above -- see mtk_op_begin_publish_
+ * guard's own doc comment (mtek_core.h) for the full self-deadlock rationale.
+ * Acquired here, briefly, around the bump itself (never across anything
+ * slow/blocking), so that a bump cannot complete while a worker's own
+ * mtk_op_begin_publish_guard...mtk_op_end_publish_ guard region is open, and a
+ * guard cannot open while a bump is itself in progress -- making "check the
+ * generation" and "the generation actually changes" genuinely mutually exclusive
+ * rather than two independently-timed events with a gap between them. */
 static mtk_core_lock_fn s_pub_lock, s_pub_unlock;
 void mtk_op_set_publish_lock(mtk_core_lock_fn lock, mtk_core_lock_fn unlock) { s_pub_lock = lock; s_pub_unlock = unlock; }
 static void pub_lock(void) { if (s_pub_lock) s_pub_lock(); }
@@ -79,7 +76,7 @@ int mtk_op_begin_publish_guard(uint32_t session_generation) {
         return 0;
     }
     if (s_op_won_hook) s_op_won_hook(session_generation); /* test seam -- still holding pub_lock */
-    return 1; /* caller now owns the lock until it calls mtk_op_end_publish_guard() */
+    return 1; /* caller now owns the lock until it calls mtk_op_end_publish_guard */
 }
 
 void mtk_op_end_publish_guard(void) {
@@ -92,23 +89,21 @@ void mtk_op_end_publish_guard(void) {
 static mtk_op_won_hook_t s_admission_hook;
 void mtk_op_set_admission_hook(mtk_op_won_hook_t hook) { s_admission_hook = hook; }
 
-/* M2 TSan-harness-correction round: a SECOND, distinct test seam, firing
- * at the opposite end of the same guard span -- mtk_op_begin_admission_
- * guard's own hook fires the instant the guard is acquired (before the
- * token even exists); this one fires in mtk_op_end_admission_guard,
- * immediately before pub_unlock -- i.e. after every producer site has
- * already minted the real token, published arbiter ownership, committed
- * its complete cancellation-visible initial state, transitioned to
- * RUNNING, and emitted its single synchronous result (ACCEPTED or a
- * guarded allocation/acquisition/HAL failure), but while a concurrent
+/* A SECOND, distinct test seam, firing at the opposite end of the same guard
+ * span -- mtk_op_begin_admission_ guard's own hook fires the instant the guard
+ * is acquired (before the token even exists); this one fires in
+ * mtk_op_end_admission_guard, immediately before pub_unlock -- i.e. after every
+ * producer site has already minted the real token, published arbiter ownership,
+ * committed its complete cancellation-visible initial state, transitioned to
+ * RUNNING, and emitted its single synchronous result (ACCEPTED or a guarded
+ * allocation/acquisition/HAL failure), but while a concurrent
  * mtk_core_bump_session_generation is still genuinely blocked on the same
- * pub_lock. This is what lets a test assert "coherent expected class +
- * nonzero token, the matching op identity/state, and the already-
- * published response" deterministically, instead of guessing when a
- * detached async worker might have reached that point. Still holds only
- * pub_lock -- never the arbiter or core-table lock -- exactly like the
- * begin-side hook; a test seam only, never used for any runtime
- * decision. */
+ * pub_lock. This is what lets a test assert "coherent expected class + nonzero
+ * token, the matching op identity/state, and the already- published response"
+ * deterministically, instead of guessing when a detached async worker might have
+ * reached that point. Still holds only pub_lock -- never the arbiter or
+ * core-table lock -- exactly like the begin-side hook; a test seam only, never
+ * used for any runtime decision. */
 static mtk_op_won_hook_t s_admission_prepublish_hook;
 void mtk_op_set_admission_prepublish_hook(mtk_op_won_hook_t hook) { s_admission_prepublish_hook = hook; }
 
@@ -119,7 +114,8 @@ int mtk_op_begin_admission_guard(uint32_t session_generation) {
         return 0;
     }
     if (s_admission_hook) s_admission_hook(session_generation); /* test seam -- still holding pub_lock */
-    return 1; /* caller now owns the lock until it calls mtk_op_end_admission_guard() */
+    return 1; /* caller now owns the lock until it calls
+               * mtk_op_end_admission_guard */
 }
 
 void mtk_op_end_admission_guard(void) {
@@ -153,7 +149,7 @@ static mtk_operation_record_t *find_free_or_evict_locked(uint64_t now_ms) {
     for (unsigned i = 0; i < MTK_BUDGET_MAX_OPERATION_TOKENS; i++) {
         if (s_ops[i].token == 0) return &s_ops[i];
     }
-    /* Evict the oldest terminal record (Sec 4.2.1); never a RUNNING one. */
+    /* Evict the oldest terminal record ; never a RUNNING one. */
     int oldest_idx = -1;
     uint64_t oldest_at = 0;
     for (unsigned i = 0; i < MTK_BUDGET_MAX_OPERATION_TOKENS; i++) {
@@ -242,7 +238,7 @@ mtk_operation_record_t *mtk_op_find(uint32_t token, uint32_t boot_epoch) {
 
 /* Raw record pointers are test-only and expose reusable slots. Tests must
  * control slot lifetime and concurrent access; production uses identities. */
-/* Caller holds core_lock() and has validated the record identity/family. */
+/* Caller holds core_lock and has validated the record identity/family. */
 static int op_transition_locked(mtk_operation_record_t *rec, mtk_op_state_t new_state,
                                 uint8_t status, uint64_t now_ms) {
     if (mtk_op_state_is_terminal(rec->state)) return 0; /* terminal is sticky */
@@ -268,8 +264,8 @@ void mtk_op_gc(uint64_t now_ms) {
     core_unlock();
 }
 
-/* Locked helper: returns the index of the record for (token, boot_epoch),
- * or -1. Caller must hold core_lock(). token==0 never matches. */
+/* Locked helper: returns the index of the record for (token, boot_epoch), or -1.
+ * Caller must hold core_lock. token==0 never matches. */
 static int find_op_index_locked(uint32_t token, uint32_t boot_epoch) {
     if (token == 0) return -1;
     for (unsigned i = 0; i < MTK_BUDGET_MAX_OPERATION_TOKENS; i++) {
@@ -278,10 +274,10 @@ static int find_op_index_locked(uint32_t token, uint32_t boot_epoch) {
     return -1;
 }
 
-/* RC12 blocker round, item 1: the family membership test -- a record
- * "belongs to" a family iff it was minted by the expected service AND the
- * expected originating START opcode. `s_ops[idx].opcode` is exactly the
- * opcode that called mtk_op_alloc_id when the token was minted (a START). */
+/* The family membership test -- a record "belongs to" a family iff it
+ * was minted by the expected service AND the expected originating START opcode.
+ * `s_ops[idx].opcode` is exactly the opcode that called mtk_op_alloc_id when the
+ * token was minted (a START). */
 static int op_index_family_matches(int idx, uint16_t expected_service_id, uint16_t expected_start_opcode) {
     return idx >= 0 &&
            s_ops[idx].service_id == expected_service_id &&
@@ -411,7 +407,7 @@ int mtk_op_evict_all_terminal(void) {
 
 
 
-/* ---- Transport diagnostics counters ------------------------------------ */
+/* Transport diagnostics counters ------------------ */
 static mtk_transport_counters_t s_transport_counters;
 static mtk_core_lock_fn s_tc_lock, s_tc_unlock;
 static void tc_lock(void) { if (s_tc_lock) s_tc_lock(); }

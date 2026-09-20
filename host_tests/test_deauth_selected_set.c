@@ -34,9 +34,8 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(done.total_sent, 6);
     }
 
-    /* count=0 with a multi-target set: one full pass in this session's
-     * synchronous-completion model (see docs/PROVENANCE.md on background
-     * scheduling scope). */
+    /* count=0 with a multi-target set: one full pass in's synchronous-completion
+     * model (see docs/PROVENANCE.md on background scheduling scope). */
     mtk_fake_wifi_reset();
     mtk_fake_sink_reset(&sink);
     mtk_request_ctx_t ctx2 = mtk_test_ctx(&sink, 2);

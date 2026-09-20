@@ -69,21 +69,18 @@
 #include "mtek_compat_dispatch.h"
 #include <string.h>
 
-/* ---- Shared-state locking (RC7 independent audit P0 "Shared operation/
- * session state remains data-racy") --------------------------------------
- * The real mutex, async runner, and core/arbiter/router lock registration
- * are now installed once by app_main.c BEFORE any adapter task starts
- * (including this one) -- see its own "Shared cross-adapter
- * infrastructure" doc comment. This file only needs its own copy of the
- * queue-lock trampoline (matching mtk_async_queue_set_lock's `void
+/* Shared-state locking -------------------- The real mutex, async runner, and
+ * core/arbiter/router lock registration are now installed once by app_main.c
+ * BEFORE any adapter task starts (including this one) -- see its own "Shared
+ * cross-adapter infrastructure" doc comment. This file only needs its own copy
+ * of the queue-lock trampoline (matching mtk_async_queue_set_lock's `void
  * *lock_ctx`-taking signature, distinct from mtk_core_lock_fn/
  * mtk_arbiter_lock_fn's plain `void(*)(void)`) to lock native_dctx.
- * event_queue/compat_dctx.event_queue against the SAME shared mutex,
- * passed in as `shared_mutex` (mtek_spi_runtime_start). */
-/* P0 correction (this round, requirement 7): `ctx` is app_main.c's own
- * s_shared_mutex, which can legitimately be NULL if xSemaphoreCreateMutex
- * failed there -- null-check before taking/giving it, matching every
- * *_lock_v / *_unlock_v wrapper in app_main.c. */
+ * event_queue/compat_dctx.event_queue against the SAME shared mutex, passed in
+ * as `shared_mutex` (mtek_spi_runtime_start). */
+/* `ctx` is app_main.c's own s_shared_mutex, which can legitimately be NULL if
+ * xSemaphoreCreateMutex failed there -- null-check before taking/giving it,
+ * matching every *_lock_v / *_unlock_v wrapper in app_main.c. */
 static void queue_lock(void *ctx) { if (ctx) xSemaphoreTake((SemaphoreHandle_t)ctx, portMAX_DELAY); }
 static void queue_unlock(void *ctx) { if (ctx) xSemaphoreGive((SemaphoreHandle_t)ctx); }
 
@@ -114,12 +111,12 @@ static void IRAM_ATTR spi_post_trans_cb(spi_slave_transaction_t *t) {
     if (wake) portYIELD_FROM_ISR();
 }
 
-/* RC12 hardening round, item 4 (P1/P2): returns 0 only if every GPIO
- * configuration/level call genuinely succeeded. A failure here (e.g. an
- * invalid pin or a peripheral conflict) previously went entirely
- * unchecked, so a SPI adapter could "start" against pins that were never
- * actually configured. The real result is now propagated up to app_main
- * via the startup handshake (see mtek_spi_runtime_start). */
+/* Returns 0 only if every GPIO configuration/level call
+ * genuinely succeeded. A failure here (e.g. an invalid pin or a peripheral
+ * conflict) previously went entirely unchecked, so a SPI adapter could "start"
+ * against pins that were never actually configured. The real result is now
+ * propagated up to app_main via the startup handshake (see
+ * mtek_spi_runtime_start). */
 static int configure_gpios(void) {
     gpio_config_t hs_cfg = {
         .pin_bit_mask = 1ULL << PIN_HANDSHAKE,
@@ -149,15 +146,14 @@ static int configure_gpios(void) {
     return 0;
 }
 
-/* RC12 hardening round, item 4 (P1/P2): the startup handshake between the
- * SPI runtime task and app_main. The task performs GPIO configuration and
- * spi_slave_initialize FIRST, records the real result here, signals `done`,
- * and only then enters its transaction loop -- so mtek_spi_runtime_start
- * (below) returns the actual peripheral/GPIO init outcome to app_main
- * rather than merely "the task was created". One SPI task exists for the
- * whole boot session, so this is a one-shot static: `done` is never
- * deleted (a late give after a start()-side timeout is therefore always
- * safe). */
+/* The startup handshake between the SPI runtime task and
+ * app_main. The task performs GPIO configuration and spi_slave_initialize FIRST,
+ * records the real result here, signals `done`, and only then enters its
+ * transaction loop -- so mtek_spi_runtime_start (below) returns the actual
+ * peripheral/GPIO init outcome to app_main rather than merely "the task was
+ * created". One SPI task exists for the whole boot session, so this is a
+ * one-shot static: `done` is never deleted (a late give after a start-side
+ * timeout is therefore always safe). */
 typedef struct {
     SemaphoreHandle_t done;
     int result; /* 0 = GPIO + spi_slave_initialize both succeeded; -1 = failed */
@@ -258,13 +254,11 @@ static void spi_runtime_task(void *arg) {
     ESP_LOGI(TAG, "SPI slave runtime up on host %d (SCLK=%d MOSI=%d MISO=%d CS=%d HANDSHAKE=%d), AUTO discovery active",
              (int)MTK_SPI_HOST, PIN_SCLK, PIN_MOSI, PIN_MISO, PIN_CS, PIN_HANDSHAKE);
 
-    /* RC7 independent audit P0 "Native 512-to-1024 discovery transition is
-     * still wrong": the real, PROVEN (test_native_cellsize_negotiator.c)
-     * transaction-timing state machine -- see its own doc comment
-     * (mtek_transport_select.h) for the exact defect this replaces (a
-     * prior round's single-flag version upgraded the cell size exactly
-     * one transaction too early, the very transaction that carries the
-     * HELLO_ACK response itself). */
+    /* The real, PROVEN (test_native_cellsize_negotiator.c) transaction-timing
+     * state machine -- see its own doc comment (mtek_transport_select.h) for the
+     * exact defect this replaces (a prior round's single-flag version upgraded
+     * the cell size exactly one transaction too early, the very transaction that
+     * carries the HELLO_ACK response itself). */
     mtk_native_cellsize_negotiator_t native_negotiator;
     mtk_native_cellsize_negotiator_init(&native_negotiator);
 
@@ -321,23 +315,19 @@ retry_transaction: ;
             profile = mtk_transport_try_recognize_discovery(rxbuf, received_bytes);
             if (profile == MTK_TRANSPORT_NATIVE_SPI) {
                 ESP_LOGI(TAG, "AUTO discovery locked: native SPI v1");
-                /* This transaction's HELLO is answered with a real
-                 * HELLO_ACK below (the dispatch block right after this
-                 * one, which now runs in the SAME iteration since
-                 * `profile` was just updated) -- but that ACK is the MISO
-                 * data for the transaction RIGHT AFTER this one (call it
-                 * N+1), which the master -- having only just sent its
-                 * HELLO in THIS transaction and not yet seen any
-                 * acknowledgement that native was chosen or that a larger
-                 * cell is coming -- necessarily still drives at the
-                 * 512-byte discovery cadence. The upgrade must therefore
-                 * take effect starting transaction N+2 (two transactions
-                 * from now), not N+1 -- see
-                 * mtk_native_cellsize_negotiator_hello_recognized's own
+                /* This transaction's HELLO is answered with a real HELLO_ACK
+                 * below (the dispatch block right after this one, which now runs
+                 * in the SAME iteration since `profile` was just updated) -- but
+                 * that ACK is the MISO data for the transaction RIGHT AFTER this
+                 * one (call it N+1), which the master -- having only just sent
+                 * its HELLO in THIS transaction and not yet seen any
+                 * acknowledgement that native was chosen or that a larger cell
+                 * is coming -- necessarily still drives at the 512-byte
+                 * discovery cadence. The upgrade must therefore take effect
+                 * starting transaction N+2 (two transactions from now), not N+1
+                 * -- see mtk_native_cellsize_negotiator_hello_recognized's own
                  * doc comment (mtek_transport_select.h) for the RC7 audit
-                 * finding this corrects (RC6's own single-flag version
-                 * upgraded at N+1, the exact transaction carrying the ACK
-                 * itself). */
+                 * finding this corrects. */
                 mtk_native_cellsize_negotiator_hello_recognized(&native_negotiator);
             } else if (profile == MTK_TRANSPORT_COMPAT_SPI) {
                 ESP_LOGI(TAG, "AUTO discovery locked: Legacy SPI Compatibility");
@@ -373,12 +363,10 @@ retry_transaction: ;
         if (profile == MTK_TRANSPORT_COMPAT_SPI) {
             mtk_compat_header_t resp_hdr; uint8_t resp_payload[MTK_COMPAT_SINGLE_CELL_PAYLOAD_MAX]; uint16_t resp_len = 0;
             if (!can_dispatch) {
-                /* RC7 independent audit P0 "The release artifact starts
-                 * the wrong transport for shipped M1 compatibility": a
-                 * different adapter already won this boot session's
+                /* A different adapter already won this boot session's
                  * cross-transport claim -- never reach
-                 * mtek_compat_dispatch_request/mtk_router_dispatch again.
-                 * A well-formed IDLE reply (this tree's "never silence"
+                 * mtek_compat_dispatch_request/mtk_router_dispatch again. A
+                 * well-formed IDLE reply (this tree's "never silence"
                  * discipline), not a hang. */
                 memset(&resp_hdr, 0, sizeof(resp_hdr));
                 resp_hdr.magic = MTK_COMPAT_MAGIC; resp_hdr.version = MTK_COMPAT_VERSION; resp_hdr.msg_type = MTK_COMPAT_MSG_IDLE;
@@ -424,11 +412,10 @@ retry_transaction: ;
             mtk_spi_native_header_t nhdr; const uint8_t *npayload;
             mtk_spi_parse_result_t pr = mtk_spi_native_parse_bounded(rxbuf, received_bytes, &nhdr, &npayload);
             if (pr == MTK_SPI_PARSE_OK && nhdr.msg_class == MTK_SPI_CLASS_IDLE) {
-                /* RC7 independent audit item 3 "packet-sequence
-                 * diagnostics": feed_cell itself never sees an IDLE cell
-                 * (intercepted right here), so its own packet_seq must be
-                 * noted at this call site instead, or IDLE polls would be
-                 * invisible to gap detection entirely. */
+                /* feed_cell itself never sees an IDLE cell (intercepted right
+                 * here), so its own packet_seq must be noted at this call site
+                 * instead, or IDLE polls would be invisible to gap detection
+                 * entirely. */
                 if (mtk_spi_native_packet_seq_tracker_note(&native_dctx.packet_seq_tracker, nhdr.packet_seq)) {
                     mtk_transport_counters_add_packet_seq_gap();
                 }
@@ -441,15 +428,13 @@ retry_transaction: ;
                     (uint32_t)(esp_timer_get_time() / 1000), &resp_hdr, resp_payload, &resp_len);
                 mtk_spi_native_build_cell(&resp_hdr, resp_payload, txbuf);
             } else {
-                /* RC7 independent audit item 3 "packet-sequence
-                 * diagnostics" / SPI_PROTOCOL_V1.md "Parser requirements":
-                 * "Integrity failures are counted and dropped; do not
-                 * trust a corrupted request ID enough to act on it." A
-                 * failed parse (bad magic/version/CRC/length/flags/class)
-                 * cannot be safely fed to anything downstream -- counted
-                 * here, then answered with an honest IDLE (never a
-                 * fabricated response for a message this session could not
-                 * actually validate). */
+                /* / SPI_PROTOCOL_V1.md "Parser requirements": "Integrity
+                 * failures are counted and dropped; do not trust a corrupted
+                 * request ID enough to act on it." A failed parse (bad
+                 * magic/version/CRC/length/flags/class) cannot be safely fed to
+                 * anything downstream -- counted here, then answered with an
+                 * honest IDLE (never a fabricated response for a message could
+                 * not actually validate). */
                 mtk_transport_counters_add_integrity_failure();
                 mtk_spi_native_header_t idle_hdr;
                 memset(&idle_hdr, 0, sizeof(idle_hdr));
@@ -482,35 +467,45 @@ retry_transaction: ;
 }
 
 int mtek_spi_runtime_start(SemaphoreHandle_t shared_mutex) {
-    /* RC6 independent audit P0 "Target stack usage is catastrophically
-     * larger than the configured stacks": compat_dctx/native_dctx (the
-     * dominant contributors, ~139KB+12KB) are now static, not stack-local
-     * (see their own doc comments above), so this configured stack no
-     * longer needs to hold them. What remains is txbuf/rxbuf (already
-     * static), the `spi_slave_transaction_t t` local, and whatever
+#if CONFIG_OPENTHREAD_RADIO
+    /* Radio-co-processor image: OpenThread's host connection drives an SPI
+     * slave on the very same peripheral and the very same M1 wires this
+     * runtime uses (the board routes one SPI link between the STM32 and the
+     * ESP32-C6, and the ESP32-C6 has one general-purpose SPI peripheral --
+     * SPI0/SPI1 serve flash). Two slaves cannot own it, so in this image the
+     * link belongs to Spinel and the host talks to a Thread radio over it
+     * rather than to the canonical Core protocol. The factory UART adapter is
+     * unaffected and still reaches the canonical router.
+     * See components/mtek_ieee802154_service/mtek_154_rcp_esp32.c and
+     * docs/BUILD_VARIANTS.md. */
+    (void)shared_mutex;
+    ESP_LOGI(TAG, "SPI transport yielded to the OpenThread radio co-processor host link");
+    return 0;
+#else
+    /* compat_dctx/native_dctx (the dominant contributors, ~139KB+12KB) are now
+     * static, not stack-local (see their own doc comments above), so this
+     * configured stack no longer needs to hold them. What remains is txbuf/rxbuf
+     * (already static), the `spi_slave_transaction_t t` local, and whatever
      * per-call-frame depth the native/Legacy SPI Compatibility dispatch call chain and
      * ESP-IDF's own spi_slave/router/service/HAL calls need beneath them --
-     * bumped from the prior 8192 to 12288 bytes as a measured-safer
-     * starting point given the removed footprint, but the real per-
-     * transaction high-water mark (uxTaskGetStackHighWaterMark) has not
-     * been measured on real hardware this session (no target access) and
-     * remains a disclosed gap, not a claimed-safe number -- see
-     * docs/RESOURCE_BUDGET.md. */
-    /* P0 correction (Round 8, item 4 "check ... SPI runtime task
-     * creation"): previously discarded entirely -- see this function's own
-     * header doc comment (mtek_spi_runtime.h) for what the caller does
-     * with a nonzero return.
+     * bumped from the prior 8192 to 12288 bytes as a measured-safer starting
+     * point given the removed footprint, but the real per- transaction
+     * high-water mark (uxTaskGetStackHighWaterMark) has not been measured on
+     * real hardware (no target access) and remains a disclosed gap, not a
+     * claimed-safe number -- see docs/RESOURCE_BUDGET.md. */
+    /* Previously discarded entirely -- see this function's own header doc
+     * comment (mtek_spi_runtime.h) for what the caller does with a nonzero
+     * return.
      *
-     * RC12 hardening round, item 4 (P1/P2): task creation succeeding is no
-     * longer reported as readiness. A bounded startup handshake now waits
-     * for the task to actually configure its GPIOs and initialize the
-     * spi_slave peripheral, and returns THAT result -- so a GPIO/peripheral
-     * init failure (or a task that never reaches readiness within the
-     * bound) is reported to app_main as a real failure, not masked behind
-     * "the task was created". The transaction loop and transport-selection
-     * timing are unchanged: the task signals `done` and immediately
-     * proceeds into its loop, so a successful handshake returns within a
-     * few milliseconds and adds no wire-visible delay. */
+     * Task creation succeeding is no longer reported as
+     * readiness. A bounded startup handshake now waits for the task to actually
+     * configure its GPIOs and initialize the spi_slave peripheral, and returns
+     * THAT result -- so a GPIO/peripheral init failure (or a task that never
+     * reaches readiness within the bound) is reported to app_main as a real
+     * failure, not masked behind "the task was created". The transaction loop
+     * and transport-selection timing are unchanged: the task signals `done` and
+     * immediately proceeds into its loop, so a successful handshake returns
+     * within a few milliseconds and adds no wire-visible delay. */
     s_spi_startup.done = xSemaphoreCreateBinary();
     if (!s_spi_startup.done) {
         ESP_LOGE(TAG, "mtek_spi_runtime_start: xSemaphoreCreateBinary(startup) failed");
@@ -530,4 +525,5 @@ int mtek_spi_runtime_start(SemaphoreHandle_t shared_mutex) {
         return -1;
     }
     return s_spi_startup.result;
+#endif
 }

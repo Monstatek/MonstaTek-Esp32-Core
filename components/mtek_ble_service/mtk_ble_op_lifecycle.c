@@ -1,7 +1,6 @@
-/* Clean-room implementation from MonstaTek contract. See
- * mtk_ble_op_lifecycle.h for the full design rationale (RC12 hardening
- * round, item 1 (P0) "BLE callback lifetime": close the check-to-use race
- * a generation-only guard cannot). */
+/* Clean-room implementation from MonstaTek contract. See mtk_ble_op_lifecycle.h
+ * for the full design rationale (item 1 (P0) "BLE callback lifetime": close the
+ * check-to-use race a generation-only guard cannot). */
 #include "mtk_ble_op_lifecycle.h"
 #include <stddef.h>
 
@@ -38,10 +37,10 @@ int mtk_ble_op_lifecycle_callback_begin(mtk_ble_op_lifecycle_t *lc, uint32_t can
         return 0;
     }
     if (ctx_out) *ctx_out = lc->published;
-    /* Deliberately return WITH THE LOCK STILL HELD -- the caller does all
-     * of its context/semaphore work before callback_end() releases it, so
-     * retire() (which must acquire this same lock) can never interleave
-     * into the callback's own critical section. */
+    /* Deliberately return WITH THE LOCK STILL HELD -- the caller does all of its
+     * context/semaphore work before callback_end releases it, so retire (which
+     * must acquire this same lock) can never interleave into the callback's own
+     * critical section. */
     return 1;
 }
 

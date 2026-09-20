@@ -10,6 +10,7 @@
 #include "mtek_spi_native_dispatch.h"
 #include "mtek_router.h"
 #include "mtek_async_sink.h"
+#include "mtek_espnow_hal.h"
 #include "mtek_core.h"
 #include "mtek_codec_api.h"
 #include "mtek_capture_service.h"
@@ -24,13 +25,11 @@ void mtek_spi_native_dispatch_tick(mtk_spi_native_dispatch_ctx_t *dctx, uint32_t
         mtk_spi_native_reassembly_reset(&dctx->inbound);
 }
 
-/* Non-queue-backed capture: used only for SYNCHRONOUS-lifecycle opcodes,
- * which the router never defers regardless of whether an async runner
- * is registered. Backed by dctx->sync_capture (mtek_spi_native_dispatch.h),
- * NOT a stack-local object (RC6 independent audit P0 "Target stack usage
- * is catastrophically larger than the configured stacks" -- a 65KB+
- * stack-local here, nested below spi_runtime_task's own frame, was a
- * measured stack-overflow defect on target). Large enough
+/* Non-queue-backed capture: used only for SYNCHRONOUS-lifecycle opcodes, which
+ * the router never defers regardless of whether an async runner is registered.
+ * Backed by dctx->sync_capture (mtek_spi_native_dispatch.h), NOT a stack-local
+ * object (a 65KB+ stack-local here, nested below spi_runtime_task's own frame,
+ * was a measured stack-overflow defect on target). Large enough
  * (MTK_SPI_NATIVE_MAX_MESSAGE) to carry any response up to the reassembly
  * ceiling (e.g. AP_SCAN_RESULTS_PAGE's 50-record page). */
 static mtk_emit_result_t cap_resp(void *user, uint32_t correlation, uint8_t status, const void *body, const mtk_struct_desc_t *desc) {
@@ -78,32 +77,28 @@ static mtk_emit_result_t cap_resp_raw(void *user, uint32_t correlation, uint8_t 
 static mtk_emit_result_t cap_event(void *user, uint32_t c, const char *n, const void *b, const mtk_struct_desc_t *d) { (void)user; (void)c; (void)n; (void)b; (void)d; return MTK_EMIT_DROPPED; }
 static mtk_emit_result_t cap_stream(void *user, uint32_t t, uint32_t s, const uint8_t *c, size_t l) { (void)user; (void)t; (void)s; (void)c; (void)l; return MTK_EMIT_DROPPED; }
 
-/* RC5 independent audit P0 "Native events and streams are not
- * implemented": real relay for ACCEPTED_ASYNC operations' EVENT/STREAM
- * traffic onto the native wire, queue-backed through mtk_async_sink_resp
- * (mtek_router.h's SAFETY CONTRACT -- `user` is the persistent
- * dctx->event_queue). Delivered by try_deliver_frame below as their own
- * EVENT/STREAM-class cells whenever nothing else is more urgent.
+/* Real relay for ACCEPTED_ASYNC operations' EVENT/STREAM traffic onto the native
+ * wire, queue-backed through mtk_async_sink_resp (mtek_router.h's SAFETY
+ * CONTRACT -- `user` is the persistent dctx->event_queue). Delivered by
+ * try_deliver_frame below as their own EVENT/STREAM-class cells whenever nothing
+ * else is more urgent.
  *
- * RC7 independent audit P0 "Native EVENT/STREAM encoding contradicts the
- * accepted header contract": RC6's own wire-format choice (below) put the
- * operation/session token in the header's `request_id` field -- the
- * audit found the accepted protocol requires `request_id=0` for EVENT
- * and STREAM cells (SPI_PROTOCOL_V1.md's own confirmed header rule).
- * `packet_seq` still carries the stream sequence number (0 for EVENT) --
- * unaffected by this correction, the audit's own citation was
- * specifically about `request_id`. The operation/session token still has
- * to travel somehow (there is no other frozen header field for it, same
- * disclosed-choice reasoning as before -- see e.g. HELLO_ACK's empty
- * payload and CAPTURE_START's raw-errno response shape elsewhere in this
- * tree): it now travels as the payload's own first 4 bytes
- * (little-endian, matching every other multi-byte field's endianness in
- * this wire format, mtek_spi_native_frame.c's put_u32/get_u32), ahead of
- * the same `[name_len:u8][name bytes][body]` (EVENT) or raw chunk bytes
- * (STREAM) shape RC6 already used for the rest of the payload (the
- * capture service already pre-formats its own chunk header/payload shape
- * -- see mtek_capture_logic.c -- so nothing further wraps STREAM's own
- * body). */
+ * RC6's own wire-format choice (below) put the operation/session token in the
+ * header's `request_id` field -- the audit found the accepted protocol requires
+ * `request_id=0` for EVENT and STREAM cells (SPI_PROTOCOL_V1.md's own confirmed
+ * header rule). `packet_seq` still carries the stream sequence number (0 for
+ * EVENT) -- unaffected by this correction, the audit's own citation was
+ * specifically about `request_id`. The operation/session token still has to
+ * travel somehow (there is no other frozen header field for it, same
+ * disclosed-choice reasoning as before -- see e.g. HELLO_ACK's empty payload and
+ * CAPTURE_START's raw-errno response shape elsewhere in this tree): it now
+ * travels as the payload's own first 4 bytes (little-endian, matching every
+ * other multi-byte field's endianness in this wire format,
+ * mtek_spi_native_frame.c's put_u32/get_u32), ahead of the same
+ * `[name_len:u8][name bytes][body]` (EVENT) or raw chunk bytes (STREAM) shape
+ * RC6 already used for the rest of the payload (the capture service already
+ * pre-formats its own chunk header/payload shape -- see mtek_capture_logic.c --
+ * so nothing further wraps STREAM's own body). */
 
 /* Builds the EVENT/STREAM payload described above into `out` (capacity
  * >= 4 + 1 + MTK_ASYNC_EVENT_NAME_MAX + MTK_ASYNC_FRAME_MAX_BODY) and
@@ -130,98 +125,90 @@ static size_t build_event_or_stream_payload(const mtk_async_frame_t *f, uint8_t 
 void mtek_spi_native_dispatch_init(mtk_spi_native_dispatch_ctx_t *dctx, uint32_t boot_epoch) {
     memset(dctx, 0, sizeof(*dctx));
     /* `boot_epoch` here seeds ONLY the placeholder peer-epoch tracker (see
-     * mtk_spi_native_dispatch_ctx_t's own doc comment) -- it is never used
-     * for canonical dispatch or outbound wire stamping, both of which
-     * always read mtk_core_boot_epoch() directly, live, regardless of what
-     * this dctx was seeded with. The caller (main/mtek_spi_runtime.c) still
-     * passes mtk_core_boot_epoch() here, which remains a safe, harmless
-     * placeholder: a real peer's own independently random HELLO epoch is
-     * virtually certain to differ from it, so the very first real HELLO
-     * still correctly takes the epoch-adoption branch. */
+     * mtk_spi_native_dispatch_ctx_t's own doc comment) -- it is never used for
+     * canonical dispatch or outbound wire stamping, both of which always read
+     * mtk_core_boot_epoch directly, live, regardless of what this dctx was
+     * seeded with. The caller (main/mtek_spi_runtime.c) still passes
+     * mtk_core_boot_epoch here, which remains a safe, harmless placeholder: a
+     * real peer's own independently random HELLO epoch is virtually certain to
+     * differ from it, so the very first real HELLO still correctly takes the
+     * epoch-adoption branch. */
     dctx->peer_boot_epoch = boot_epoch;
     mtk_async_queue_init(&dctx->event_queue);
     mtk_spi_native_packet_seq_tracker_init(&dctx->packet_seq_tracker);
 }
 
-/* RC7 independent audit item 3 "epoch reset" (SPI_PROTOCOL_V1.md "Reset
- * and resynchronization": "A changed boot epoch invalidates all partial
- * reassembly, duplicate caches associated with the old epoch, in-flight
- * requests, stream credits, and operation tokens for that peer."): drops
- * every piece of transport-owned state that is only meaningful for the
- * PREVIOUS peer session -- called exactly once, from the HELLO handler
- * below, only when the incoming HELLO's own boot_epoch actually differs
- * from the one this dctx currently recognizes (never on the very first
- * HELLO of a boot session, when there is nothing yet to invalidate, and
- * never on a REPEATED HELLO carrying the SAME epoch -- idempotent by
- * construction, since the caller only invokes this on a genuine change).
+/* (SPI_PROTOCOL_V1.md "Reset and resynchronization": "A changed boot epoch
+ * invalidates all partial reassembly, duplicate caches associated with the old
+ * epoch, in-flight requests, stream credits, and operation tokens for that
+ * peer."): drops every piece of transport-owned state that is only meaningful
+ * for the PREVIOUS peer session -- called exactly once, from the HELLO handler
+ * below, only when the incoming HELLO's own boot_epoch actually differs from the
+ * one this dctx currently recognizes (never on the very first HELLO of a boot
+ * session, when there is nothing yet to invalidate, and never on a REPEATED
+ * HELLO carrying the SAME epoch -- idempotent by construction, since the caller
+ * only invokes this on a genuine change).
  *
- * P0 correction (follow-up read-only audit, "genuine peer-session
- * ownership"): a read-only re-audit of the prior round's own peer-session
- * invalidation found it incomplete: it cancelled only the SINGLE
- * currently arbiter-active operation, leaving (a) any OTHER terminal-but-
- * retained token from earlier in the same now-ended session fully
- * queryable until its normal 60s retention window, (b) a request already
- * queued in the router's own async pool -- dispatched under the OLD
- * session, but whose worker thread had not yet actually started running
- * its handler -- free to mint a brand-new operation indistinguishable
- * from one the NEW peer session legitimately created, and (c) several
- * per-service handlers (BLE_SCAN, GATT_CONNECT, STA_CONNECT) that
- * published shared session state / emitted terminal events / released an
- * arbiter class UNCONDITIONALLY once their own blocking HAL call
- * returned, with no check that their own operation had not meanwhile been
- * invalidated by exactly this path -- a stale worker completing late
- * could republish over, or release the radio lease out from under, a
- * genuinely newer operation. This round closes all three:
+ * A read-only re-audit of the prior round's own peer-session invalidation found
+ * it incomplete: it cancelled only the SINGLE currently arbiter-active
+ * operation, leaving (a) any OTHER terminal-but- retained token from earlier in
+ * the same now-ended session fully queryable until its normal 60s retention
+ * window, (b) a request already queued in the router's own async pool --
+ * dispatched under the OLD session, but whose worker thread had not yet actually
+ * started running its handler -- free to mint a brand-new operation
+ * indistinguishable from one the NEW peer session legitimately created, and (c)
+ * several per-service handlers (BLE_SCAN, GATT_CONNECT, STA_CONNECT) that
+ * published shared session state / emitted terminal events / released an arbiter
+ * class UNCONDITIONALLY once their own blocking HAL call returned, with no check
+ * that their own operation had not meanwhile been invalidated by exactly this
+ * path -- a stale worker completing late could republish over, or release the
+ * radio lease out from under, a genuinely newer operation. This round closes all
+ * three:
  *
- *  1. mtk_core_bump_session_generation() (called first, below) advances a
- *     dedicated peer-session generation counter -- deliberately NOT
- *     mtk_core_boot_epoch() (the ESP's own epoch must never change here;
- *     operation-token lookup stays scoped to it exactly as the prior
- *     round established) and NOT mtk_core_reset() (which would also wipe
- *     the operation table wholesale with no per-service cleanup at all,
- *     orphaning every real HAL/radio resource those operations held).
- *     Every request mtek_spi_native_dispatch_feed_cell dispatches stamps
- *     mtk_request_ctx_t.session_generation with the CURRENT value at the
- *     moment it is admitted; mtek_router.c's own async_trampoline checks
- *     this immediately before invoking a deferred handler and refuses
- *     (NOT_FOUND, no operation ever minted) one whose generation is
- *     already stale -- closing gap (b).
- *  2. mtek_wifi_cancel_active_for_peer_reset/mtek_ble_cancel_active_for_
- *     peer_reset/mtek_capture_cancel_active_for_peer_reset (each also
- *     updated this round) genuinely cancel/finalize whatever operation is
- *     currently arbiter-active for their own service -- covering every
- *     long-lived, resource-holding opcode this tree defines (AP_SCAN/
- *     STA_SCAN/DEAUTH/HANDSHAKE/STA_CONNECT and an already-connected STA
- *     session, BLE_SCAN/BLE_ADV/SIGNAL_METER/GATT connecting-or-connected,
- *     MonstaShark capture) via each service's own already-established
- *     finalize/teardown helper (byte-for-byte the same cleanup a real
- *     STOP would run), or -- for AP/STA scan specifically, the one class
- *     with a genuinely long BLOCKING HAL call and a real cancel hook --
- *     the SAME signal-then-bounded-wait quiescence handshake a real STOP
- *     already uses, so the radio is never touched from two threads at
- *     once. Where no cancel hook exists at all (STA_CONNECT/BLE_SCAN/
- *     GATT_CONNECT's own blocking HAL calls), the corresponding handler
- *     (handle_sta_connect/handle_ble_scan_start/handle_gatt_connect) is
- *     now itself fenced: it gates every externally-visible effect
- *     (publishing shared session state, emitting its own terminal event,
- *     releasing its arbiter class) on actually WINNING the SAME token-
- *     based transition this cancellation path also attempts, so whichever
- *     side gets there first is the ONLY one that ever touches any of it --
- *     closing gap (c).
- *  3. mtk_op_evict_all_terminal() (called last, below) sweeps every one
- *     of the fixed 8 table slots and evicts every TERMINAL record
- *     regardless of which token it carries -- by the time this runs,
- *     step 2 has already finalized the one operation that could still
- *     have been live (only one radio-owning class is ever active at a
- *     time), so this closes gap (a): every old-session token, including
- *     ones that went terminal earlier in the same session and were only
- *     sitting in the table awaiting normal retention, is now genuinely
- *     gone (NOT_FOUND), not merely terminal-but-still-reportable. */
+ * 1. mtk_core_bump_session_generation (called first, below) advances a dedicated
+ * peer-session generation counter -- deliberately NOT mtk_core_boot_epoch (the
+ * ESP's own epoch must never change here; operation-token lookup stays scoped to
+ * it exactly as the prior round established) and NOT mtk_core_reset (which would
+ * also wipe the operation table wholesale with no per-service cleanup at all,
+ * orphaning every real HAL/radio resource those operations held). Every request
+ * mtek_spi_native_dispatch_feed_cell dispatches stamps
+ * mtk_request_ctx_t.session_generation with the CURRENT value at the moment it
+ * is admitted; mtek_router.c's own async_trampoline checks this immediately
+ * before invoking a deferred handler and refuses (NOT_FOUND, no operation ever
+ * minted) one whose generation is already stale -- closing gap (b). 2.
+ * mtek_wifi_cancel_active_for_peer_reset/mtek_ble_cancel_active_for_
+ * peer_reset/mtek_capture_cancel_active_for_peer_reset (each also updated)
+ * genuinely cancel/finalize whatever operation is currently arbiter-active for
+ * their own service -- covering every long-lived, resource-holding opcode this
+ * tree defines (AP_SCAN/ STA_SCAN/DEAUTH/HANDSHAKE/STA_CONNECT and an
+ * already-connected STA session, BLE_SCAN/BLE_ADV/SIGNAL_METER/GATT
+ * connecting-or-connected, MonstaShark capture) via each service's own
+ * already-established finalize/teardown helper (byte-for-byte the same cleanup a
+ * real STOP would run), or -- for AP/STA scan specifically, the one class with a
+ * genuinely long BLOCKING HAL call and a real cancel hook -- the SAME
+ * signal-then-bounded-wait quiescence handshake a real STOP already uses, so the
+ * radio is never touched from two threads at once. Where no cancel hook exists
+ * at all (STA_CONNECT/BLE_SCAN/ GATT_CONNECT's own blocking HAL calls), the
+ * corresponding handler
+ * (handle_sta_connect/handle_ble_scan_start/handle_gatt_connect) is now itself
+ * fenced: it gates every externally-visible effect (publishing shared session
+ * state, emitting its own terminal event, releasing its arbiter class) on
+ * actually WINNING the SAME token- based transition this cancellation path also
+ * attempts, so whichever side gets there first is the ONLY one that ever touches
+ * any of it -- closing gap (c). 3. mtk_op_evict_all_terminal (called last,
+ * below) sweeps every one of the fixed 8 table slots and evicts every TERMINAL
+ * record regardless of which token it carries -- by the time this runs, step 2
+ * has already finalized the one operation that could still have been live (only
+ * one radio-owning class is ever active at a time), so this closes gap (a):
+ * every old-session token, including ones that went terminal earlier in the same
+ * session and were only sitting in the table awaiting normal retention, is now
+ * genuinely gone (NOT_FOUND), not merely terminal-but-still-reportable. */
 static void cancel_active_operations_for_peer_reset(void) {
     mtk_core_bump_session_generation();
     mtek_wifi_cancel_active_for_peer_reset();
     mtek_ble_cancel_active_for_peer_reset();
     mtek_capture_cancel_active_for_peer_reset();
+    mtek_espnow_cancel_active_for_peer_reset();
     mtk_op_evict_all_terminal();
 }
 
@@ -312,11 +299,10 @@ static void stage_cell(mtk_spi_native_dispatch_ctx_t *dctx, uint8_t msg_class, u
                         const uint8_t *body, size_t body_len,
                         mtk_spi_native_header_t *resp_hdr, uint8_t *resp_payload, uint16_t *resp_payload_len) {
     mtk_spi_native_header_t tmpl;
-    /* Release-tooling-round P0 correction (independent audit): every
-     * cell staged here is ESP-originated (RESPONSE/EVENT/STREAM) -- always
-     * stamped with the ESP's OWN epoch (mtk_core_boot_epoch()), never
-     * dctx's peer-epoch tracker. See mtk_spi_native_dispatch_ctx_t's own
-     * doc comment (mtek_spi_native_dispatch.h) for the full rationale. */
+    /* Every cell staged here is ESP-originated (RESPONSE/EVENT/STREAM) -- always
+     * stamped with the ESP's OWN epoch (mtk_core_boot_epoch), never dctx's
+     * peer-epoch tracker. See mtk_spi_native_dispatch_ctx_t's own doc comment
+     * (mtek_spi_native_dispatch.h) for the full rationale. */
     fill_header_common(&tmpl, service, opcode, request_id, packet_seq, mtk_core_boot_epoch());
     tmpl.msg_class = msg_class;
     tmpl.status = status;
@@ -363,25 +349,22 @@ static void stage_cell(mtk_spi_native_dispatch_ctx_t *dctx, uint8_t msg_class, u
  *    queue's own 512-byte frame body bound -- so no separate oversized-
  *    response path is needed here. */
 /* Pops at most one frame from dctx->event_queue and stages it as this
- * transaction's reply, or returns 0 if there was nothing to deliver.
- * Shared between dispatch_complete_message (which may find ITS OWN
- * just-dispatched request already answered here -- fast/synchronous
- * completion -- or, just as legitimately under real 4-way concurrency,
- * find a DIFFERENT still-pending request's response, or an unrelated
- * operation's EVENT/STREAM, ready first) and
+ * transaction's reply, or returns 0 if there was nothing to deliver. Shared
+ * between dispatch_complete_message (which may find ITS OWN just-dispatched
+ * request already answered here -- fast/synchronous completion -- or, just as
+ * legitimately under real 4-way concurrency, find a DIFFERENT still-pending
+ * request's response, or an unrelated operation's EVENT/STREAM, ready first) and
  * mtek_spi_native_dispatch_poll_outbound.
  *
- * RESPONSE frames are matched against pending[] by correlation
- * (=request_id) and only delivered (clearing that slot) on a match -- an
- * unmatched RESPONSE (should not normally occur) is discarded rather
- * than misdelivered as if it answered an unrelated request. EVENT and
- * STREAM frames are always deliverable (RC5 independent audit P0 "Native
- * events and streams are not implemented"): they are unsolicited by
- * design (mtk_sink_t's own emit_event/emit_stream calls, not a reply to
- * any specific still-pending request), so every one that reaches the
- * front of the queue is relayed onto the wire via
- * build_event_or_stream_payload's disclosed encoding, without needing
- * (or being able) to match a pending[] slot. */
+ * RESPONSE frames are matched against pending[] by correlation (=request_id) and
+ * only delivered (clearing that slot) on a match -- an unmatched RESPONSE
+ * (should not normally occur) is discarded rather than misdelivered as if it
+ * answered an unrelated request. EVENT and STREAM frames are always deliverable
+ * : they are unsolicited by design (mtk_sink_t's own emit_event/emit_stream
+ * calls, not a reply to any specific still-pending request), so every one that
+ * reaches the front of the queue is relayed onto the wire via
+ * build_event_or_stream_payload's disclosed encoding, without needing (or being
+ * able) to match a pending[] slot. */
 static int try_deliver_frame(mtk_spi_native_dispatch_ctx_t *dctx,
                               mtk_spi_native_header_t *resp_hdr, uint8_t *resp_payload, uint16_t *resp_payload_len) {
     mtk_async_frame_t f;
@@ -392,9 +375,7 @@ static int try_deliver_frame(mtk_spi_native_dispatch_ctx_t *dctx,
         size_t len = build_event_or_stream_payload(&f, payload);
         uint8_t msg_class = (f.kind == MTK_ASYNC_FRAME_STREAM) ? MTK_SPI_CLASS_STREAM : MTK_SPI_CLASS_EVENT;
         uint32_t seq = (f.kind == MTK_ASYNC_FRAME_STREAM) ? f.seq_or_status : 0;
-        /* RC7 independent audit P0 "Native EVENT/STREAM encoding
-         * contradicts the accepted header contract": request_id=0, per
-         * the accepted protocol -- the operation/session token
+        /* request_id=0, per the accepted protocol -- the operation/session token
          * (f.correlation) now travels inside `payload` instead (see
          * build_event_or_stream_payload's own doc comment above). */
         stage_cell(dctx, msg_class, 0, 0, 0, seq, MTK_STATUS_OK, payload, len,
@@ -409,12 +390,11 @@ static int try_deliver_frame(mtk_spi_native_dispatch_ctx_t *dctx,
             uint16_t payload_len = dctx->pending[i].payload_len;
             uint32_t payload_crc = dctx->pending[i].payload_crc;
             dctx->pending[i].active = 0;
-            /* RC7 independent audit item 3 "RETRY/latest-eight duplicate
-             * cache": this is the real, final accept-response delivery for
-             * a (possibly deferred) side-effecting ACCEPTED_ASYNC op --
-             * cache it now so a later retry of the SAME request_id is
-             * answered from here instead of re-dispatching (see
-             * dispatch_complete_message's own three-stage lookup). */
+            /* This is the real, final accept-response delivery for a (possibly
+             * deferred) side-effecting ACCEPTED_ASYNC op -- cache it now so a
+             * later retry of the SAME request_id is answered from here instead
+             * of re-dispatching (see dispatch_complete_message's own three-stage
+             * lookup). */
             if (op_is_side_effecting(service, opcode)) {
                 dup_cache_insert(dctx, request_id, service, opcode, payload_len, payload_crc,
                                   (uint8_t)f.seq_or_status, f.body, (uint16_t)f.body_len);
@@ -436,26 +416,22 @@ static void dispatch_complete_message(mtk_spi_native_dispatch_ctx_t *dctx, uint1
     uint16_t plen16 = (uint16_t)(payload_len > 0xFFFF ? 0xFFFF : payload_len);
     uint32_t pcrc = content_crc(payload, payload_len);
 
-    /* RC7 independent audit item 3 "RETRY/latest-eight duplicate cache"
-     * (SPI_PROTOCOL_V1.md "Correlation and duplicate safety"): checked
-     * only for SIDE-EFFECTING (non-idempotent) opcodes -- re-executing an
-     * idempotent query has no observable effect worth guarding against,
-     * and this cache's whole 8-entry depth is reserved for the traffic
-     * that actually needs it. Two independent resources can hold a
-     * matching request_id, checked in this order:
-     *  1. A still-ACTIVE pending[] slot: this request was already
-     *     accepted and dispatched, but its own final response has not
-     *     yet been delivered to the peer (still queued/running) --
-     *     content match means "you already asked, still working on it"
-     *     (answer IDLE, no re-dispatch); mismatch is a genuine protocol
-     *     violation (a different logical request reusing a still-live
-     *     request_id, which SPI_PROTOCOL_V1.md's own STM32-side rules say
-     *     must never legitimately happen).
-     *  2. The completed-response cache (latest eight): content match
-     *     means a genuine retry whose original response was lost on the
-     *     wire -- replay the cached response without touching
-     *     mtk_router_dispatch again; mismatch is the same protocol
-     *     violation as above. */
+    /* (SPI_PROTOCOL_V1.md "Correlation and duplicate safety"): checked only for
+     * SIDE-EFFECTING (non-idempotent) opcodes -- re-executing an idempotent
+     * query has no observable effect worth guarding against, and this cache's
+     * whole 8-entry depth is reserved for the traffic that actually needs it.
+     * Two independent resources can hold a matching request_id, checked in this
+     * order: 1. A still-ACTIVE pending[] slot: this request was already accepted
+     * and dispatched, but its own final response has not yet been delivered to
+     * the peer (still queued/running) -- content match means "you already asked,
+     * still working on it" (answer IDLE, no re-dispatch); mismatch is a genuine
+     * protocol violation (a different logical request reusing a still-live
+     * request_id, which SPI_PROTOCOL_V1.md's own STM32-side rules say must never
+     * legitimately happen). 2. The completed-response cache (latest eight):
+     * content match means a genuine retry whose original response was lost on
+     * the wire -- replay the cached response without touching
+     * mtk_router_dispatch again; mismatch is the same protocol violation as
+     * above. */
     if (op && !op->idempotent) {
         for (int i = 0; i < MTK_SPI_NATIVE_MAX_IN_FLIGHT; i++) {
             if (dctx->pending[i].active && dctx->pending[i].request_id == request_id) {
@@ -504,22 +480,17 @@ static void dispatch_complete_message(mtk_spi_native_dispatch_ctx_t *dctx, uint1
         ctx.profile = MTK_PROFILE_NATIVE_SPI;
         ctx.dispatch_mode = MTK_DISPATCH_INLINE;
         ctx.correlation = request_id;
-        /* Release-tooling-round P0 correction (independent audit,
-         * "Native SPI confuses the STM32 and ESP boot epochs"): the
-         * canonical request context's boot_epoch is always the ESP's OWN
-         * in-memory epoch (002-canonical-core-contract.md §2/§3.4) --
-         * NEVER dctx's peer-epoch tracker, which a real STM32 peer's own
-         * random HELLO epoch would make genuinely diverge from
-         * mtk_core_boot_epoch() (the value every operation token is
-         * actually minted/looked-up under). */
+        /* The canonical request context's boot_epoch is always the ESP's OWN
+         * in-memory epoch -- NEVER dctx's peer-epoch tracker, which a real STM32
+         * peer's own random HELLO epoch would make genuinely diverge from
+         * mtk_core_boot_epoch (the value every operation token is actually
+         * minted/looked-up under). */
         ctx.boot_epoch = mtk_core_boot_epoch();
-        /* P0 correction (follow-up read-only audit, "genuine peer-session
-         * ownership"): this SYNCHRONOUS-lifecycle path never actually gets
-         * deferred to the router's async pool (mtk_router_dispatch calls
-         * the handler directly, on this same thread, before returning), so
-         * async_trampoline's own session_generation fence never applies to
-         * it -- stamped anyway for consistency/correctness, never
-         * meaningfully checked here. */
+        /* This SYNCHRONOUS-lifecycle path never actually gets deferred to the
+         * router's async pool (mtk_router_dispatch calls the handler directly,
+         * on this same thread, before returning), so async_trampoline's own
+         * session_generation fence never applies to it -- stamped anyway for
+         * consistency/correctness, never meaningfully checked here. */
         ctx.session_generation = mtk_core_session_generation();
         ctx.authorization_level = 0;
         ctx.sink.user = &dctx->sync_capture;
@@ -576,19 +547,17 @@ static void dispatch_complete_message(mtk_spi_native_dispatch_ctx_t *dctx, uint1
     ctx.dispatch_mode = MTK_DISPATCH_DEFER_ALLOWED;
     ctx.correlation = request_id;
     /* See the sync-dispatch path's identical assignment above for the full
-     * rationale (release-tooling-round P0 correction, independent
-     * audit): always the ESP's own epoch, never dctx's peer-epoch tracker. */
+     * rationale: always the ESP's own
+     * epoch, never dctx's peer-epoch tracker. */
     ctx.boot_epoch = mtk_core_boot_epoch();
-    /* P0 correction (follow-up read-only audit, "genuine peer-session
-     * ownership"): THIS is the path async_trampoline's own fence actually
-     * protects -- an ACCEPTED_ASYNC opcode genuinely deferred to the
-     * router's async pool, whose worker may not start running until well
-     * after this call returns (and, if a peer reboot happens in that
-     * window, well after the peer session that originated it has already
-     * ended). Captured NOW, at the moment this request is admitted under
-     * the CURRENT peer session -- not re-read later by the worker itself,
-     * which must see exactly the generation this request was actually
-     * dispatched under. */
+    /* THIS is the path async_trampoline's own fence actually protects -- an
+     * ACCEPTED_ASYNC opcode genuinely deferred to the router's async pool, whose
+     * worker may not start running until well after this call returns (and, if a
+     * peer reboot happens in that window, well after the peer session that
+     * originated it has already ended). Captured NOW, at the moment this request
+     * is admitted under the CURRENT peer session -- not re-read later by the
+     * worker itself, which must see exactly the generation this request was
+     * actually dispatched under. */
     ctx.session_generation = mtk_core_session_generation();
     ctx.authorization_level = 0;
     ctx.sink.user = &dctx->event_queue;
@@ -618,84 +587,75 @@ static void dispatch_complete_message(mtk_spi_native_dispatch_ctx_t *dctx, uint1
 void mtek_spi_native_dispatch_feed_cell(mtk_spi_native_dispatch_ctx_t *dctx, const mtk_spi_native_header_t *hdr, const uint8_t *payload,
                                          uint32_t now_ms, mtk_spi_native_header_t *resp_hdr, uint8_t *resp_payload, uint16_t *resp_payload_len) {
     mtek_spi_native_dispatch_tick(dctx, now_ms);
-    /* RC7 independent audit item 3 "packet-sequence diagnostics": every
-     * cell that reaches this function (every class this dctx ever sees --
-     * the real caller's own IDLE cells are intercepted before feed_cell,
-     * so those are not double-counted here, only genuinely missed). */
+    /* Every cell that reaches this function (every class this dctx ever sees --
+     * the real caller's own IDLE cells are intercepted before feed_cell, so
+     * those are not double-counted here, only genuinely missed). */
     if (mtk_spi_native_packet_seq_tracker_note(&dctx->packet_seq_tracker, hdr->packet_seq)) {
         mtk_transport_counters_add_packet_seq_gap();
     }
     if (hdr->msg_class == MTK_SPI_CLASS_HELLO) {
-        /* Release-tooling-round P0 correction (independent audit,
-         * "Native SPI confuses the STM32 and ESP boot epochs"):
-         * `dctx->peer_boot_epoch` is this dctx's own record of the
-         * CURRENTLY RECOGNIZED PEER epoch only -- seeded at init from a
-         * placeholder value (mtek_spi_native_dispatch.h's own doc comment)
-         * that is virtually certain to differ from any real peer's own
-         * independently random HELLO epoch (SPI_PROTOCOL_V1.md Header:
-         * "random nonzero value regenerated on every SENDER boot"), so the
-         * very first real HELLO of a boot session always takes this branch
-         * (a safe no-op invalidation: nothing meaningful exists yet), and a
-         * LATER HELLO with a genuinely DIFFERENT epoch than the one
-         * currently recognized means the peer itself rebooted mid-session,
-         * exactly the resynchronization event the spec describes.
+        /* `dctx->peer_boot_epoch` is this dctx's own record of the CURRENTLY
+         * RECOGNIZED PEER epoch only -- seeded at init from a placeholder value
+         * (mtek_spi_native_dispatch.h's own doc comment) that is virtually
+         * certain to differ from any real peer's own independently random HELLO
+         * epoch (SPI_PROTOCOL_V1.md Header: "random nonzero value regenerated on
+         * every SENDER boot"), so the very first real HELLO of a boot session
+         * always takes this branch (a safe no-op invalidation: nothing
+         * meaningful exists yet), and a LATER HELLO with a genuinely DIFFERENT
+         * epoch than the one currently recognized means the peer itself rebooted
+         * mid-session, exactly the resynchronization event the spec describes.
          *
-         * A prior round's own bug (the one this correction fixes): this
-         * SAME field was ALSO used to populate the canonical request
-         * context's boot_epoch (dispatch_complete_message's own
-         * ctx.boot_epoch assignment) and to stamp every ESP-originated
-         * outbound cell's own boot_epoch header field -- both of which the
-         * canonical core contract and the wire protocol require to be the
-         * ESP's OWN epoch (mtk_core_boot_epoch()), never the peer's. On
-         * real hardware (where the STM32's own random epoch and the ESP's
-         * own random mtk_core_boot_epoch() are two independent values,
-         * unlike every host test's shared placeholder), that bug made
-         * every operation-token lookup dispatched after the first real
-         * HELLO fail with NOT_FOUND, since START stamped new records with
-         * mtk_core_boot_epoch() while STATUS/STOP looked them up under the
-         * peer's own (different) epoch. */
+         * A prior round's own bug (the one this correction fixes): this SAME
+         * field was ALSO used to populate the canonical request context's
+         * boot_epoch (dispatch_complete_message's own ctx.boot_epoch assignment)
+         * and to stamp every ESP-originated outbound cell's own boot_epoch
+         * header field -- both of which the canonical core contract and the wire
+         * protocol require to be the ESP's OWN epoch (mtk_core_boot_epoch),
+         * never the peer's. On real hardware (where the STM32's own random epoch
+         * and the ESP's own random mtk_core_boot_epoch are two independent
+         * values, unlike every host test's shared placeholder), that bug made
+         * every operation-token lookup dispatched after the first real HELLO
+         * fail with NOT_FOUND, since START stamped new records with
+         * mtk_core_boot_epoch while STATUS/STOP looked them up under the peer's
+         * own (different) epoch. */
         if (hdr->boot_epoch != dctx->peer_boot_epoch) {
             invalidate_prior_epoch_state(dctx);
             dctx->peer_boot_epoch = hdr->boot_epoch;
         }
-        /* Minimal HELLO_ACK: empty payload. The full negotiation payload
-         * (peer capabilities/cell-size selection) is not defined by an
-         * exact confirmed byte layout in the accepted contract package
-         * beyond the class existing -- an empty ACK is a safe, honest
-         * acknowledgement that does not claim any specific negotiated
-         * value. Stamped with the ESP's OWN epoch (mtk_core_boot_epoch()),
-         * per "sender's own boot_epoch" -- NEVER dctx->peer_boot_epoch
-         * (the prior round's bug), which now correctly holds the PEER's
-         * epoch instead and would be numerically different from the ESP's
-         * own on any real hardware boot pairing. */
+        /* Minimal HELLO_ACK: empty payload. The full negotiation payload (peer
+         * capabilities/cell-size selection) is not defined by an exact confirmed
+         * byte layout in the accepted contract package beyond the class existing
+         * -- an empty ACK is a safe, honest acknowledgement that does not claim
+         * any specific negotiated value. Stamped with the ESP's OWN epoch
+         * (mtk_core_boot_epoch), per "sender's own boot_epoch" -- NEVER
+         * dctx->peer_boot_epoch (the prior round's bug), which now correctly
+         * holds the PEER's epoch instead and would be numerically different from
+         * the ESP's own on any real hardware boot pairing. */
         emit_single(resp_hdr, resp_payload, resp_payload_len, hdr->service, hdr->opcode, hdr->request_id, hdr->packet_seq,
                     mtk_core_boot_epoch(), MTK_SPI_CLASS_HELLO_ACK, MTK_STATUS_OK);
         return;
     }
-    /* RC7 independent audit P0 "Native CREDIT and CANCEL are not
-     * implemented": both are peer-initiated (inbound) link-level control
-     * classes, distinct from a canonical REQUEST -- neither ever reaches
-     * mtk_router_dispatch (matching mtek_capture_service.h's own doc
-     * comment: "Adapters call this when a CREDIT cell arrives", not the
-     * router). Disclosed wire choice for both (same reasoning as EVENT/
-     * STREAM above -- no exact confirmed byte layout beyond the class
-     * existing was available this session): `request_id` carries the
-     * target operation/session token (matching REQUEST/RESPONSE's own
-     * use of that field, not EVENT/STREAM's now-corrected request_id=0 --
-     * CREDIT/CANCEL are inbound control on a SPECIFIC still-live session,
-     * not an unsolicited server push, so the field's normal correlation
-     * meaning applies). Both reject a stale boot_epoch explicitly
-     * (LINK_ERROR/PROTOCOL_ERROR) -- a CREDIT/CANCEL cell naming a session
-     * from a PREVIOUS boot epoch can never correspond to anything real
-     * this boot session, and must never be silently accepted as a no-op
-     * against the current epoch's own state by coincidence of token
-     * reuse. */
+    /* Both are peer-initiated (inbound) link-level control classes, distinct
+     * from a canonical REQUEST -- neither ever reaches mtk_router_dispatch
+     * (matching mtek_capture_service.h's own doc comment: "Adapters call this
+     * when a CREDIT cell arrives", not the router). Disclosed wire choice for
+     * both (same reasoning as EVENT/ STREAM above -- no exact confirmed byte
+     * layout beyond the class existing was available): `request_id` carries the
+     * target operation/session token (matching REQUEST/RESPONSE's own use of
+     * that field, not EVENT/STREAM's now-corrected request_id=0 -- CREDIT/CANCEL
+     * are inbound control on a SPECIFIC still-live session, not an unsolicited
+     * server push, so the field's normal correlation meaning applies). Both
+     * reject a stale boot_epoch explicitly (LINK_ERROR/PROTOCOL_ERROR) -- a
+     * CREDIT/CANCEL cell naming a session from a PREVIOUS boot epoch can never
+     * correspond to anything real this boot session, and must never be silently
+     * accepted as a no-op against the current epoch's own state by coincidence
+     * of token reuse. */
     if (hdr->msg_class == MTK_SPI_CLASS_CREDIT) {
-        /* Staleness check stays against the PEER epoch (hdr->boot_epoch is
-         * the peer's own just-sent value; dctx->peer_boot_epoch is the
-         * last-adopted one) -- but the LINK_ERROR/RESPONSE this ESP sends
-         * back always carries the ESP's OWN epoch (mtk_core_boot_epoch()),
-         * never an echo of whatever the peer just sent. */
+        /* Staleness check stays against the PEER epoch (hdr->boot_epoch is the
+         * peer's own just-sent value; dctx->peer_boot_epoch is the last-adopted
+         * one) -- but the LINK_ERROR/RESPONSE this ESP sends back always carries
+         * the ESP's OWN epoch (mtk_core_boot_epoch), never an echo of whatever
+         * the peer just sent. */
         if (hdr->boot_epoch != dctx->peer_boot_epoch) {
             emit_single(resp_hdr, resp_payload, resp_payload_len, hdr->service, hdr->opcode, hdr->request_id, hdr->packet_seq,
                         mtk_core_boot_epoch(), MTK_SPI_CLASS_LINK_ERROR, MTK_STATUS_PROTOCOL_ERROR);
@@ -755,18 +715,16 @@ void mtek_spi_native_dispatch_feed_cell(mtk_spi_native_dispatch_ctx_t *dctx, con
     if (hdr->msg_class == MTK_SPI_CLASS_RESPONSE || hdr->msg_class == MTK_SPI_CLASS_HELLO_ACK ||
         hdr->msg_class == MTK_SPI_CLASS_EVENT || hdr->msg_class == MTK_SPI_CLASS_STREAM ||
         hdr->msg_class == MTK_SPI_CLASS_LINK_ERROR) {
-        /* RC7 independent audit item 6/7 ("class/direction/parser rules")
-         * "reject invalid inbound direction classes rather than
-         * acknowledging them as IDLE": these five classes are always
-         * OUTBOUND-only (device -> peer) by this protocol's own design --
-         * a peer sending one of them TO the device is a genuine direction
-         * violation, not a class this session merely "does not
-         * implement" (unlike a caller passing IDLE here directly, which
-         * mtek_spi_runtime.c's own real caller never does -- IDLE is
-         * intercepted at the runtime layer before feed_cell is ever
-         * called, see mtek_spi_runtime.c's own dispatch branch -- but a
-         * different/future caller legitimately might, so IDLE alone stays
-         * a harmless IDLE-back below, not an error). */
+        /* /7 ("class/direction/parser rules") "reject invalid inbound direction
+         * classes rather than acknowledging them as IDLE": these five classes
+         * are always OUTBOUND-only (device -> peer) by this protocol's own
+         * design -- a peer sending one of them TO the device is a genuine
+         * direction violation, not a class merely "does not implement" (unlike a
+         * caller passing IDLE here directly, which mtek_spi_runtime.c's own real
+         * caller never does -- IDLE is intercepted at the runtime layer before
+         * feed_cell is ever called, see mtek_spi_runtime.c's own dispatch branch
+         * -- but a different/future caller legitimately might, so IDLE alone
+         * stays a harmless IDLE-back below, not an error). */
         emit_single(resp_hdr, resp_payload, resp_payload_len, hdr->service, hdr->opcode, hdr->request_id, hdr->packet_seq,
                     mtk_core_boot_epoch(), MTK_SPI_CLASS_LINK_ERROR, MTK_STATUS_PROTOCOL_ERROR);
         return;
@@ -802,16 +760,14 @@ void mtek_spi_native_dispatch_feed_cell(mtk_spi_native_dispatch_ctx_t *dctx, con
                         mtk_core_boot_epoch(), MTK_SPI_CLASS_LINK_ERROR, MTK_STATUS_PROTOCOL_ERROR);
             return;
         case MTK_SPI_REASM_BUSY:
-            /* RC6 independent audit P0 "Native reassembly and duplicate
-             * safety are materially incomplete": a FIRST fragment for a
-             * different logical message arrived while dctx->inbound is
-             * still actively reassembling another one -- rejected
-             * explicitly (LINK_ERROR/BUSY) rather than silently
+            /* A FIRST fragment for a different logical message arrived while
+             * dctx->inbound is still actively reassembling another one --
+             * rejected explicitly (LINK_ERROR/BUSY) rather than silently
              * overwriting the in-progress context (the original bug).
              * dctx->inbound itself is untouched by this branch (see
-             * mtk_spi_native_reassembly_feed's own doc comment) -- the
-             * peer is expected to retry this new message once the
-             * in-progress one completes or times out. */
+             * mtk_spi_native_reassembly_feed's own doc comment) -- the peer is
+             * expected to retry this new message once the in-progress one
+             * completes or times out. */
             emit_single(resp_hdr, resp_payload, resp_payload_len, hdr->service, hdr->opcode, hdr->request_id, hdr->packet_seq,
                         mtk_core_boot_epoch(), MTK_SPI_CLASS_LINK_ERROR, MTK_STATUS_BUSY);
             return;

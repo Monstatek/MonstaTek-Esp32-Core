@@ -108,7 +108,7 @@ mtk_spi_parse_result_t mtk_spi_native_parse_bounded(const uint8_t *in, size_t le
     return MTK_SPI_PARSE_OK;
 }
 
-/* ---- Multi-cell fragmentation/reassembly -------------------------------- */
+/* Multi-cell fragmentation/reassembly ---------------- */
 
 void mtk_spi_native_reassembly_reset(mtk_spi_native_reassembly_t *ctx) {
     memset(ctx, 0, sizeof(*ctx));
@@ -120,17 +120,15 @@ mtk_spi_reasm_result_t mtk_spi_native_reassembly_feed(mtk_spi_native_reassembly_
     int is_last = (hdr->flags & MTK_SPI_FLAG_LAST) != 0;
 
     if (is_first) {
-        /* RC6 independent audit P0 "Native reassembly and duplicate safety
-         * are materially incomplete": a FIRST fragment for a genuinely
-         * DIFFERENT request_id while another message is still actively
-         * being reassembled must NOT silently reset/overwrite it -- that
-         * was the original bug (two concurrent fragmented requests
-         * corrupting each other). This dispatcher's single reassembly
-         * context is a documented, measured SRAM-budget exception (see the
-         * enum's own doc comment); reject explicitly instead. A FIRST
-         * fragment for the SAME request_id already in progress (a
-         * legitimate resend/retry of the message's own first cell, e.g.
-         * FLAG_RETRY) still (re)starts that context, matching the
+        /* A FIRST fragment for a genuinely DIFFERENT request_id while another
+         * message is still actively being reassembled must NOT silently
+         * reset/overwrite it -- that was the original bug (two concurrent
+         * fragmented requests corrupting each other). This dispatcher's single
+         * reassembly context is a documented, measured SRAM-budget exception
+         * (see the enum's own doc comment); reject explicitly instead. A FIRST
+         * fragment for the SAME request_id already in progress (a legitimate
+         * resend/retry of the message's own first cell, e.g. FLAG_RETRY) still
+         * (re)starts that context, matching the
          * single-outstanding-message-per-id model this always had. */
         if (ctx->active && ctx->request_id != hdr->request_id) {
             return MTK_SPI_REASM_BUSY;
@@ -180,7 +178,7 @@ int mtk_spi_native_reassembly_timed_out(const mtk_spi_native_reassembly_t *ctx, 
     return (now_ms - ctx->last_seen_ms) >= timeout_ms; /* unsigned wraparound-safe for a monotonic now_ms */
 }
 
-/* ---- Outbound multi-cell fragmentation ---------------------------------- */
+/* Outbound multi-cell fragmentation ------------------ */
 
 void mtk_spi_native_outbound_start(mtk_spi_native_outbound_t *ob, const mtk_spi_native_header_t *hdr_template,
                                     const uint8_t *body, uint32_t body_len) {

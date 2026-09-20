@@ -1,17 +1,14 @@
-/* RC9 independent correction order P0 "the prior-state snapshot is not
- * complete or failure-safe": mtek_wifi_hal_esp32.c's own
- * capture_prior_state_once previously ignored esp_wifi_get_mode's own
- * failure (leaving `valid` set around unknown mode) and silently
- * substituted channel 0 on an esp_wifi_get_channel failure -- and never
- * captured promiscuous state at all. The real fix treats ANY required
- * snapshot read failing (mode, channel, or the new promiscuous read,
- * which also serves as an invariant check) as a genuine transactional-
- * entry failure -- never proceeding over unknown prior radio state. This
- * test proves the pattern via the fake HAL's own mirror
- * (prior_state_capture_rc): every real "disturb the radio" entry point
- * (deauth, handshake/capture, station scan, raw TX's own channel select)
- * must fail cleanly -- no transmission, no false "0 results" success,
- * exactly one terminal event, and the arbiter released -- rather than
+/* mtek_wifi_hal_esp32.c's own capture_prior_state_once previously ignored
+ * esp_wifi_get_mode's own failure (leaving `valid` set around unknown mode) and
+ * silently substituted channel 0 on an esp_wifi_get_channel failure -- and never
+ * captured promiscuous state at all. The real fix treats ANY required snapshot
+ * read failing (mode, channel, or the new promiscuous read, which also serves as
+ * an invariant check) as a genuine transactional- entry failure -- never
+ * proceeding over unknown prior radio state. This test proves the pattern via
+ * the fake HAL's own mirror (prior_state_capture_rc): every real "disturb the
+ * radio" entry point (deauth, handshake/capture, station scan, raw TX's own
+ * channel select) must fail cleanly -- no transmission, no false "0 results"
+ * success, exactly one terminal event, and the arbiter released -- rather than
  * silently proceeding over a snapshot that was never actually taken. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
@@ -22,9 +19,8 @@ MTK_TEST_MAIN_BEGIN
 
     mtk_test_bootstrap();
 
-    /* ---- DEAUTH_START: capture failure means the very first send_deauth
-     * call itself fails, and the operation must not report a false
-     * "completed" success. */
+    /* DEAUTH_START: capture failure means the very first send_deauth call itself
+     * fails, and the operation must not report a false "completed" success. */
     {
         mtk_fake_sink_state_t sink; mtk_fake_sink_reset(&sink);
         mtk_request_ctx_t ctx = mtk_test_ctx(&sink, 1);
@@ -55,9 +51,9 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK(g_fake_wifi.deauth_sent_count >= 1);
     }
 
-    /* ---- HANDSHAKE_START: capture failure means promisc_start itself
-     * fails -- exactly the monitor-entry failure path, never sends the
-     * initiating deauth burst. */
+    /* HANDSHAKE_START: capture failure means promisc_start itself fails --
+     * exactly the monitor-entry failure path, never sends the initiating deauth
+     * burst. */
     {
         mtk_fake_sink_state_t sink; mtk_fake_sink_reset(&sink);
         mtk_request_ctx_t ctx = mtk_test_ctx(&sink, 1);
@@ -83,9 +79,8 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_NONE);
     }
 
-    /* ---- STA_SCAN_START: capture failure surfaces as a real
-     * transactional-entry failure (status=IO_ERROR), never a false
-     * "0 stations found" success. */
+    /* STA_SCAN_START: capture failure surfaces as a real transactional-entry
+     * failure (status=IO_ERROR), never a false "0 stations found" success. */
     {
         mtk_fake_sink_state_t sink; mtk_fake_sink_reset(&sink);
         mtk_request_ctx_t ctx = mtk_test_ctx(&sink, 1);
@@ -104,8 +99,8 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_NONE);
     }
 
-    /* ---- RAW_TX_SEND: capture failure at set_channel means the frame
-     * itself must never transmit. */
+    /* RAW_TX_SEND: capture failure at set_channel means the frame itself must
+     * never transmit. */
     {
         mtk_fake_sink_state_t sink; mtk_fake_sink_reset(&sink);
         mtk_request_ctx_t ctx = mtk_test_ctx(&sink, 1);
