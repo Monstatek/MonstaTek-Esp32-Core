@@ -56,16 +56,22 @@ typedef struct {
  * the same single-threaded-non-reentrant safety argument that justified `static`
  * in the first place applies equally to SHARING one instance across every call
  * site (nothing here is ever concurrent with itself), this file now declares
- * exactly THREE shared file-scope instances below (matching the real maximum
+ * exactly TWO shared file-scope instances below (matching the real maximum
  * ever simultaneously live in one call -- no handler needs more than two, e.g.
  * handle_ble_signal's `cap`+`ev`) and every handler below simply reuses them by
  * NOT redeclaring a local `cap`/`cap2`/`ev` of its own -- plain C scoping means
  * an undeclared identifier used inside a function resolves to the file-scope
- * one. This cuts the same real memory from ~103KB to ~12KB (three instances
+ * one. This cuts the same real memory from ~103KB to ~8KB (two instances
  * instead of twenty-five) with no change in behavior: each handler still fully
  * owns and resets "its" capture(s) for the duration of its own synchronous call,
  * exactly as before. */
-static uart_capture_t cap, cap2, ev;
+/* TWO shared instances, not three. Every handler that needs a second capture
+ * pairs it with `cap`: the scan/GATT paging handlers use `cap`+`cap2`, and
+ * handle_ble_signal/handle_ble_connect use `cap`+a second one for the terminal
+ * event. No handler is ever live with both of those second captures at once,
+ * so they are one object. `ev` as a block-scoped local of a decoded-event type
+ * still appears further down this file and is unrelated to this storage. */
+static uart_capture_t cap, cap2;
 
 static mtk_emit_result_t cap_resp(void *user, uint32_t correlation, uint8_t status, const void *body, const mtk_struct_desc_t *desc) {
     (void)correlation;
@@ -908,15 +914,15 @@ static size_t handle_ble_signal(mtk_uart_adapter_state_t *st, const char *arg, c
     uint8_t buf[16]; size_t blen = 0;
     mtk_encode(op->req_desc, &req, buf, sizeof(buf), &blen);
     mtk_router_dispatch(&ctx, 0x0002, 0x0009, buf, blen);
-    drain_session_response(st, &cap, "SIGNAL_METER_UPDATE", &ev);
+    drain_session_response(st, &cap, "SIGNAL_METER_UPDATE", &cap2);
     if (cap.status != MTK_STATUS_ACCEPTED) return emit(out, out_cap, 0, "[!] Invalid BLE ID: %s\n", arg);
     mtk_signal_meter_start_resp_t started = {0};
     mtk_decode(op->resp_desc, &started, cap.body, cap.body_len, NULL);
     st->ble_signal_running = 1; st->ble_signal_token = started.operation_token;
     size_t used = emit(out, out_cap, 0, "[BLE:SIG:START]\n");
-    if (ev.have_event) {
+    if (cap2.have_event) {
         mtk_signal_meter_update_ev_t upd = {0};
-        mtk_decode(&mtk_signal_meter_update_ev_t_desc, &upd, ev.event_body, ev.event_body_len, NULL);
+        mtk_decode(&mtk_signal_meter_update_ev_t_desc, &upd, cap2.event_body, cap2.event_body_len, NULL);
         used = emit(out, out_cap, used, "[BLE:SIG] raw=%d avg=%d cat=%u age=%u\n", upd.raw_rssi, upd.avg_rssi, upd.category, upd.age_ms);
     }
     return used;
@@ -1047,10 +1053,10 @@ static size_t handle_ble_connect(mtk_uart_adapter_state_t *st, const char *arg, 
     uint8_t buf[16]; size_t blen = 0;
     mtk_encode(op->req_desc, &req, buf, sizeof(buf), &blen);
     mtk_router_dispatch(&ctx, 0x0003, 0x0001, buf, blen);
-    drain_session_response(st, &cap, "GATT_CONNECT_COMPLETE", &ev);
-    if (cap.status != MTK_STATUS_ACCEPTED || !ev.have_event) return emit(out, out_cap, used, "[BLE:ERR] connect failed status=%u\n", cap.status);
+    drain_session_response(st, &cap, "GATT_CONNECT_COMPLETE", &cap2);
+    if (cap.status != MTK_STATUS_ACCEPTED || !cap2.have_event) return emit(out, out_cap, used, "[BLE:ERR] connect failed status=%u\n", cap.status);
     mtk_gatt_connect_complete_ev_t done = {0};
-    mtk_decode(&mtk_gatt_connect_complete_ev_t_desc, &done, ev.event_body, ev.event_body_len, NULL);
+    mtk_decode(&mtk_gatt_connect_complete_ev_t_desc, &done, cap2.event_body, cap2.event_body_len, NULL);
     if (done.status != MTK_STATUS_OK) return emit(out, out_cap, used, "[BLE:ERR] connect failed status=%u\n", done.status);
     st->gatt_connected = 1; st->gatt_conn_token = done.connection_token;
     used = emit(out, out_cap, used, "[BLE:CONN] connected handle=%u\n", done.connection_token);

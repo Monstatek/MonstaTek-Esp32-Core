@@ -294,7 +294,7 @@
     "probe_flood_max_ssids": 16,
     "raw_tx_frame_min_bytes": 10,
     "raw_tx_frame_max_bytes": 1489,
-    "captive_portal_max_credentials": 16,
+    "captive_portal_max_credentials": 32,
     "captive_portal_title_max_bytes": 95,
     "captive_portal_last_post_body_max_bytes": 95
   },
@@ -3522,7 +3522,7 @@
         {
           "name": "credentials",
           "type": "array",
-          "max": 16,
+          "max": 32,
           "len_prefix": "u8",
           "elem": {
             "type": "struct",

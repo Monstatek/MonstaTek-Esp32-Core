@@ -2089,7 +2089,7 @@ static void portal_cred_cb(void *user, const uint8_t *username, uint8_t username
                             const uint8_t *password, uint8_t password_len) {
     (void)user;
     wifi_lock();
-    if (s_portal_creds.credentials.count < 16) {
+    if (s_portal_creds.credentials.count < 32) {
         unsigned i = s_portal_creds.credentials.count;
         s_portal_creds.credentials.items[i].captured_at_epoch_s = (uint32_t)(now_ms() / 1000u);
         /* Both wire fields hold 255 bytes and both lengths are uint8_t, so a

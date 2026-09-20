@@ -285,8 +285,16 @@ static int freertos_async_runner(void (*fn)(void *arg), void *arg) {
  * ever touches UART_NUM_0, so an ESP_ERR_INVALID_STATE here would itself be
  * direct proof of an unexpected second driver owner, not merely a theoretical
  * worry. */
+/* One shared 4 KiB UART text buffer. mtek_uart_phy_bringup_early() is called
+ * exactly once, from app_main, and returns before uart_repl_task is ever
+ * created, so the boot banner and the REPL's per-command output are never
+ * live at the same time. Two separate statics cost 4 KiB of DIRAM to hold a
+ * buffer only one of them can be using. It stays `static` rather than becoming
+ * a stack local for the original reason: 4 KiB does not belong on either
+ * task's configured stack. */
+static char s_uart_text[4096];
+
 static int mtek_uart_phy_bringup_early(void) {
-    static char boot_out[4096];
     const uart_port_t port = UART_NUM_0;
     uart_config_t cfg = {
         .baud_rate = 115200,
@@ -308,8 +316,8 @@ static int mtek_uart_phy_bringup_early(void) {
                  esp_err_to_name(cfg_err));
         return 0;
     }
-    size_t banner_len = mtek_uart_adapter_boot_banner(boot_out, sizeof(boot_out));
-    int banner_written = uart_write_bytes(port, boot_out, banner_len);
+    size_t banner_len = mtek_uart_adapter_boot_banner(s_uart_text, sizeof(s_uart_text));
+    int banner_written = uart_write_bytes(port, s_uart_text, banner_len);
     int prompt_written = uart_write_bytes(port, ">> ", 3);
     if (banner_written != (int)banner_len || prompt_written != 3) {
         ESP_LOGE(TAG, "mtek_uart_phy_bringup_early: uart_write_bytes short/failed (banner %d/%d, prompt %d/3)",
@@ -383,9 +391,9 @@ static void pcap_uart_set_binary_logging(void *ctx, int binary_active) {
 static void uart_repl_task(void *arg) {
     (void)arg;
     /* `mtk_uart_adapter_state_t` is ~12.3KB (independently measured, mostly the
-     * cached AP/station/BLE scan tables) and `out` is 4KB -- together already
+     * cached AP/station/BLE scan tables) and the shared UART text buffer is 4KB -- together already
      * over twice the 8KB configured stack before counting `line`, any callee's
-     * locals, or ESP-IDF's own UART driver call frames. `st`/`out` are `static`,
+     * locals, or ESP-IDF's own UART driver call frames. `st` and that buffer are `static`,
      * not stack-local: is a single, never-returning, always-singleton loop
      * (xTaskCreate'd exactly once below), so static storage is equivalent to a
      * stack slot here with no re-entrancy or lifetime hazard, and removes the
@@ -442,7 +450,6 @@ static void uart_repl_task(void *arg) {
 
     char line[128];
     unsigned idx = 0;
-    static char out[4096];
     /* "No up-arrow command history with the shipped depth of 10." A fixed-depth
      * ring of the last 10 successfully-submitted (non-empty) lines; `esc_state`
      * accumulates the 3-byte `ESC [ A` up-arrow sequence across successive
@@ -490,8 +497,8 @@ static void uart_repl_task(void *arg) {
              * its own was ever started here to produce such traffic in the first
              * place. */
             if (claimed && idx == 0) {
-                size_t bg_len = mtek_uart_adapter_poll_background(&st, out, sizeof(out));
-                if (bg_len) uart_write_bytes(port, out, bg_len);
+                size_t bg_len = mtek_uart_adapter_poll_background(&st, s_uart_text, sizeof(s_uart_text));
+                if (bg_len) uart_write_bytes(port, s_uart_text, bg_len);
             }
             continue;
         }
@@ -588,9 +595,9 @@ static void uart_repl_task(void *arg) {
                 (void)mtek_uart_pcap_run(&pcap, pcap_channel,
                                          pcap_duration_ms, &pcap_io);
             } else {
-                size_t out_len = mtek_uart_process_line(&st, line, out,
-                                                        sizeof(out));
-                uart_write_bytes(port, out, out_len);
+                size_t out_len = mtek_uart_process_line(&st, line, s_uart_text,
+                                                        sizeof(s_uart_text));
+                uart_write_bytes(port, s_uart_text, out_len);
             }
             if (st.reboot_requested) {
                 /* Delayed restart: give the just-printed response time to

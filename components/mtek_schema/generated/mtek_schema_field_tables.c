@@ -722,7 +722,7 @@ static const mtk_field_desc_t mtk_anon_mtk_captive_portal_get_credentials_resp_t
 const mtk_struct_desc_t mtk_anon_mtk_captive_portal_get_credentials_resp_t_credentials_elem_3_t_desc = { mtk_anon_mtk_captive_portal_get_credentials_resp_t_credentials_elem_3_t_fields, sizeof(mtk_anon_mtk_captive_portal_get_credentials_resp_t_credentials_elem_3_t_fields)/sizeof(mtk_anon_mtk_captive_portal_get_credentials_resp_t_credentials_elem_3_t_fields[0]), sizeof(mtk_anon_mtk_captive_portal_get_credentials_resp_t_credentials_elem_3_t) };
 
 static const mtk_field_desc_t mtk_captive_portal_get_credentials_resp_t_fields[] = {
-    { "credentials", MTK_F_ARRAY, offsetof(mtk_captive_portal_get_credentials_resp_t, credentials), 16, 1, sizeof(mtk_anon_mtk_captive_portal_get_credentials_resp_t_credentials_elem_3_t), &mtk_anon_mtk_captive_portal_get_credentials_resp_t_credentials_elem_3_t_desc, MTK_F_STRUCT },
+    { "credentials", MTK_F_ARRAY, offsetof(mtk_captive_portal_get_credentials_resp_t, credentials), 32, 1, sizeof(mtk_anon_mtk_captive_portal_get_credentials_resp_t_credentials_elem_3_t), &mtk_anon_mtk_captive_portal_get_credentials_resp_t_credentials_elem_3_t_desc, MTK_F_STRUCT },
 };
 const mtk_struct_desc_t mtk_captive_portal_get_credentials_resp_t_desc = { mtk_captive_portal_get_credentials_resp_t_fields, sizeof(mtk_captive_portal_get_credentials_resp_t_fields)/sizeof(mtk_captive_portal_get_credentials_resp_t_fields[0]), sizeof(mtk_captive_portal_get_credentials_resp_t) };
 
