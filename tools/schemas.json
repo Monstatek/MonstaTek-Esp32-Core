@@ -7269,6 +7269,157 @@
           }
         }
       }
+    },
+    {
+      "service": "0x0007",
+      "opcode": "0x0008",
+      "name": "IEEE154_RCP_START",
+      "lifecycle": "ACCEPTED_ASYNC",
+      "request_fields": [],
+      "response_fields": [
+        {
+          "name": "operation_token",
+          "type": "u32"
+        }
+      ],
+      "events": [
+        {
+          "name": "IEEE154_RCP_STOPPED",
+          "kind": "TERMINAL",
+          "fields": [
+            {
+              "name": "operation_token",
+              "type": "u32"
+            },
+            {
+              "name": "status",
+              "type": "u8"
+            }
+          ]
+        }
+      ],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "ACCEPTED",
+          "BUSY",
+          "NOT_READY"
+        ],
+        "deadline_default_ms": 3000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 10000,
+        "cancellable": true,
+        "idempotent": false,
+        "persistent_effects": "none",
+        "stop_owner": "caller via IEEE154_RCP_STOP",
+        "cleanup": "OpenThread deinitialised, Spinel UART released, IEEE154 lease released"
+      },
+      "resource_class": "IEEE154",
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_c3": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_c3": null
+      },
+      "notes": "Hands the radio to the OpenThread Radio Co-Processor runtime. The host runs the Thread stack over Spinel; Core runs no Thread application stack. Holds the IEEE154 class, so it cannot overlap the raw radio service, capture, Wi-Fi or ESP-NOW."
+    },
+    {
+      "service": "0x0007",
+      "opcode": "0x0009",
+      "name": "IEEE154_RCP_STOP",
+      "lifecycle": "SYNCHRONOUS",
+      "request_fields": [
+        {
+          "name": "operation_token",
+          "type": "u32"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "final_state",
+          "type": "u8"
+        },
+        {
+          "name": "final_status",
+          "type": "u8"
+        }
+      ],
+      "events": [],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "OK",
+          "NOT_FOUND"
+        ],
+        "deadline_default_ms": 3000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 10000,
+        "cancellable": false,
+        "idempotent": true,
+        "persistent_effects": "none",
+        "stop_owner": "n/a",
+        "cleanup": "releases the IEEE154 lease"
+      },
+      "resource_class": null,
+      "no_radio_lease": true,
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_c3": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_c3": null
+      },
+      "notes": ""
+    },
+    {
+      "service": "0x0007",
+      "opcode": "0x000A",
+      "name": "IEEE154_RCP_STATUS",
+      "lifecycle": "SYNCHRONOUS",
+      "request_fields": [],
+      "response_fields": [
+        {
+          "name": "running",
+          "type": "bool"
+        },
+        {
+          "name": "host_link",
+          "type": "u8"
+        },
+        {
+          "name": "baud_rate",
+          "type": "u32"
+        }
+      ],
+      "events": [],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "OK"
+        ],
+        "deadline_default_ms": 3000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 10000,
+        "cancellable": false,
+        "idempotent": true,
+        "persistent_effects": "none",
+        "stop_owner": "n/a",
+        "cleanup": "n/a"
+      },
+      "resource_class": null,
+      "no_radio_lease": true,
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_c3": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_c3": null
+      },
+      "notes": "host_link: 0=none, 1=UART Spinel. Diagnostic; capability negotiation remains authoritative."
     }
   ],
   "wifi_settings_schema": {

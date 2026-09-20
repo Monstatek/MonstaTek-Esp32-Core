@@ -19,8 +19,14 @@ CONFIG_BT_ENABLED=n
 CONFIG_MTEK_IEEE802154_ENABLED=y
 CONFIG_IEEE802154_ENABLED=y
 
-# OpenThread in Radio Co-Processor mode: the C6 is the radio, the host runs
-# the Thread stack over Spinel. The full Thread application stack is
-# deliberately NOT built into Core.
-CONFIG_OPENTHREAD_ENABLED=y
-CONFIG_OPENTHREAD_RADIO=y
+# The captive portal is a Wi-Fi-attack module with a ~4.4KB static credential
+# store; this variant exists for 802.15.4 and does not need it. Disabling it
+# here funds the OpenThread RCP runtime's memory without weakening the
+# documented free-DIRAM floor. The universal image keeps the portal enabled.
+CONFIG_MTEK_MODULE_CAPTIVE_PORTAL=n
+
+# Raw 802.15.4 mode. OpenThread is OFF here because its port layer defines
+# the same ESP-IDF 802.15.4 driver callbacks the raw radio HAL needs, and the
+# driver has exactly one callback owner. For Thread, build the RCP mode
+# instead (sdkconfig.154-rcp). See docs/BUILD_VARIANTS.md.
+CONFIG_OPENTHREAD_ENABLED=n

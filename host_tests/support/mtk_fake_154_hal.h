@@ -19,6 +19,10 @@ typedef struct {
     int8_t energy_peak;
     uint8_t energy_channels[32]; unsigned energy_channel_count;
 
+    unsigned rcp_start_count, rcp_stop_count;
+    int rcp_start_rc;
+    unsigned rcp_running;
+
     struct { uint64_t ts; uint8_t ch; int8_t rssi; uint8_t lqi;
              uint8_t data[MTK_154_MAX_PHY_LEN]; uint8_t len; } pending[32];
     unsigned pending_count;
@@ -80,9 +84,19 @@ static int fake_154_stats(uint32_t *tx_out, uint32_t *fail_out) {
     return rc;
 }
 
+static int fake_154_rcp_start(void) {
+    g_fake_154.rcp_start_count++;
+    int rc = g_fake_154.rcp_start_rc;
+    if (rc == 0) g_fake_154.rcp_running = 1;
+    return rc;
+}
+static void fake_154_rcp_stop(void) { g_fake_154.rcp_stop_count++; g_fake_154.rcp_running = 0; }
+static int fake_154_rcp_is_running(void) { return g_fake_154.rcp_running ? 1 : 0; }
+
 static const mtk_ieee802154_hal_t g_fake_154_hal = {
     fake_154_start, fake_154_stop, fake_154_service, fake_154_set_channel,
     fake_154_transmit, fake_154_energy_scan, fake_154_stats,
+    fake_154_rcp_start, fake_154_rcp_stop, fake_154_rcp_is_running,
 };
 
 static inline void mtk_fake_154_reset(void) { memset(&g_fake_154, 0, sizeof(g_fake_154)); }

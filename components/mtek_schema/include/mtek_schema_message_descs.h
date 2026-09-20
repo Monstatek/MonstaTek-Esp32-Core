@@ -234,3 +234,8 @@ extern const mtk_struct_desc_t mtk_ieee154_energy_result_ev_t_desc;
 extern const mtk_struct_desc_t mtk_anon_mtk_ieee154_energy_result_ev_t_results_elem_8_t_desc;
 extern const mtk_struct_desc_t mtk_ieee154_tx_req_t_desc;
 extern const mtk_struct_desc_t mtk_ieee154_tx_resp_t_desc;
+extern const mtk_struct_desc_t mtk_ieee154_rcp_start_resp_t_desc;
+extern const mtk_struct_desc_t mtk_ieee154_rcp_stopped_ev_t_desc;
+extern const mtk_struct_desc_t mtk_ieee154_rcp_stop_req_t_desc;
+extern const mtk_struct_desc_t mtk_ieee154_rcp_stop_resp_t_desc;
+extern const mtk_struct_desc_t mtk_ieee154_rcp_status_resp_t_desc;

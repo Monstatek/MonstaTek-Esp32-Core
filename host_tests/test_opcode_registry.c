@@ -8,7 +8,7 @@
 
 MTK_TEST_MAIN_BEGIN
 
-    MTK_CHECK_EQ(MTK_OPCODE_COUNT, 106); /* 93 canonical + 6 ESP-NOW + 7 IEEE 802.15.4 */
+    MTK_CHECK_EQ(MTK_OPCODE_COUNT, 109); /* 93 canonical + 6 ESP-NOW + 10 IEEE 802.15.4 (7 radio + 3 RCP) */
 
     unsigned wifi_count = 0, ble_count = 0, gatt_count = 0, capture_count = 0, diag_count = 0, sys_count = 0, espnow_count = 0, i154_count = 0;
     for (unsigned i = 0; i < MTK_OPCODE_COUNT; i++) {
@@ -27,7 +27,7 @@ MTK_TEST_MAIN_BEGIN
         }
     }
     MTK_CHECK_EQ(espnow_count, 6);
-    MTK_CHECK_EQ(i154_count, 7);
+    MTK_CHECK_EQ(i154_count, 10);
     MTK_CHECK_EQ(sys_count, 9);
     MTK_CHECK_EQ(wifi_count, 41);
     MTK_CHECK_EQ(ble_count, 23); /* 0x0001..0x0017, includes the 12 compatibility-family opcodes */

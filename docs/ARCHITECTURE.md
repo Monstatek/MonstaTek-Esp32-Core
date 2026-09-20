@@ -76,9 +76,17 @@ boundary and must never define or bloat the canonical core.
   canonical service (`mtek_espnow_service`, service `0x0006`, class
   `ESPNOW`); because it transmits through the Wi-Fi MAC it serializes
   against every Wi-Fi class rather than running alongside them.
-  **IEEE 802.15.4 remains unimplemented** -- its arbiter class (`RESV_154`)
-  is still reserved and it has no opcodes; see `docs/CAPABILITY_MANIFEST.md`
-  for the specific blockers.
+  **IEEE 802.15.4 is implemented** as a first-class arbiter class (`IEEE154`)
+  and its own canonical service (`mtek_ieee802154_service`, namespace
+  `0x0007`). Because the ESP32-C6 has one 2.4GHz radio, `IEEE154` is
+  serialized against every Wi-Fi class and `ESPNOW`, and cross-subsystem-busy
+  against the BLE classes. The service is protocol-neutral: it moves PHY
+  payloads and radio metadata and never parses or synthesises 802.15.4 MAC
+  headers, so Thread (host-driven over an OpenThread RCP), a host-side Zigbee
+  stack, a sniffer or a bespoke protocol all sit above the same primitives.
+  802.15.4 does not fit in the universal image and ships in dedicated
+  variants -- see `docs/BUILD_VARIANTS.md` for the measured memory constraint
+  and the driver-callback-ownership constraint that make that necessary.
 
 ### Transport adapters (three, boot-exclusive, `SPI_PROTOCOL_V1.md`
 "Runtime transport selection")

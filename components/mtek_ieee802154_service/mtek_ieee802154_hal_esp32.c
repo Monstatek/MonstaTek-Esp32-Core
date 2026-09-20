@@ -13,7 +13,14 @@
  * empty there and the radio driver is never linked -- measured evidence
  * showed 802.15.4 does not fit alongside the full Wi-Fi/BLE image. */
 #include "sdkconfig.h"
-#if CONFIG_MTEK_IEEE802154_ENABLED
+#if CONFIG_MTEK_IEEE802154_ENABLED && !CONFIG_OPENTHREAD_ENABLED
+/* The ESP-IDF 802.15.4 driver exposes exactly one set of completion
+ * callbacks (esp_ieee802154_receive_done and friends), and OpenThread's own
+ * port layer defines them too. Both cannot exist in one binary, so the raw
+ * radio HAL is built only when OpenThread is not: the two are mutually
+ * exclusive at link time, which is why the 802.15.4 variant ships in two
+ * modes. See docs/BUILD_VARIANTS.md.
+ */
 
 #include "mtek_ieee802154_hal.h"
 #include "esp_ieee802154.h"
@@ -234,9 +241,13 @@ static int esp32_154_stats(uint32_t *transmitted_out, uint32_t *tx_failures_out)
     return 0;
 }
 
+/* Raw mode has no RCP runtime: OpenThread is not in this image, so the RCP
+ * seams are absent. The service null-checks them and the capability table
+ * reports the RCP opcodes UNAVAILABLE, so a host never reaches them. */
 static const mtk_ieee802154_hal_t s_hal_impl = {
     esp32_154_start, esp32_154_stop, esp32_154_service, esp32_154_set_channel,
     esp32_154_transmit, esp32_154_energy_scan, esp32_154_stats,
+    NULL, NULL, NULL,
 };
 
 const mtk_ieee802154_hal_t *mtek_ieee802154_hal_esp32_get(void) {
@@ -244,4 +255,4 @@ const mtk_ieee802154_hal_t *mtek_ieee802154_hal_esp32_get(void) {
     return &s_hal_impl;
 }
 
-#endif /* CONFIG_MTEK_IEEE802154_ENABLED -- radio compiled out of this variant */
+#endif /* raw 802.15.4 HAL: excluded when OpenThread owns the driver callbacks */

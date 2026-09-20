@@ -156,17 +156,23 @@ static int opcode_is_unimplemented_optional_wifi_module(uint16_t service_id, uin
  * opcodes is reported UNAVAILABLE rather than advertising a service the image
  * would refuse. This is what lets a host negotiate on capabilities instead of
  * inferring features from a variant name. */
-static int opcode_is_absent_in_this_image(uint16_t service_id) {
-#if CONFIG_MTEK_IEEE802154_ENABLED
-    (void)service_id;
-    return 0;
+static int opcode_is_absent_in_this_image(uint16_t service_id, uint16_t opcode) {
+#if !CONFIG_MTEK_IEEE802154_ENABLED
+    (void)opcode;
+    return service_id == 0x0007;          /* universal image: no 802.15.4 at all */
+#elif CONFIG_OPENTHREAD_ENABLED
+    /* RCP mode: OpenThread owns the radio driver, so the raw radio opcodes
+     * (0x0001..0x0007) are genuinely unavailable; only the RCP opcodes
+     * (0x0008..0x000A) are served. */
+    return service_id == 0x0007 && opcode <= 0x0007;
 #else
-    return service_id == 0x0007;
+    /* Raw mode: the raw radio is served and there is no RCP runtime. */
+    return service_id == 0x0007 && opcode >= 0x0008;
 #endif
 }
 
 static mtk_capability_state_t cap_for(const mtk_opcode_entry_t *op, mtk_profile_t profile) {
-    if (opcode_is_absent_in_this_image(op->service_id)) return MTK_CAP_UNAVAILABLE;
+    if (opcode_is_absent_in_this_image(op->service_id, op->opcode)) return MTK_CAP_UNAVAILABLE;
     if (opcode_is_unimplemented_optional_wifi_module(op->service_id, op->opcode)) return MTK_CAP_UNSUPPORTED;
     switch (profile) {
         case MTK_PROFILE_FACTORY_UART: return op->cap_factory_uart;

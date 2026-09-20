@@ -176,3 +176,35 @@ it can be built, none of which is a code-authoring question:
    `RESV_154` is still a reserved class with a `DISABLED` self-pair, and giving
    it a real pairwise policy against the Wi-Fi and BLE classes is a coexistence
    decision, not a mechanical change.
+
+## Build variants and IEEE 802.15.4 (2026-09-20)
+
+Core ships three images. See `docs/BUILD_VARIANTS.md` for the full rationale.
+
+| Capability | universal | mtkcore-154 | mtkcore-154-rcp |
+|---|---|---|---|
+| Wi-Fi (scan/connect/status) | yes | yes | yes |
+| Deauth / handshake / capture | yes | yes | yes |
+| SoftAP | yes | yes | yes |
+| Captive portal | yes | compiled out | compiled out |
+| BLE / GATT | yes | compiled out | compiled out |
+| ESP-NOW | yes | yes | yes |
+| 802.15.4 raw radio (0x0007/0x0001-0x0007) | UNAVAILABLE | **SUPPORTED** | UNAVAILABLE |
+| 802.15.4 OpenThread RCP (0x0007/0x0008-0x000A) | UNAVAILABLE | UNAVAILABLE | **SUPPORTED** |
+
+Two measured constraints produce this split, neither of which is negotiable:
+
+1. Free DIRAM must stay at or above 100,000 bytes. The universal image has
+   ~1.2KB of headroom, so the 802.15.4 radio (~12.9KB) and OpenThread RCP
+   (~9.6KB) cannot be added to it. The 802.15.4 variants reclaim memory by
+   compiling out the Bluetooth controller and the captive portal.
+2. The ESP-IDF 802.15.4 driver has exactly one set of completion callbacks,
+   and OpenThread's port layer defines the same symbols. Raw radio access and
+   RCP therefore cannot coexist in one binary.
+
+Capability reporting and dispatch are driven by the same build-time condition,
+so `GET_CAPABILITIES` always matches what the image actually serves. Hosts
+negotiate on capabilities; variant names are diagnostic only.
+
+Zigbee is intentionally absent on-device: a host-side stack consumes the raw
+802.15.4 service across the same radio boundary Thread uses via RCP.

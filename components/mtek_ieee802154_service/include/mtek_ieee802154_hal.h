@@ -55,6 +55,17 @@ typedef struct mtk_ieee802154_hal {
     int (*energy_scan)(uint8_t channel, uint16_t dwell_ms, int8_t *peak_rssi_out);
     /* Transmit counters observed by the driver's own completion path. */
     int (*stats)(uint32_t *transmitted_out, uint32_t *tx_failures_out);
+
+    /* OpenThread Radio Co-Processor. Hands the radio to the RCP runtime so a
+     * host can drive Thread over Spinel; Core runs no Thread application
+     * stack. A seam rather than a direct call so the portable lifecycle is
+     * host-testable and so the real implementation is genuinely linked --
+     * a weak-symbol shim would let the linker keep the stub and silently
+     * drop the runtime. Returns 0 on success; start unwinds fully on
+     * failure and stop is always safe to call. */
+    int (*rcp_start)(void);
+    void (*rcp_stop)(void);
+    int (*rcp_is_running)(void);
 } mtk_ieee802154_hal_t;
 
 void mtek_ieee802154_set_hal(const mtk_ieee802154_hal_t *hal);

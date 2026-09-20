@@ -69,6 +69,7 @@ static struct {
     uint8_t channel;
     uint8_t promiscuous;
     uint8_t scanning;            /* an energy scan owns the lease instead of a receive session */
+    uint8_t rcp;                 /* the RCP runtime owns the lease instead of either */
     uint32_t received, dropped;
     i154_rx_rec_t ring[I154_RING_SLOTS];
     unsigned ring_head, ring_count;
@@ -117,18 +118,31 @@ static void i154_teardown(uint32_t token, uint32_t boot_epoch, uint8_t status) {
     uint32_t session_generation = s_i154.session_generation;
     uint32_t received = s_i154.received, dropped = s_i154.dropped;
     uint8_t was_scan = s_i154.scanning;
+    uint8_t was_rcp = s_i154.rcp;
     s_i154.active = 0;
     s_i154.scanning = 0;
+    s_i154.rcp = 0;
     s_i154.ring_head = 0; s_i154.ring_count = 0;
     i_unlock();
-    /* Always called, including when start never succeeded. */
-    if (s_hal && s_hal->stop) s_hal->stop();
+    /* Always called, including when start never succeeded. The RCP runtime
+     * owns the radio through OpenThread rather than through the raw HAL, so
+     * each mode tears down through its own owner -- never both. */
+    if (was_rcp) { if (s_hal && s_hal->rcp_stop) s_hal->rcp_stop(); }
+    else if (s_hal && s_hal->stop) s_hal->stop();
     mtk_arbiter_release_if_owner(MTK_ARB_IEEE154, token);
     mtk_op_transition_by_token(token, boot_epoch, MTK_OPS_STOPPED, status, now_ms());
     /* An energy scan reports its own terminal event at completion; a receive
      * session reports IEEE154_STOPPED. A scan torn down before it completed
      * still reports the stop so the host is never left waiting. */
-    if (!was_scan && mtk_op_begin_publish_guard(session_generation)) {
+    if (was_rcp) {
+        if (mtk_op_begin_publish_guard(session_generation)) {
+            mtk_ieee154_rcp_stopped_ev_t ev = {0};
+            ev.operation_token = token;
+            ev.status = status;
+            sink.emit_event(sink.user, token, "IEEE154_RCP_STOPPED", &ev, &mtk_ieee154_rcp_stopped_ev_t_desc);
+            mtk_op_end_publish_guard();
+        }
+    } else if (!was_scan && mtk_op_begin_publish_guard(session_generation)) {
         mtk_ieee154_stopped_ev_t ev = {0};
         ev.operation_token = token;
         ev.status = status;
@@ -225,7 +239,13 @@ static void handle_i154_status(mtk_request_ctx_t *ctx) {
     respond(ctx, MTK_STATUS_OK, &r, &mtk_ieee154_status_resp_t_desc);
 }
 
-static int session_active(void) { i_lock(); uint8_t a = s_i154.active; i_unlock(); return a != 0; }
+/* The raw data plane is only meaningful for a raw receive session: while the
+ * RCP or an energy scan owns the radio, OpenThread or the scan owns it, and a
+ * raw TX/poll/retune would fight them. */
+static int session_active(void) {
+    i_lock(); uint8_t ok = s_i154.active && !s_i154.rcp && !s_i154.scanning; i_unlock();
+    return ok != 0;
+}
 
 static void handle_i154_set_channel(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t *op,
                                      const uint8_t *req_bytes, size_t req_len) {
@@ -344,6 +364,63 @@ static void handle_i154_energy_scan(mtk_request_ctx_t *ctx, const mtk_opcode_ent
     }
 }
 
+
+static void handle_i154_rcp_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t *op,
+                                   const uint8_t *req_bytes, size_t req_len) {
+    (void)req_bytes; (void)req_len;
+    mtk_op_id_t id;
+    if (!i154_admit(ctx, op, &id)) return;
+
+    i_lock();
+    memset(&s_i154, 0, sizeof(s_i154));
+    s_i154.token = id.token; s_i154.boot_epoch = id.boot_epoch;
+    s_i154.session_generation = ctx->session_generation;
+    s_i154.sink = ctx->sink;
+    s_i154.active = 1;
+    s_i154.rcp = 1;
+    i_unlock();
+
+    mtk_ieee154_rcp_start_resp_t r; r.operation_token = id.token;
+    respond(ctx, MTK_STATUS_ACCEPTED, &r, &mtk_ieee154_rcp_start_resp_t_desc);
+    mtk_op_end_admission_guard();
+
+    /* A failed start tears the session down rather than leaving the lease
+     * held by a co-processor that is not serving the host. */
+    int rc = (s_hal && s_hal->rcp_start) ? s_hal->rcp_start() : -1;
+    if (rc != 0) i154_teardown(id.token, id.boot_epoch, MTK_STATUS_IO_ERROR);
+}
+
+static void handle_i154_rcp_stop(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t *op,
+                                  const uint8_t *req_bytes, size_t req_len) {
+    mtk_ieee154_rcp_stop_req_t req; memset(&req, 0, sizeof(req));
+    if (mtk_decode(op->req_desc, &req, req_bytes, req_len, NULL) != MTK_CODEC_OK) { respond_empty(ctx, MTK_STATUS_PROTOCOL_ERROR); return; }
+    mtk_operation_record_t precheck;
+    if (!mtk_op_snapshot_family(req.operation_token, ctx->boot_epoch, I154_SERVICE_ID, 0x0008, &precheck)) {
+        respond_empty(ctx, MTK_STATUS_NOT_FOUND); return;
+    }
+    i154_teardown(req.operation_token, ctx->boot_epoch, MTK_STATUS_OK);
+    mtk_operation_record_t snap;
+    if (!mtk_op_snapshot_family(req.operation_token, ctx->boot_epoch, I154_SERVICE_ID, 0x0008, &snap)) {
+        respond_empty(ctx, MTK_STATUS_NOT_FOUND); return;
+    }
+    mtk_ieee154_rcp_stop_resp_t r;
+    r.final_state = (uint8_t)snap.state;
+    r.final_status = snap.final_status;
+    respond(ctx, MTK_STATUS_OK, &r, &mtk_ieee154_rcp_stop_resp_t_desc);
+}
+
+static void handle_i154_rcp_status(mtk_request_ctx_t *ctx) {
+    mtk_ieee154_rcp_status_resp_t r; memset(&r, 0, sizeof(r));
+    i_lock();
+    uint8_t is_rcp = s_i154.rcp;
+    i_unlock();
+    r.running = (is_rcp && s_hal && s_hal->rcp_is_running && s_hal->rcp_is_running()) ? 1 : 0;
+    /* 0 = none, 1 = UART Spinel. Reported only while the RCP owns the radio. */
+    r.host_link = r.running ? 1 : 0;
+    r.baud_rate = r.running ? 460800u : 0u;
+    respond(ctx, MTK_STATUS_OK, &r, &mtk_ieee154_rcp_status_resp_t_desc);
+}
+
 mtk_op_id_t mtek_ieee802154_cancel_active_for_peer_reset(void) {
     mtk_op_id_t id = {0, 0};
     mtk_arbiter_snapshot_t snap = mtk_arbiter_snapshot();
@@ -355,8 +432,22 @@ mtk_op_id_t mtek_ieee802154_cancel_active_for_peer_reset(void) {
     return id;
 }
 
+/* Dispatch obeys exactly the same build-time mode the capability table
+ * reports, so GET_CAPABILITIES and real dispatch can never disagree: the
+ * 802.15.4 driver has one callback owner, so an image serves either the raw
+ * radio or the OpenThread RCP, never both. The property test in
+ * test_opcode_registry.c enforces this agreement. */
+static int opcode_served_in_this_mode(uint16_t opcode) {
+#if CONFIG_OPENTHREAD_ENABLED
+    return opcode >= 0x0008;   /* RCP mode: only the RCP opcodes */
+#else
+    return opcode <= 0x0007;   /* raw mode: only the raw radio opcodes */
+#endif
+}
+
 static void mtek_ieee802154_dispatch(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t *op,
                                       const uint8_t *req_bytes, size_t req_len) {
+    if (!opcode_served_in_this_mode(op->opcode)) { respond_empty(ctx, MTK_STATUS_UNSUPPORTED); return; }
     switch (op->opcode) {
         case 0x0001: handle_i154_start(ctx, op, req_bytes, req_len); return;
         case 0x0002: handle_i154_stop(ctx, op, req_bytes, req_len); return;
@@ -365,6 +456,9 @@ static void mtek_ieee802154_dispatch(mtk_request_ctx_t *ctx, const mtk_opcode_en
         case 0x0005: handle_i154_energy_scan(ctx, op, req_bytes, req_len); return;
         case 0x0006: handle_i154_tx(ctx, op, req_bytes, req_len); return;
         case 0x0007: handle_i154_poll_recv(ctx); return;
+        case 0x0008: handle_i154_rcp_start(ctx, op, req_bytes, req_len); return;
+        case 0x0009: handle_i154_rcp_stop(ctx, op, req_bytes, req_len); return;
+        case 0x000A: handle_i154_rcp_status(ctx); return;
         default: respond_empty(ctx, MTK_STATUS_UNSUPPORTED); return;
     }
 }

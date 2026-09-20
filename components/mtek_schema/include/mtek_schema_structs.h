@@ -1270,3 +1270,27 @@ typedef struct {
 typedef struct {
     uint8_t tx_status;
 } mtk_ieee154_tx_resp_t;
+
+typedef struct {
+    uint32_t operation_token;
+} mtk_ieee154_rcp_start_resp_t;
+
+typedef struct {
+    uint32_t operation_token;
+    uint8_t status;
+} mtk_ieee154_rcp_stopped_ev_t;
+
+typedef struct {
+    uint32_t operation_token;
+} mtk_ieee154_rcp_stop_req_t;
+
+typedef struct {
+    uint8_t final_state;
+    uint8_t final_status;
+} mtk_ieee154_rcp_stop_resp_t;
+
+typedef struct {
+    uint8_t running;
+    uint8_t host_link;
+    uint32_t baud_rate;
+} mtk_ieee154_rcp_status_resp_t;
