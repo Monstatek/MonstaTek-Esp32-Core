@@ -192,7 +192,12 @@ MTK_TEST_MAIN_BEGIN
         }
         mtk_captive_portal_get_credentials_resp_t creds;
         get_creds(&creds, 0);
-        MTK_CHECK_EQ(creds.credentials.count, 32); /* capped at the schema's own maximum */
+        /* Capped at the schema's own maximum, read from the generated array
+         * itself so retuning the capacity in schemas.json cannot silently
+         * leave this bound untested. */
+        const uint32_t cap =
+            (uint32_t)(sizeof(creds.credentials.items) / sizeof(creds.credentials.items[0]));
+        MTK_CHECK_EQ(creds.credentials.count, cap);
         stop_portal(&sink, token, NULL);
     }
 

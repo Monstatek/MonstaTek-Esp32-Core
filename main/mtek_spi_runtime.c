@@ -69,6 +69,25 @@
 #include "mtek_compat_dispatch.h"
 #include <string.h>
 
+
+/* The whole SPI-slave runtime is compiled out of the radio-co-processor
+ * image. OpenThread owns the one general-purpose SPI slave there (see
+ * mtek_spi_runtime_start below and docs/BUILD_VARIANTS.md), and this file
+ * also drives GPIO 6, which Spinel uses for its own host interrupt with the
+ * OPPOSITE polarity. Excluding it here is a compile-time guarantee; relying
+ * on the linker to garbage-collect an unreferenced task would make a
+ * correctness property depend on --gc-sections. */
+static const char *TAG = "mtek_spi";
+
+/* CONFIG_* arrives transitively from the ESP-IDF headers above on target.
+ * On the host build it is simply undefined, which evaluates to 0 here, so
+ * the runtime compiles in and test_spi_runtime_reliability still covers it.
+ * tools/build_variants.py asserts on the real images that spi_runtime_task
+ * is absent from the RCP image and present in the other two, so a macro that
+ * silently failed to arrive would fail the build gate rather than pass. */
+#if !CONFIG_OPENTHREAD_RADIO
+
+
 /* Shared-state locking -------------------- The real mutex, async runner, and
  * core/arbiter/router lock registration are now installed once by app_main.c
  * BEFORE any adapter task starts (including this one) -- see its own "Shared
@@ -92,7 +111,6 @@ static void queue_unlock(void *ctx) { if (ctx) xSemaphoreGive((SemaphoreHandle_t
 #define PIN_HANDSHAKE 14
 #define PIN_DATAREADY 6
 
-static const char *TAG = "mtek_spi";
 
 /* Producer callbacks only wake the SPI owner; they never access DMA buffers
  * or drive GPIO. The owner recomputes readiness after every wake. */
@@ -465,6 +483,8 @@ retry_transaction: ;
         }
     }
 }
+
+#endif /* !CONFIG_OPENTHREAD_RADIO */
 
 int mtek_spi_runtime_start(SemaphoreHandle_t shared_mutex) {
 #if CONFIG_OPENTHREAD_RADIO

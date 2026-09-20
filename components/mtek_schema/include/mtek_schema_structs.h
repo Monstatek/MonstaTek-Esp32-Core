@@ -628,7 +628,7 @@ typedef struct {
 } mtk_anon_mtk_captive_portal_get_credentials_resp_t_credentials_elem_3_t;
 
 typedef struct {
-    struct { uint32_t count; mtk_anon_mtk_captive_portal_get_credentials_resp_t_credentials_elem_3_t items[32]; } credentials;
+    struct { uint32_t count; mtk_anon_mtk_captive_portal_get_credentials_resp_t_credentials_elem_3_t items[16]; } credentials;
 } mtk_captive_portal_get_credentials_resp_t;
 
 typedef struct {
