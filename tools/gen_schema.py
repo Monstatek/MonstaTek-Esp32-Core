@@ -492,8 +492,12 @@ def gen_arbiter(schema, out):
     src.append("};")
     src.append(f"const int mtk_arbiter_pairwise_count = {len(pairwise)};")
     src.append("")
-    src.append("/* self-pairs: every active class conflicts with itself (BUSY); reserved classes are DISABLED */")
-    reserved = {c for c in classes if owner[c] not in ("RADIO_OWNER_WIFI", "RADIO_OWNER_BLE")}
+    src.append("/* self-pairs: every implemented class conflicts with itself (BUSY); classes listed as reserved are DISABLED */")
+    # Reserved classes are declared explicitly. Deriving this from the radio
+    # owner would mislabel any implemented class whose PHY is neither Wi-Fi
+    # nor BLE -- IEEE 802.15.4 is a distinct PHY and must still report its
+    # own radio owner truthfully while being a fully acquirable class.
+    reserved = set(schema.get("arbiter_reserved_classes", []))
     src.append("const mtk_pair_entry_t mtk_arbiter_self_pairs[] = {")
     for c in classes:
         p = "MTK_POLICY_DISABLED" if c in reserved else "MTK_POLICY_BUSY"

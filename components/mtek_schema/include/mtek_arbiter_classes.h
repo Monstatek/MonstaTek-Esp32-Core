@@ -15,7 +15,7 @@ typedef enum {
     MTK_ARB_SAP,
     MTK_ARB_RAW,
     MTK_ARB_ESPNOW,
-    MTK_ARB_RESV_154,
+    MTK_ARB_IEEE154,
     MTK_ARB_NONE,
     MTK_ARB_CLASS_COUNT_RAW = MTK_ARB_NONE,
 } mtk_arbiter_class_t;

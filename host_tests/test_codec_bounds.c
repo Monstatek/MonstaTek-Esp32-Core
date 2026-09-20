@@ -274,7 +274,7 @@ static void test_every_registered_descriptor_is_bounded(void) {
      * opcodes whose handlers decode nothing today. */
     MTK_CHECK(req_seen > 0);
     MTK_CHECK(resp_seen > 0);
-    MTK_CHECK_EQ(MTK_OPCODE_COUNT, 99);
+    MTK_CHECK_EQ(MTK_OPCODE_COUNT, 106);
 }
 
 MTK_TEST_MAIN_BEGIN

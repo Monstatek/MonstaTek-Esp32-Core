@@ -1202,3 +1202,71 @@ typedef struct {
     uint32_t received;
     uint32_t dropped;
 } mtk_espnow_stats_resp_t;
+
+typedef struct {
+    uint8_t channel;
+    uint8_t promiscuous;
+} mtk_ieee154_start_req_t;
+
+typedef struct {
+    uint32_t operation_token;
+} mtk_ieee154_start_resp_t;
+
+typedef struct {
+    uint32_t operation_token;
+    uint8_t status;
+    uint32_t frames_received;
+    uint32_t frames_dropped;
+} mtk_ieee154_stopped_ev_t;
+
+typedef struct {
+    uint32_t operation_token;
+} mtk_ieee154_stop_req_t;
+
+typedef struct {
+    uint8_t final_state;
+    uint8_t final_status;
+} mtk_ieee154_stop_resp_t;
+
+typedef struct {
+    uint8_t state;
+    uint8_t channel;
+    uint8_t promiscuous;
+    uint32_t frames_received;
+    uint32_t frames_dropped;
+    uint32_t frames_transmitted;
+    uint32_t tx_failures;
+} mtk_ieee154_status_resp_t;
+
+typedef struct {
+    uint8_t channel;
+} mtk_ieee154_set_channel_req_t;
+
+typedef struct {
+    uint32_t channel_mask;
+    uint16_t dwell_ms;
+} mtk_ieee154_energy_scan_req_t;
+
+typedef struct {
+    uint32_t operation_token;
+} mtk_ieee154_energy_scan_resp_t;
+
+typedef struct {
+    uint8_t channel;
+    int8_t peak_rssi;
+} mtk_anon_mtk_ieee154_energy_result_ev_t_results_elem_8_t;
+
+typedef struct {
+    uint32_t operation_token;
+    uint8_t status;
+    struct { uint32_t count; mtk_anon_mtk_ieee154_energy_result_ev_t_results_elem_8_t items[16]; } results;
+} mtk_ieee154_energy_result_ev_t;
+
+typedef struct {
+    struct { uint16_t len; uint8_t data[127]; } data;
+    uint8_t cca;
+} mtk_ieee154_tx_req_t;
+
+typedef struct {
+    uint8_t tx_status;
+} mtk_ieee154_tx_resp_t;

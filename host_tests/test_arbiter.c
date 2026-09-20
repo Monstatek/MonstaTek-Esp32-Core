@@ -14,26 +14,33 @@ MTK_TEST_MAIN_BEGIN
     static const mtk_arbiter_class_t active[] = {
         MTK_ARB_WMC, MTK_ARB_WS, MTK_ARB_BEACON, MTK_ARB_D, MTK_ARB_H, MTK_ARB_M,
         MTK_ARB_BS, MTK_ARB_BA, MTK_ARB_SM, MTK_ARB_GC, MTK_ARB_SAP, MTK_ARB_RAW,
-        MTK_ARB_ESPNOW,
+        MTK_ARB_ESPNOW, MTK_ARB_IEEE154,
     };
     unsigned n = sizeof(active) / sizeof(active[0]);
-    MTK_CHECK_EQ(n, 13);
+    MTK_CHECK_EQ(n, 14);
     unsigned pair_count = 0;
     for (unsigned i = 0; i < n; i++)
         for (unsigned j = i + 1; j < n; j++) {
             pair_count++;
             mtk_arbiter_policy_for(active[i], active[j]); /* must not assert/crash */
         }
-    /* Every unordered pair among the 13 implemented classes is declared:
-     * ESPNOW joined them, so 12*11/2 = 66 became 13*12/2 = 78. */
-    MTK_CHECK_EQ(pair_count, 78);
+    /* Every unordered pair among the 14 implemented classes is declared:
+     * IEEE154 joined ESPNOW as a real class, so 13*12/2 = 78 became
+     * 14*13/2 = 91. */
+    MTK_CHECK_EQ(pair_count, 91);
 
     /* Self-pairs: BUSY for every active class, DISABLED for reserved.
      * ESPNOW is now an implemented, acquirable class, so it is BUSY against
      * itself like every other active class; only RESV_154 remains reserved. */
     for (unsigned i = 0; i < n; i++) MTK_CHECK_EQ(mtk_arbiter_policy_for(active[i], active[i]), MTK_POLICY_BUSY);
     MTK_CHECK_EQ(mtk_arbiter_policy_for(MTK_ARB_ESPNOW, MTK_ARB_ESPNOW), MTK_POLICY_BUSY);
-    MTK_CHECK_EQ(mtk_arbiter_policy_for(MTK_ARB_RESV_154, MTK_ARB_RESV_154), MTK_POLICY_DISABLED);
+    MTK_CHECK_EQ(mtk_arbiter_policy_for(MTK_ARB_IEEE154, MTK_ARB_IEEE154), MTK_POLICY_BUSY);
+    /* 802.15.4 shares the one 2.4GHz radio with Wi-Fi and ESP-NOW, so those
+     * are serialized; BLE has its own controller path and is cross-subsystem. */
+    MTK_CHECK_EQ(mtk_arbiter_policy_for(MTK_ARB_M, MTK_ARB_IEEE154), MTK_POLICY_SERIALIZED);
+    MTK_CHECK_EQ(mtk_arbiter_policy_for(MTK_ARB_SAP, MTK_ARB_IEEE154), MTK_POLICY_SERIALIZED);
+    MTK_CHECK_EQ(mtk_arbiter_policy_for(MTK_ARB_ESPNOW, MTK_ARB_IEEE154), MTK_POLICY_SERIALIZED);
+    MTK_CHECK_EQ(mtk_arbiter_policy_for(MTK_ARB_BS, MTK_ARB_IEEE154), MTK_POLICY_CROSS_SUBSYSTEM_BUSY);
 
     /* Single-active-class model: WS active excludes WMC (serialized) and
      * BS (cross-subsystem-busy) both. */

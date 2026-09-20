@@ -17,7 +17,7 @@ const mtk_radio_owner_t mtk_arbiter_owner[] = {
     [MTK_ARB_SAP] = MTK_RADIO_OWNER_WIFI,
     [MTK_ARB_RAW] = MTK_RADIO_OWNER_WIFI,
     [MTK_ARB_ESPNOW] = MTK_RADIO_OWNER_WIFI,
-    [MTK_ARB_RESV_154] = MTK_RADIO_OWNER_IEEE802154_RX,
+    [MTK_ARB_IEEE154] = MTK_RADIO_OWNER_IEEE802154_RX,
 };
 
 typedef struct { mtk_arbiter_class_t a, b; mtk_arbiter_policy_t policy; } mtk_pair_entry_t;
@@ -100,11 +100,23 @@ const mtk_pair_entry_t mtk_arbiter_pairwise[] = {
     { MTK_ARB_BA, MTK_ARB_ESPNOW, MTK_POLICY_CROSS_SUBSYSTEM_BUSY },
     { MTK_ARB_SM, MTK_ARB_ESPNOW, MTK_POLICY_CROSS_SUBSYSTEM_BUSY },
     { MTK_ARB_GC, MTK_ARB_ESPNOW, MTK_POLICY_CROSS_SUBSYSTEM_BUSY },
-    { MTK_ARB_ESPNOW, MTK_ARB_RESV_154, MTK_POLICY_CROSS_SUBSYSTEM_BUSY },
+    { MTK_ARB_WMC, MTK_ARB_IEEE154, MTK_POLICY_SERIALIZED },
+    { MTK_ARB_WS, MTK_ARB_IEEE154, MTK_POLICY_SERIALIZED },
+    { MTK_ARB_BEACON, MTK_ARB_IEEE154, MTK_POLICY_SERIALIZED },
+    { MTK_ARB_D, MTK_ARB_IEEE154, MTK_POLICY_SERIALIZED },
+    { MTK_ARB_H, MTK_ARB_IEEE154, MTK_POLICY_SERIALIZED },
+    { MTK_ARB_M, MTK_ARB_IEEE154, MTK_POLICY_SERIALIZED },
+    { MTK_ARB_SAP, MTK_ARB_IEEE154, MTK_POLICY_SERIALIZED },
+    { MTK_ARB_RAW, MTK_ARB_IEEE154, MTK_POLICY_SERIALIZED },
+    { MTK_ARB_ESPNOW, MTK_ARB_IEEE154, MTK_POLICY_SERIALIZED },
+    { MTK_ARB_BS, MTK_ARB_IEEE154, MTK_POLICY_CROSS_SUBSYSTEM_BUSY },
+    { MTK_ARB_BA, MTK_ARB_IEEE154, MTK_POLICY_CROSS_SUBSYSTEM_BUSY },
+    { MTK_ARB_SM, MTK_ARB_IEEE154, MTK_POLICY_CROSS_SUBSYSTEM_BUSY },
+    { MTK_ARB_GC, MTK_ARB_IEEE154, MTK_POLICY_CROSS_SUBSYSTEM_BUSY },
 };
-const int mtk_arbiter_pairwise_count = 79;
+const int mtk_arbiter_pairwise_count = 91;
 
-/* self-pairs: every active class conflicts with itself (BUSY); reserved classes are DISABLED */
+/* self-pairs: every implemented class conflicts with itself (BUSY); classes listed as reserved are DISABLED */
 const mtk_pair_entry_t mtk_arbiter_self_pairs[] = {
     { MTK_ARB_WMC, MTK_ARB_WMC, MTK_POLICY_BUSY },
     { MTK_ARB_WS, MTK_ARB_WS, MTK_POLICY_BUSY },
@@ -119,6 +131,6 @@ const mtk_pair_entry_t mtk_arbiter_self_pairs[] = {
     { MTK_ARB_SAP, MTK_ARB_SAP, MTK_POLICY_BUSY },
     { MTK_ARB_RAW, MTK_ARB_RAW, MTK_POLICY_BUSY },
     { MTK_ARB_ESPNOW, MTK_ARB_ESPNOW, MTK_POLICY_BUSY },
-    { MTK_ARB_RESV_154, MTK_ARB_RESV_154, MTK_POLICY_DISABLED },
+    { MTK_ARB_IEEE154, MTK_ARB_IEEE154, MTK_POLICY_BUSY },
 };
 const int mtk_arbiter_self_pairs_count = 14;

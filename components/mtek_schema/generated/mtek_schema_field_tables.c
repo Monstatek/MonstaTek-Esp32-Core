@@ -1418,3 +1418,84 @@ static const mtk_field_desc_t mtk_espnow_stats_resp_t_fields[] = {
     { "dropped", MTK_F_U32, offsetof(mtk_espnow_stats_resp_t, dropped), 0, 0, 0, NULL, MTK_F_U8 },
 };
 const mtk_struct_desc_t mtk_espnow_stats_resp_t_desc = { mtk_espnow_stats_resp_t_fields, sizeof(mtk_espnow_stats_resp_t_fields)/sizeof(mtk_espnow_stats_resp_t_fields[0]), sizeof(mtk_espnow_stats_resp_t) };
+
+static const mtk_field_desc_t mtk_ieee154_start_req_t_fields[] = {
+    { "channel", MTK_F_U8, offsetof(mtk_ieee154_start_req_t, channel), 0, 0, 0, NULL, MTK_F_U8 },
+    { "promiscuous", MTK_F_BOOL, offsetof(mtk_ieee154_start_req_t, promiscuous), 0, 0, 0, NULL, MTK_F_U8 },
+};
+const mtk_struct_desc_t mtk_ieee154_start_req_t_desc = { mtk_ieee154_start_req_t_fields, sizeof(mtk_ieee154_start_req_t_fields)/sizeof(mtk_ieee154_start_req_t_fields[0]), sizeof(mtk_ieee154_start_req_t) };
+
+static const mtk_field_desc_t mtk_ieee154_start_resp_t_fields[] = {
+    { "operation_token", MTK_F_U32, offsetof(mtk_ieee154_start_resp_t, operation_token), 0, 0, 0, NULL, MTK_F_U8 },
+};
+const mtk_struct_desc_t mtk_ieee154_start_resp_t_desc = { mtk_ieee154_start_resp_t_fields, sizeof(mtk_ieee154_start_resp_t_fields)/sizeof(mtk_ieee154_start_resp_t_fields[0]), sizeof(mtk_ieee154_start_resp_t) };
+
+static const mtk_field_desc_t mtk_ieee154_stopped_ev_t_fields[] = {
+    { "operation_token", MTK_F_U32, offsetof(mtk_ieee154_stopped_ev_t, operation_token), 0, 0, 0, NULL, MTK_F_U8 },
+    { "status", MTK_F_U8, offsetof(mtk_ieee154_stopped_ev_t, status), 0, 0, 0, NULL, MTK_F_U8 },
+    { "frames_received", MTK_F_U32, offsetof(mtk_ieee154_stopped_ev_t, frames_received), 0, 0, 0, NULL, MTK_F_U8 },
+    { "frames_dropped", MTK_F_U32, offsetof(mtk_ieee154_stopped_ev_t, frames_dropped), 0, 0, 0, NULL, MTK_F_U8 },
+};
+const mtk_struct_desc_t mtk_ieee154_stopped_ev_t_desc = { mtk_ieee154_stopped_ev_t_fields, sizeof(mtk_ieee154_stopped_ev_t_fields)/sizeof(mtk_ieee154_stopped_ev_t_fields[0]), sizeof(mtk_ieee154_stopped_ev_t) };
+
+static const mtk_field_desc_t mtk_ieee154_stop_req_t_fields[] = {
+    { "operation_token", MTK_F_U32, offsetof(mtk_ieee154_stop_req_t, operation_token), 0, 0, 0, NULL, MTK_F_U8 },
+};
+const mtk_struct_desc_t mtk_ieee154_stop_req_t_desc = { mtk_ieee154_stop_req_t_fields, sizeof(mtk_ieee154_stop_req_t_fields)/sizeof(mtk_ieee154_stop_req_t_fields[0]), sizeof(mtk_ieee154_stop_req_t) };
+
+static const mtk_field_desc_t mtk_ieee154_stop_resp_t_fields[] = {
+    { "final_state", MTK_F_U8, offsetof(mtk_ieee154_stop_resp_t, final_state), 0, 0, 0, NULL, MTK_F_U8 },
+    { "final_status", MTK_F_U8, offsetof(mtk_ieee154_stop_resp_t, final_status), 0, 0, 0, NULL, MTK_F_U8 },
+};
+const mtk_struct_desc_t mtk_ieee154_stop_resp_t_desc = { mtk_ieee154_stop_resp_t_fields, sizeof(mtk_ieee154_stop_resp_t_fields)/sizeof(mtk_ieee154_stop_resp_t_fields[0]), sizeof(mtk_ieee154_stop_resp_t) };
+
+static const mtk_field_desc_t mtk_ieee154_status_resp_t_fields[] = {
+    { "state", MTK_F_U8, offsetof(mtk_ieee154_status_resp_t, state), 0, 0, 0, NULL, MTK_F_U8 },
+    { "channel", MTK_F_U8, offsetof(mtk_ieee154_status_resp_t, channel), 0, 0, 0, NULL, MTK_F_U8 },
+    { "promiscuous", MTK_F_BOOL, offsetof(mtk_ieee154_status_resp_t, promiscuous), 0, 0, 0, NULL, MTK_F_U8 },
+    { "frames_received", MTK_F_U32, offsetof(mtk_ieee154_status_resp_t, frames_received), 0, 0, 0, NULL, MTK_F_U8 },
+    { "frames_dropped", MTK_F_U32, offsetof(mtk_ieee154_status_resp_t, frames_dropped), 0, 0, 0, NULL, MTK_F_U8 },
+    { "frames_transmitted", MTK_F_U32, offsetof(mtk_ieee154_status_resp_t, frames_transmitted), 0, 0, 0, NULL, MTK_F_U8 },
+    { "tx_failures", MTK_F_U32, offsetof(mtk_ieee154_status_resp_t, tx_failures), 0, 0, 0, NULL, MTK_F_U8 },
+};
+const mtk_struct_desc_t mtk_ieee154_status_resp_t_desc = { mtk_ieee154_status_resp_t_fields, sizeof(mtk_ieee154_status_resp_t_fields)/sizeof(mtk_ieee154_status_resp_t_fields[0]), sizeof(mtk_ieee154_status_resp_t) };
+
+static const mtk_field_desc_t mtk_ieee154_set_channel_req_t_fields[] = {
+    { "channel", MTK_F_U8, offsetof(mtk_ieee154_set_channel_req_t, channel), 0, 0, 0, NULL, MTK_F_U8 },
+};
+const mtk_struct_desc_t mtk_ieee154_set_channel_req_t_desc = { mtk_ieee154_set_channel_req_t_fields, sizeof(mtk_ieee154_set_channel_req_t_fields)/sizeof(mtk_ieee154_set_channel_req_t_fields[0]), sizeof(mtk_ieee154_set_channel_req_t) };
+
+static const mtk_field_desc_t mtk_ieee154_energy_scan_req_t_fields[] = {
+    { "channel_mask", MTK_F_U32, offsetof(mtk_ieee154_energy_scan_req_t, channel_mask), 0, 0, 0, NULL, MTK_F_U8 },
+    { "dwell_ms", MTK_F_U16, offsetof(mtk_ieee154_energy_scan_req_t, dwell_ms), 0, 0, 0, NULL, MTK_F_U8 },
+};
+const mtk_struct_desc_t mtk_ieee154_energy_scan_req_t_desc = { mtk_ieee154_energy_scan_req_t_fields, sizeof(mtk_ieee154_energy_scan_req_t_fields)/sizeof(mtk_ieee154_energy_scan_req_t_fields[0]), sizeof(mtk_ieee154_energy_scan_req_t) };
+
+static const mtk_field_desc_t mtk_ieee154_energy_scan_resp_t_fields[] = {
+    { "operation_token", MTK_F_U32, offsetof(mtk_ieee154_energy_scan_resp_t, operation_token), 0, 0, 0, NULL, MTK_F_U8 },
+};
+const mtk_struct_desc_t mtk_ieee154_energy_scan_resp_t_desc = { mtk_ieee154_energy_scan_resp_t_fields, sizeof(mtk_ieee154_energy_scan_resp_t_fields)/sizeof(mtk_ieee154_energy_scan_resp_t_fields[0]), sizeof(mtk_ieee154_energy_scan_resp_t) };
+
+static const mtk_field_desc_t mtk_anon_mtk_ieee154_energy_result_ev_t_results_elem_8_t_fields[] = {
+    { "channel", MTK_F_U8, offsetof(mtk_anon_mtk_ieee154_energy_result_ev_t_results_elem_8_t, channel), 0, 0, 0, NULL, MTK_F_U8 },
+    { "peak_rssi", MTK_F_I8, offsetof(mtk_anon_mtk_ieee154_energy_result_ev_t_results_elem_8_t, peak_rssi), 0, 0, 0, NULL, MTK_F_U8 },
+};
+const mtk_struct_desc_t mtk_anon_mtk_ieee154_energy_result_ev_t_results_elem_8_t_desc = { mtk_anon_mtk_ieee154_energy_result_ev_t_results_elem_8_t_fields, sizeof(mtk_anon_mtk_ieee154_energy_result_ev_t_results_elem_8_t_fields)/sizeof(mtk_anon_mtk_ieee154_energy_result_ev_t_results_elem_8_t_fields[0]), sizeof(mtk_anon_mtk_ieee154_energy_result_ev_t_results_elem_8_t) };
+
+static const mtk_field_desc_t mtk_ieee154_energy_result_ev_t_fields[] = {
+    { "operation_token", MTK_F_U32, offsetof(mtk_ieee154_energy_result_ev_t, operation_token), 0, 0, 0, NULL, MTK_F_U8 },
+    { "status", MTK_F_U8, offsetof(mtk_ieee154_energy_result_ev_t, status), 0, 0, 0, NULL, MTK_F_U8 },
+    { "results", MTK_F_ARRAY, offsetof(mtk_ieee154_energy_result_ev_t, results), 16, 1, sizeof(mtk_anon_mtk_ieee154_energy_result_ev_t_results_elem_8_t), &mtk_anon_mtk_ieee154_energy_result_ev_t_results_elem_8_t_desc, MTK_F_STRUCT },
+};
+const mtk_struct_desc_t mtk_ieee154_energy_result_ev_t_desc = { mtk_ieee154_energy_result_ev_t_fields, sizeof(mtk_ieee154_energy_result_ev_t_fields)/sizeof(mtk_ieee154_energy_result_ev_t_fields[0]), sizeof(mtk_ieee154_energy_result_ev_t) };
+
+static const mtk_field_desc_t mtk_ieee154_tx_req_t_fields[] = {
+    { "data", MTK_F_BYTES, offsetof(mtk_ieee154_tx_req_t, data), 127, 1, 0, NULL, MTK_F_U8 },
+    { "cca", MTK_F_BOOL, offsetof(mtk_ieee154_tx_req_t, cca), 0, 0, 0, NULL, MTK_F_U8 },
+};
+const mtk_struct_desc_t mtk_ieee154_tx_req_t_desc = { mtk_ieee154_tx_req_t_fields, sizeof(mtk_ieee154_tx_req_t_fields)/sizeof(mtk_ieee154_tx_req_t_fields[0]), sizeof(mtk_ieee154_tx_req_t) };
+
+static const mtk_field_desc_t mtk_ieee154_tx_resp_t_fields[] = {
+    { "tx_status", MTK_F_U8, offsetof(mtk_ieee154_tx_resp_t, tx_status), 0, 0, 0, NULL, MTK_F_U8 },
+};
+const mtk_struct_desc_t mtk_ieee154_tx_resp_t_desc = { mtk_ieee154_tx_resp_t_fields, sizeof(mtk_ieee154_tx_resp_t_fields)/sizeof(mtk_ieee154_tx_resp_t_fields[0]), sizeof(mtk_ieee154_tx_resp_t) };

@@ -65,7 +65,8 @@
     "gatt": "0x0003",
     "capture": "0x0004",
     "diagnostics": "0x0005",
-    "espnow": "0x0006"
+    "espnow": "0x0006",
+    "ieee802154": "0x0007"
   },
   "capability_ids": {
     "_note": "Reserved/disabled features live in a distinct identifier space, disjoint from every service_id (0-5), starting at 0x1001 (rework 1 fix after the validator caught a collision).",
@@ -311,7 +312,7 @@
     "SAP",
     "RAW",
     "ESPNOW",
-    "RESV_154"
+    "IEEE154"
   ],
   "arbiter_owner_by_class": {
     "WMC": "RADIO_OWNER_WIFI",
@@ -326,8 +327,8 @@
     "GC": "RADIO_OWNER_BLE",
     "SAP": "RADIO_OWNER_WIFI",
     "RAW": "RADIO_OWNER_WIFI",
-    "RESV_154": "RADIO_OWNER_IEEE802154_RX",
-    "ESPNOW": "RADIO_OWNER_WIFI"
+    "ESPNOW": "RADIO_OWNER_WIFI",
+    "IEEE154": "RADIO_OWNER_IEEE802154_RX"
   },
   "arbiter_pairwise_policy": {
     "WMC|WS": "SERIALIZED",
@@ -408,7 +409,19 @@
     "BA|ESPNOW": "CROSS_SUBSYSTEM_BUSY",
     "SM|ESPNOW": "CROSS_SUBSYSTEM_BUSY",
     "GC|ESPNOW": "CROSS_SUBSYSTEM_BUSY",
-    "ESPNOW|RESV_154": "CROSS_SUBSYSTEM_BUSY"
+    "WMC|IEEE154": "SERIALIZED",
+    "WS|IEEE154": "SERIALIZED",
+    "BEACON|IEEE154": "SERIALIZED",
+    "D|IEEE154": "SERIALIZED",
+    "H|IEEE154": "SERIALIZED",
+    "M|IEEE154": "SERIALIZED",
+    "SAP|IEEE154": "SERIALIZED",
+    "RAW|IEEE154": "SERIALIZED",
+    "ESPNOW|IEEE154": "SERIALIZED",
+    "BS|IEEE154": "CROSS_SUBSYSTEM_BUSY",
+    "BA|IEEE154": "CROSS_SUBSYSTEM_BUSY",
+    "SM|IEEE154": "CROSS_SUBSYSTEM_BUSY",
+    "GC|IEEE154": "CROSS_SUBSYSTEM_BUSY"
   },
   "self_pairs_policy": {
     "active_classes_policy": "BUSY",
@@ -6815,6 +6828,447 @@
         "compat_c3": null
       },
       "notes": ""
+    },
+    {
+      "service": "0x0007",
+      "opcode": "0x0001",
+      "name": "IEEE154_START",
+      "lifecycle": "ACCEPTED_ASYNC",
+      "request_fields": [
+        {
+          "name": "channel",
+          "type": "u8"
+        },
+        {
+          "name": "promiscuous",
+          "type": "bool"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "operation_token",
+          "type": "u32"
+        }
+      ],
+      "events": [
+        {
+          "name": "IEEE154_STOPPED",
+          "kind": "TERMINAL",
+          "fields": [
+            {
+              "name": "operation_token",
+              "type": "u32"
+            },
+            {
+              "name": "status",
+              "type": "u8"
+            },
+            {
+              "name": "frames_received",
+              "type": "u32"
+            },
+            {
+              "name": "frames_dropped",
+              "type": "u32"
+            }
+          ]
+        }
+      ],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "ACCEPTED",
+          "INVALID_ARGUMENT",
+          "BUSY"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 5000,
+        "cancellable": true,
+        "idempotent": false,
+        "persistent_effects": "none",
+        "stop_owner": "caller via IEEE154_STOP",
+        "cleanup": "radio disabled, receive ring reset, IEEE154 lease released"
+      },
+      "resource_class": "IEEE154",
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_c3": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_c3": null
+      },
+      "notes": "Channels 11..26 (2.4GHz O-QPSK). Holds the IEEE154 class for the whole session; serialized against Wi-Fi and ESP-NOW because the ESP32-C6 has one 2.4GHz radio."
+    },
+    {
+      "service": "0x0007",
+      "opcode": "0x0002",
+      "name": "IEEE154_STOP",
+      "lifecycle": "SYNCHRONOUS",
+      "request_fields": [
+        {
+          "name": "operation_token",
+          "type": "u32"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "final_state",
+          "type": "u8"
+        },
+        {
+          "name": "final_status",
+          "type": "u8"
+        }
+      ],
+      "events": [],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "OK",
+          "NOT_FOUND"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 5000,
+        "cancellable": false,
+        "idempotent": true,
+        "persistent_effects": "none",
+        "stop_owner": "n/a",
+        "cleanup": "releases the IEEE154 lease"
+      },
+      "resource_class": null,
+      "no_radio_lease": true,
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_c3": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_c3": null
+      },
+      "notes": ""
+    },
+    {
+      "service": "0x0007",
+      "opcode": "0x0003",
+      "name": "IEEE154_STATUS",
+      "lifecycle": "SYNCHRONOUS",
+      "request_fields": [],
+      "response_fields": [
+        {
+          "name": "state",
+          "type": "u8"
+        },
+        {
+          "name": "channel",
+          "type": "u8"
+        },
+        {
+          "name": "promiscuous",
+          "type": "bool"
+        },
+        {
+          "name": "frames_received",
+          "type": "u32"
+        },
+        {
+          "name": "frames_dropped",
+          "type": "u32"
+        },
+        {
+          "name": "frames_transmitted",
+          "type": "u32"
+        },
+        {
+          "name": "tx_failures",
+          "type": "u32"
+        }
+      ],
+      "events": [],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "OK"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 5000,
+        "cancellable": false,
+        "idempotent": true,
+        "persistent_effects": "none",
+        "stop_owner": "n/a",
+        "cleanup": "n/a"
+      },
+      "resource_class": null,
+      "no_radio_lease": true,
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_c3": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_c3": null
+      },
+      "notes": ""
+    },
+    {
+      "service": "0x0007",
+      "opcode": "0x0004",
+      "name": "IEEE154_SET_CHANNEL",
+      "lifecycle": "SYNCHRONOUS",
+      "request_fields": [
+        {
+          "name": "channel",
+          "type": "u8"
+        }
+      ],
+      "response_fields": [],
+      "events": [],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "OK",
+          "INVALID_ARGUMENT",
+          "NOT_READY",
+          "IO_ERROR"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 5000,
+        "cancellable": false,
+        "idempotent": true,
+        "persistent_effects": "none",
+        "stop_owner": "n/a",
+        "cleanup": "n/a"
+      },
+      "resource_class": null,
+      "no_radio_lease": true,
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_c3": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_c3": null
+      },
+      "notes": "Retunes a live session without restarting it."
+    },
+    {
+      "service": "0x0007",
+      "opcode": "0x0005",
+      "name": "IEEE154_ENERGY_SCAN",
+      "lifecycle": "ACCEPTED_ASYNC",
+      "request_fields": [
+        {
+          "name": "channel_mask",
+          "type": "u32"
+        },
+        {
+          "name": "dwell_ms",
+          "type": "u16"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "operation_token",
+          "type": "u32"
+        }
+      ],
+      "events": [
+        {
+          "name": "IEEE154_ENERGY_RESULT",
+          "kind": "TERMINAL",
+          "fields": [
+            {
+              "name": "operation_token",
+              "type": "u32"
+            },
+            {
+              "name": "status",
+              "type": "u8"
+            },
+            {
+              "name": "results",
+              "type": "array",
+              "max": 16,
+              "len_prefix": "u8",
+              "elem": {
+                "type": "struct",
+                "fields": [
+                  {
+                    "name": "channel",
+                    "type": "u8"
+                  },
+                  {
+                    "name": "peak_rssi",
+                    "type": "i8"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "ACCEPTED",
+          "INVALID_ARGUMENT",
+          "BUSY"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 5000,
+        "cancellable": true,
+        "idempotent": false,
+        "persistent_effects": "none",
+        "stop_owner": "caller via IEEE154_STOP",
+        "cleanup": "radio disabled, IEEE154 lease released"
+      },
+      "resource_class": "IEEE154",
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_c3": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_c3": null
+      },
+      "notes": "channel_mask bit N selects channel N (bits 11..26 legal). Per-channel peak energy over dwell_ms."
+    },
+    {
+      "service": "0x0007",
+      "opcode": "0x0006",
+      "name": "IEEE154_TX",
+      "lifecycle": "SYNCHRONOUS",
+      "request_fields": [
+        {
+          "name": "data",
+          "type": "bytes",
+          "max": 127,
+          "len_prefix": "u8"
+        },
+        {
+          "name": "cca",
+          "type": "bool"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "tx_status",
+          "type": "u8"
+        }
+      ],
+      "events": [],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "OK",
+          "INVALID_ARGUMENT",
+          "NOT_READY",
+          "IO_ERROR"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 5000,
+        "cancellable": false,
+        "idempotent": true,
+        "persistent_effects": "none",
+        "stop_owner": "n/a",
+        "cleanup": "n/a"
+      },
+      "resource_class": null,
+      "no_radio_lease": true,
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_c3": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_c3": null
+      },
+      "notes": "Raw PHY payload, 1..127 bytes per IEEE 802.15.4 aMaxPHYPacketSize. The caller supplies the full MPDU; Core does not synthesise headers, so any 802.15.4-based protocol can be driven from the host."
+    },
+    {
+      "service": "0x0007",
+      "opcode": "0x0007",
+      "name": "IEEE154_POLL_RECV",
+      "lifecycle": "SYNCHRONOUS",
+      "request_fields": [],
+      "events": [],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "OK",
+          "NOT_READY"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 5000,
+        "cancellable": false,
+        "idempotent": true,
+        "persistent_effects": "none",
+        "stop_owner": "n/a",
+        "cleanup": "n/a"
+      },
+      "resource_class": null,
+      "no_radio_lease": true,
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_c3": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_c3": null
+      },
+      "notes": "Drains one received frame with its metadata. Bounded ring; overflow drops oldest and is counted.",
+      "response_fields_tagged": {
+        "tag_field": "tag",
+        "tag_type": "u8",
+        "variants": {
+          "0": {
+            "name": "EMPTY",
+            "fields": []
+          },
+          "1": {
+            "name": "RECORD",
+            "fields": [
+              {
+                "name": "timestamp_us",
+                "type": "u64"
+              },
+              {
+                "name": "channel",
+                "type": "u8"
+              },
+              {
+                "name": "rssi",
+                "type": "i8"
+              },
+              {
+                "name": "lqi",
+                "type": "u8"
+              },
+              {
+                "name": "flags",
+                "type": "u8"
+              },
+              {
+                "name": "original_len",
+                "type": "u16"
+              },
+              {
+                "name": "data",
+                "type": "bytes",
+                "max": 127,
+                "len_prefix": "u8"
+              }
+            ]
+          }
+        }
+      }
     }
   ],
   "wifi_settings_schema": {
@@ -6958,5 +7412,6 @@
         "reason": "no host-bridge service infrastructure exists in this release; a dedicated future design task is required"
       }
     ]
-  }
+  },
+  "arbiter_reserved_classes": []
 }

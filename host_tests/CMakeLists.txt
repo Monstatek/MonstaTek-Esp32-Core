@@ -58,6 +58,7 @@ add_library(mtek_host_lib STATIC
     ${ROOT}/components/mtek_capture_service/mtek_capture_logic.c
     ${ROOT}/components/mtek_system_service/mtek_system_logic.c
     ${ROOT}/components/mtek_espnow_service/mtek_espnow_logic.c
+    ${ROOT}/components/mtek_ieee802154_service/mtek_ieee802154_logic.c
 )
 target_include_directories(mtek_host_lib PUBLIC
     ${ROOT}/components/mtek_schema/include
@@ -74,6 +75,7 @@ target_include_directories(mtek_host_lib PUBLIC
     ${ROOT}/components/mtek_capture_service/include
     ${ROOT}/components/mtek_system_service/include
     ${ROOT}/components/mtek_espnow_service/include
+    ${ROOT}/components/mtek_ieee802154_service/include
     ${ROOT}/host_tests/support
 )
 
@@ -138,6 +140,7 @@ mtk_add_test(test_raw_tx_channel)
 mtk_add_test(test_softap_lifecycle)
 mtk_add_test(test_captive_portal)
 mtk_add_test(test_espnow_lifecycle)
+mtk_add_test(test_ieee802154_lifecycle)
 mtk_add_test(test_handshake_capture)
 mtk_add_test(test_monstashark_capture)
 mtk_add_test(test_wifi_scan_connect)
