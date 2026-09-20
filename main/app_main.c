@@ -45,7 +45,9 @@
 #include "mtek_wifi_service.h"
 #include "mtek_wifi_hal_esp32.h"
 #include "mtek_ble_service.h"
+#if CONFIG_BT_ENABLED
 #include "mtek_ble_hal_esp32.h"
+#endif
 #include "mtek_capture_service.h"
 #include "mtek_espnow_hal.h"
 #include <stdlib.h>
@@ -792,7 +794,15 @@ void app_main(void) {
      * this HAL never gets wired in for real use; every BLE opcode then honestly
      * refuses via mtek_ble_logic.c's own existing `s_hal &&` guards rather than
      * running with a partially-initialized, silently unlocked HAL. */
+#if CONFIG_BT_ENABLED
     int ble_hal_ready = (mtek_ble_hal_esp32_init() == 0);
+#else
+    /* Bluetooth is compiled out of this build variant. The BLE service stays
+     * registered and every BLE opcode refuses through its own "no HAL" guard,
+     * which is the same honest refusal a failed HAL init produces -- never a
+     * silently missing service. */
+    int ble_hal_ready = 0;
+#endif
     if (!ble_hal_ready) {
         ESP_LOGE(TAG, "mtek_ble_hal_esp32_init reported a resource-allocation failure -- "
                       "every BLE/GATT opcode will be refused this boot session");
@@ -843,7 +853,9 @@ void app_main(void) {
     /* See wifi_hal_ready's own doc comment above -- never installed unless
      * mtek_wifi_hal_esp32_init actually succeeded. */
     if (wifi_hal_ready) mtek_wifi_set_hal(mtek_wifi_hal_esp32_get());
+#if CONFIG_BT_ENABLED
     if (ble_hal_ready) mtek_ble_set_hal(mtek_ble_hal_esp32_get());
+#endif
     if (mtek_espnow_hal_esp32_init() == 0) mtek_espnow_set_hal(mtek_espnow_hal_esp32_get());
     else ESP_LOGE(TAG, "ESP-NOW HAL init failed -- ESP-NOW opcodes will refuse");
     mtek_system_set_sta_query(mtek_wifi_is_sta_connected);

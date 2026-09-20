@@ -10,6 +10,8 @@
  * callback signals, then read out the result the callback stashed) to
  * match mtek_ble_hal.h's blocking-call contract (mtek_wifi_hal.h has the
  * same rationale for the Wi-Fi side). */
+#include "sdkconfig.h"
+#if CONFIG_BT_ENABLED
 #include "mtek_ble_hal_esp32.h"
 #include "mtk_ble_op_generation.h"
 #include "mtk_ble_op_lifecycle.h"
@@ -973,3 +975,5 @@ const mtk_ble_hal_t *mtek_ble_hal_esp32_get(void) {
     ESP_LOGI(TAG, "ESP32-C6 BLE (NimBLE) HAL ready (host-tested; hardware behavior not validated)");
     return &s_hal_impl;
 }
+
+#endif /* CONFIG_BT_ENABLED -- controller compiled out of this build variant */
