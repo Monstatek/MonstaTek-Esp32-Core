@@ -161,13 +161,17 @@ static int opcode_is_absent_in_this_image(uint16_t service_id, uint16_t opcode) 
     (void)opcode;
     return service_id == 0x0007;          /* universal image: no 802.15.4 at all */
 #elif CONFIG_OPENTHREAD_ENABLED
-    /* RCP mode: OpenThread owns the radio driver, so the raw radio opcodes
-     * (0x0001..0x0007) are genuinely unavailable; only the RCP opcodes
-     * (0x0008..0x000A) are served. */
-    return service_id == 0x0007 && opcode <= 0x0007;
+    /* RCP mode: OpenThread owns the 802.15.4 driver callbacks, so the raw
+     * radio and Core-managed capture are genuinely unavailable; only the RCP
+     * opcodes (0x0008..0x000A) are served. */
+    return service_id == 0x0007 && (opcode <= 0x0007 || opcode >= 0x000B);
 #else
-    /* Raw mode: the raw radio is served and there is no RCP runtime. */
-    return service_id == 0x0007 && opcode >= 0x0008;
+    /* Raw mode: the raw radio (0x0001..0x0007) and Core-managed capture
+     * (0x000B..0x000D) are served; there is no RCP runtime. This must stay
+     * the exact complement of opcode_served_in_this_mode() in the 802.15.4
+     * service -- the opcode-registry property test fails loud if the two
+     * ever disagree. */
+    return service_id == 0x0007 && opcode >= 0x0008 && opcode <= 0x000A;
 #endif
 }
 
@@ -316,6 +320,44 @@ static void handle_time_sync_stop(mtk_request_ctx_t *ctx, const mtk_opcode_entry
     respond(ctx, MTK_STATUS_OK, &r, &mtk_time_sync_stop_resp_t_desc);
 }
 
+
+/* Stable Core host-contract identity, served by every image.
+ *
+ * capability_count is computed from the live opcode table and this image's
+ * own capability states, so it reports what the running firmware actually
+ * serves rather than what the schema declares in general. variant_id and
+ * variant_name are diagnostic: a host must negotiate features through
+ * GET_CAPABILITIES and must never gate behaviour on a variant name, which is
+ * why the name carries no feature meaning and may change freely. */
+static void handle_get_api_identity(mtk_request_ctx_t *ctx) {
+    mtk_get_api_identity_resp_t r; memset(&r, 0, sizeof(r));
+    r.api_major = MTK_CORE_API_MAJOR;
+    r.api_minor = MTK_CORE_API_MINOR;
+
+#if !CONFIG_MTEK_IEEE802154_ENABLED
+    r.variant_id = 0;
+    static const char variant[] = "universal";
+#elif CONFIG_OPENTHREAD_ENABLED
+    r.variant_id = 2;
+    static const char variant[] = "mtkcore-154-rcp";
+#else
+    r.variant_id = 1;
+    static const char variant[] = "mtkcore-154";
+#endif
+    uint8_t vlen = (uint8_t)(sizeof(variant) - 1);
+    if (vlen > 24) vlen = 24;
+    r.variant_name.len = vlen;
+    memcpy(r.variant_name.data, variant, vlen);
+
+    unsigned n = 0;
+    for (unsigned i = 0; i < MTK_OPCODE_COUNT; i++) {
+        const mtk_opcode_entry_t *e = &mtk_opcode_table[i];
+        if (cap_for(e, ctx->profile) == MTK_CAP_SUPPORTED) n++;
+    }
+    r.capability_count = (uint16_t)n;
+    respond(ctx, MTK_STATUS_OK, &r, &mtk_get_api_identity_resp_t_desc);
+}
+
 static void mtek_system_dispatch(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t *op,
                                   const uint8_t *req_bytes, size_t req_len) {
     switch (op->opcode) {
@@ -337,6 +379,7 @@ static void mtek_system_dispatch(mtk_request_ctx_t *ctx, const mtk_opcode_entry_
         case 0x0007: handle_get_reset_reason(ctx); return;
         case 0x0008: handle_time_sync_start(ctx, op, req_bytes, req_len); return;
         case 0x0009: handle_time_sync_stop(ctx, op, req_bytes, req_len); return;
+        case 0x000A: handle_get_api_identity(ctx); return;
 #ifdef MTK_ENABLE_TEST_OPCODES
         /* A test- only generic arbiter-free
          * ACCEPTED_ASYNC vehicle (0x00F0 START) and its paired generic

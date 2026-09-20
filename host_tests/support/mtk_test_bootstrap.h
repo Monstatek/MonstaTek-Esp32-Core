@@ -20,8 +20,12 @@
 
 static uint64_t s_mtk_test_now_ms = 1000;
 static uint64_t mtk_test_now_ms(void) { return s_mtk_test_now_ms; }
+/* Advances the deterministic test clock so time-driven behaviour (capture
+ * channel hopping, duration deadlines) can be exercised without real waits. */
+static inline void mtk_test_advance_ms(uint64_t ms) { s_mtk_test_now_ms += ms; }
 
 static inline void mtk_test_bootstrap(void) {
+    s_mtk_test_now_ms = 1000;
     mtk_core_init(MTK_TEST_BOOT_EPOCH);
     mtk_arbiter_init();
     mtk_router_init();

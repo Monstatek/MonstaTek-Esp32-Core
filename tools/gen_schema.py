@@ -426,6 +426,16 @@ def gen_constants(schema, out):
         lines.append(f"    MTK_CAP_{name},")
     lines.append("} mtk_capability_state_t;")
     lines.append("")
+    api = schema.get("core_host_api", {})
+    if api:
+        lines.append("")
+        lines.append("/* Core host-contract identity. api_minor increments for additive,")
+        lines.append(" * backward-compatible capability growth; api_major only for a change that")
+        lines.append(" * breaks an existing host contract. Hosts negotiate features through")
+        lines.append(" * GET_CAPABILITIES and never branch on a variant name. */")
+        lines.append(f"#define MTK_CORE_API_MAJOR {api.get('api_major', 1)}")
+        lines.append(f"#define MTK_CORE_API_MINOR {api.get('api_minor', 0)}")
+        lines.append("")
     for cid, val in schema["core_budgets"].items():
         if isinstance(val, int):
             lines.append(f"#define MTK_BUDGET_{cid.upper()} {val}")

@@ -1294,3 +1294,48 @@ typedef struct {
     uint8_t host_link;
     uint32_t baud_rate;
 } mtk_ieee154_rcp_status_resp_t;
+
+typedef struct {
+    uint8_t mode;
+    uint8_t channel;
+    uint32_t channel_mask;
+    uint16_t hop_dwell_ms;
+} mtk_ieee154_capture_start_req_t;
+
+typedef struct {
+    uint32_t operation_token;
+} mtk_ieee154_capture_start_resp_t;
+
+typedef struct {
+    uint32_t operation_token;
+    uint8_t status;
+    uint32_t frames_received;
+    uint32_t frames_dropped;
+    uint32_t hop_count;
+} mtk_ieee154_capture_stopped_ev_t;
+
+typedef struct {
+    uint32_t operation_token;
+} mtk_ieee154_capture_stop_req_t;
+
+typedef struct {
+    uint8_t final_state;
+    uint8_t final_status;
+} mtk_ieee154_capture_stop_resp_t;
+
+typedef struct {
+    uint8_t state;
+    uint8_t mode;
+    uint8_t channel;
+    uint32_t frames_received;
+    uint32_t frames_dropped;
+    uint32_t hop_count;
+} mtk_ieee154_capture_status_resp_t;
+
+typedef struct {
+    uint8_t api_major;
+    uint8_t api_minor;
+    uint8_t variant_id;
+    uint16_t capability_count;
+    struct { uint16_t len; uint8_t data[24]; } variant_name;
+} mtk_get_api_identity_resp_t;

@@ -7420,6 +7420,255 @@
         "compat_c3": null
       },
       "notes": "host_link: 0=none, 1=UART Spinel. Diagnostic; capability negotiation remains authoritative."
+    },
+    {
+      "service": "0x0007",
+      "opcode": "0x000B",
+      "name": "IEEE154_CAPTURE_START",
+      "lifecycle": "ACCEPTED_ASYNC",
+      "request_fields": [
+        {
+          "name": "mode",
+          "type": "u8"
+        },
+        {
+          "name": "channel",
+          "type": "u8"
+        },
+        {
+          "name": "channel_mask",
+          "type": "u32"
+        },
+        {
+          "name": "hop_dwell_ms",
+          "type": "u16"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "operation_token",
+          "type": "u32"
+        }
+      ],
+      "events": [
+        {
+          "name": "IEEE154_CAPTURE_STOPPED",
+          "kind": "TERMINAL",
+          "fields": [
+            {
+              "name": "operation_token",
+              "type": "u32"
+            },
+            {
+              "name": "status",
+              "type": "u8"
+            },
+            {
+              "name": "frames_received",
+              "type": "u32"
+            },
+            {
+              "name": "frames_dropped",
+              "type": "u32"
+            },
+            {
+              "name": "hop_count",
+              "type": "u32"
+            }
+          ]
+        }
+      ],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "ACCEPTED",
+          "INVALID_ARGUMENT",
+          "BUSY"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 5000,
+        "cancellable": true,
+        "idempotent": false,
+        "persistent_effects": "none",
+        "stop_owner": "caller via IEEE154_CAPTURE_STOP",
+        "cleanup": "radio disabled, receive ring reset, IEEE154 lease released"
+      },
+      "resource_class": "IEEE154",
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_c3": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_c3": null
+      },
+      "notes": "mode 0 = fixed channel (uses `channel`), mode 1 = hopping over `channel_mask` with `hop_dwell_ms` per channel. Frames are drained through IEEE154_POLL_RECV, which already carries the PCAP metadata (SFD timestamp, channel, RSSI, LQI, original length, truncation). Core preserves complete MPDUs and decodes no application protocol."
+    },
+    {
+      "service": "0x0007",
+      "opcode": "0x000C",
+      "name": "IEEE154_CAPTURE_STOP",
+      "lifecycle": "SYNCHRONOUS",
+      "request_fields": [
+        {
+          "name": "operation_token",
+          "type": "u32"
+        }
+      ],
+      "response_fields": [
+        {
+          "name": "final_state",
+          "type": "u8"
+        },
+        {
+          "name": "final_status",
+          "type": "u8"
+        }
+      ],
+      "events": [],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "OK",
+          "NOT_FOUND"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 5000,
+        "cancellable": false,
+        "idempotent": true,
+        "persistent_effects": "none",
+        "stop_owner": "n/a",
+        "cleanup": "releases the IEEE154 lease"
+      },
+      "resource_class": null,
+      "no_radio_lease": true,
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_c3": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_c3": null
+      },
+      "notes": ""
+    },
+    {
+      "service": "0x0007",
+      "opcode": "0x000D",
+      "name": "IEEE154_CAPTURE_STATUS",
+      "lifecycle": "SYNCHRONOUS",
+      "request_fields": [],
+      "response_fields": [
+        {
+          "name": "state",
+          "type": "u8"
+        },
+        {
+          "name": "mode",
+          "type": "u8"
+        },
+        {
+          "name": "channel",
+          "type": "u8"
+        },
+        {
+          "name": "frames_received",
+          "type": "u32"
+        },
+        {
+          "name": "frames_dropped",
+          "type": "u32"
+        },
+        {
+          "name": "hop_count",
+          "type": "u32"
+        }
+      ],
+      "events": [],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "OK"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 5000,
+        "cancellable": false,
+        "idempotent": true,
+        "persistent_effects": "none",
+        "stop_owner": "n/a",
+        "cleanup": "n/a"
+      },
+      "resource_class": null,
+      "no_radio_lease": true,
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "UNAVAILABLE",
+        "compat_c3": "UNAVAILABLE"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_c3": null
+      },
+      "notes": ""
+    },
+    {
+      "service": "0x0000",
+      "opcode": "0x000A",
+      "name": "GET_API_IDENTITY",
+      "lifecycle": "SYNCHRONOUS",
+      "request_fields": [],
+      "response_fields": [
+        {
+          "name": "api_major",
+          "type": "u8"
+        },
+        {
+          "name": "api_minor",
+          "type": "u8"
+        },
+        {
+          "name": "variant_id",
+          "type": "u8"
+        },
+        {
+          "name": "capability_count",
+          "type": "u16"
+        },
+        {
+          "name": "variant_name",
+          "type": "bytes",
+          "max": 24,
+          "len_prefix": "u8"
+        }
+      ],
+      "events": [],
+      "lifecycle_meta": {
+        "status_outcomes": [
+          "OK"
+        ],
+        "deadline_default_ms": 1000,
+        "deadline_min_ms": 100,
+        "deadline_max_ms": 5000,
+        "cancellable": false,
+        "idempotent": true,
+        "persistent_effects": "none",
+        "stop_owner": "n/a",
+        "cleanup": "n/a"
+      },
+      "resource_class": null,
+      "no_radio_lease": true,
+      "capability_state": {
+        "native": "SUPPORTED",
+        "factory_uart": "SUPPORTED",
+        "compat_c3": "SUPPORTED"
+      },
+      "adapter_map": {
+        "factory_uart": null,
+        "compat_c3": null
+      },
+      "notes": "Stable Core host-contract identity, present in every image. api_minor increments for additive, backward-compatible capability growth; api_major increments only for a change that breaks an existing host contract. variant_id/variant_name are diagnostic only -- capability negotiation via GET_CAPABILITIES remains authoritative and a host must never gate features on the variant name."
     }
   ],
   "wifi_settings_schema": {
@@ -7564,5 +7813,10 @@
       }
     ]
   },
-  "arbiter_reserved_classes": []
+  "arbiter_reserved_classes": [],
+  "core_host_api": {
+    "api_major": 1,
+    "api_minor": 0,
+    "compatibility": "api_minor increments when capabilities are added without breaking an existing host contract: new opcodes, new capability IDs, or an opcode moving from UNAVAILABLE to SUPPORTED in some image. api_major increments only for a change that breaks an existing host contract: a removed or renumbered opcode, an incompatible request/response shape, or changed semantics for an existing opcode. Hosts must negotiate features through GET_CAPABILITIES and must never branch on variant_id or variant_name."
+  }
 }

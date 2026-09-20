@@ -47,11 +47,12 @@ arbiter class; they differ in which half of the opcode range is served, and
 capability reporting and dispatch are driven by the same build-time condition
 so they can never disagree.
 
-- **mtkcore-154 (raw):** serves `0x0001`–`0x0007` — start/stop/status,
-  retune, energy scan, raw TX, and metadata-carrying receive. The RCP opcodes
-  report `UNAVAILABLE`.
+- **mtkcore-154 (raw):** serves `0x0001`–`0x0007` (start/stop/status, retune,
+  energy scan, raw TX, metadata-carrying receive) and `0x000B`–`0x000D`
+  (Core-managed capture). The RCP opcodes report `UNAVAILABLE`.
 - **mtkcore-154-rcp:** serves `0x0008`–`0x000A` — RCP start/stop/status. The
-  raw radio opcodes report `UNAVAILABLE` because OpenThread owns the driver.
+  raw radio and capture opcodes report `UNAVAILABLE` because OpenThread owns
+  the driver.
 - **universal:** the service is never registered; every `0x0007` opcode
   reports `UNAVAILABLE`.
 
@@ -77,6 +78,40 @@ Zigbee managed component is added. Two reasons, in order of importance:
 
 A future Zigbee host therefore needs host-side work and hardware validation,
 not another Core redesign.
+
+## Capture
+
+`mtkcore-154` captures with Core managing the channel plan. `IEEE154_CAPTURE_START`
+takes either a fixed channel or a hopping mask over channels 11–26 with a
+per-channel dwell. Hopping is deterministic: the next selected channel in
+ascending order, wrapping at the top of the mask, advanced only once a full
+dwell has elapsed, at most one retune per service tick. A single-channel mask
+does not retune at all. Hopping is driven from the service tick rather than
+its own task, so it shares the session's lifetime and cannot outlive a
+teardown -- stop, peer reset, arbitration loss and start failure all end it
+and release the lease.
+
+Captured frames are drained through `IEEE154_POLL_RECV`, the same bounded ring
+the raw session uses, and carry complete MPDUs plus the metadata a PCAP export
+needs: SFD timestamp, channel, RSSI, LQI, original length, truncation flag.
+Ring overflow drops the oldest frame and counts it, reported by
+`IEEE154_CAPTURE_STATUS`. Core decodes no application protocol.
+
+## Versioned host contract
+
+`GET_API_IDENTITY` (`0x0000/0x000A`) is served by every image and reports
+`api_major`/`api_minor`, a `capability_count` computed from the live opcode
+table for that image, and a diagnostic `variant_id`/`variant_name`.
+
+The current contract is **API 1.0**. `api_minor` increments for additive,
+backward-compatible growth: new opcodes, new capability IDs, or an opcode
+moving from `UNAVAILABLE` to `SUPPORTED` in some image. `api_major` increments
+only for a change that breaks an existing host contract: a removed or
+renumbered opcode, an incompatible request/response shape, or changed
+semantics for an existing opcode.
+
+A host must negotiate features through `GET_CAPABILITIES` and must never
+branch on `variant_id` or `variant_name`, which carry no feature meaning.
 
 ## Capability negotiation
 

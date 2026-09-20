@@ -87,6 +87,11 @@ boundary and must never define or bloat the canonical core.
   802.15.4 does not fit in the universal image and ships in dedicated
   variants -- see `docs/BUILD_VARIANTS.md` for the measured memory constraint
   and the driver-callback-ownership constraint that make that necessary.
+  Core-managed capture with deterministic bounded channel hopping reuses the
+  same service, ring and teardown rather than adding a second radio path.
+  `GET_API_IDENTITY` freezes the host contract at a major/minor version;
+  capability negotiation through `GET_CAPABILITIES` stays authoritative and
+  hosts never branch on a variant name.
 
 ### Transport adapters (three, boot-exclusive, `SPI_PROTOCOL_V1.md`
 "Runtime transport selection")

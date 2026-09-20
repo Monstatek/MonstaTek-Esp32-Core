@@ -70,6 +70,12 @@ static struct {
     uint8_t promiscuous;
     uint8_t scanning;            /* an energy scan owns the lease instead of a receive session */
     uint8_t rcp;                 /* the RCP runtime owns the lease instead of either */
+    uint8_t capturing;           /* a Core-managed capture session (fixed or hopping) */
+    uint8_t hop_mode;            /* 0 = fixed channel, 1 = hopping */
+    uint32_t hop_mask;           /* channels selected for hopping */
+    uint16_t hop_dwell_ms;
+    uint64_t hop_last_ms;
+    uint32_t hop_count;
     uint32_t received, dropped;
     i154_rx_rec_t ring[I154_RING_SLOTS];
     unsigned ring_head, ring_count;
@@ -107,8 +113,45 @@ static void i154_rx_cb(void *user, uint64_t timestamp_us, uint8_t channel,
     i_unlock();
 }
 
+/* Deterministic hopping: the next selected channel in ascending order,
+ * wrapping at the top of the mask, advanced only once a full dwell has
+ * elapsed. Bounded by construction -- at most one retune per tick, and the
+ * mask is validated to the 11..26 page at admission, so the search always
+ * terminates. */
+static uint8_t hop_next_channel(uint32_t mask, uint8_t current) {
+    for (unsigned step = 1; step <= (MTK_154_CHANNEL_MAX - MTK_154_CHANNEL_MIN + 1); step++) {
+        unsigned span = (MTK_154_CHANNEL_MAX - MTK_154_CHANNEL_MIN + 1);
+        unsigned idx = ((unsigned)(current - MTK_154_CHANNEL_MIN) + step) % span;
+        uint8_t ch = (uint8_t)(MTK_154_CHANNEL_MIN + idx);
+        if (mask & (1u << ch)) return ch;
+    }
+    return current;   /* single-channel mask: stay put rather than churn the radio */
+}
+
 void mtek_ieee802154_service_tick(void) {
     if (s_hal && s_hal->service) s_hal->service();
+
+    /* Channel hopping is driven from this same periodic tick rather than its
+     * own task, so it shares the service's lifetime and cannot outlive a
+     * teardown. The HAL retune happens outside the lock: it is an external
+     * call, and this file never holds a lock across one. */
+    uint8_t retune_to = 0;
+    i_lock();
+    if (s_i154.active && s_i154.capturing && s_i154.hop_mode) {
+        uint64_t now = now_ms();
+        uint16_t dwell = s_i154.hop_dwell_ms ? s_i154.hop_dwell_ms : 1;
+        if (now >= s_i154.hop_last_ms && (now - s_i154.hop_last_ms) >= dwell) {
+            uint8_t next = hop_next_channel(s_i154.hop_mask, s_i154.channel);
+            if (next != s_i154.channel) {
+                s_i154.channel = next;
+                retune_to = next;
+            }
+            s_i154.hop_last_ms = now;
+            s_i154.hop_count++;
+        }
+    }
+    i_unlock();
+    if (retune_to && s_hal && s_hal->set_channel) s_hal->set_channel(retune_to);
 }
 
 static void i154_teardown(uint32_t token, uint32_t boot_epoch, uint8_t status) {
@@ -119,9 +162,13 @@ static void i154_teardown(uint32_t token, uint32_t boot_epoch, uint8_t status) {
     uint32_t received = s_i154.received, dropped = s_i154.dropped;
     uint8_t was_scan = s_i154.scanning;
     uint8_t was_rcp = s_i154.rcp;
+    uint8_t was_capture = s_i154.capturing;
+    uint32_t hop_count = s_i154.hop_count;
     s_i154.active = 0;
     s_i154.scanning = 0;
     s_i154.rcp = 0;
+    s_i154.capturing = 0;
+    s_i154.hop_mode = 0;
     s_i154.ring_head = 0; s_i154.ring_count = 0;
     i_unlock();
     /* Always called, including when start never succeeded. The RCP runtime
@@ -140,6 +187,18 @@ static void i154_teardown(uint32_t token, uint32_t boot_epoch, uint8_t status) {
             ev.operation_token = token;
             ev.status = status;
             sink.emit_event(sink.user, token, "IEEE154_RCP_STOPPED", &ev, &mtk_ieee154_rcp_stopped_ev_t_desc);
+            mtk_op_end_publish_guard();
+        }
+    } else if (was_capture) {
+        if (mtk_op_begin_publish_guard(session_generation)) {
+            mtk_ieee154_capture_stopped_ev_t ev = {0};
+            ev.operation_token = token;
+            ev.status = status;
+            ev.frames_received = received;
+            ev.frames_dropped = dropped;
+            ev.hop_count = hop_count;
+            sink.emit_event(sink.user, token, "IEEE154_CAPTURE_STOPPED", &ev,
+                            &mtk_ieee154_capture_stopped_ev_t_desc);
             mtk_op_end_publish_guard();
         }
     } else if (!was_scan && mtk_op_begin_publish_guard(session_generation)) {
@@ -246,6 +305,9 @@ static int session_active(void) {
     i_lock(); uint8_t ok = s_i154.active && !s_i154.rcp && !s_i154.scanning; i_unlock();
     return ok != 0;
 }
+
+/* POLL_RECV serves a raw receive session and a capture session alike: both
+ * fill the same bounded ring, so capture needs no second drain path. */
 
 static void handle_i154_set_channel(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t *op,
                                      const uint8_t *req_bytes, size_t req_len) {
@@ -421,6 +483,91 @@ static void handle_i154_rcp_status(mtk_request_ctx_t *ctx) {
     respond(ctx, MTK_STATUS_OK, &r, &mtk_ieee154_rcp_status_resp_t_desc);
 }
 
+
+static void handle_i154_capture_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t *op,
+                                       const uint8_t *req_bytes, size_t req_len) {
+    mtk_ieee154_capture_start_req_t req; memset(&req, 0, sizeof(req));
+    if (mtk_decode(op->req_desc, &req, req_bytes, req_len, NULL) != MTK_CODEC_OK) { respond_empty(ctx, MTK_STATUS_PROTOCOL_ERROR); return; }
+
+    /* Everything validated before a resource is taken. A hopping mask may
+     * only select real channels, and a dwell of zero would retune on every
+     * tick, which is neither deterministic nor useful. */
+    uint32_t legal = 0;
+    for (unsigned c = MTK_154_CHANNEL_MIN; c <= MTK_154_CHANNEL_MAX; c++) legal |= (1u << c);
+    uint8_t first_channel;
+    if (req.mode == 0) {
+        if (!channel_valid(req.channel)) { respond_empty(ctx, MTK_STATUS_INVALID_ARGUMENT); return; }
+        first_channel = req.channel;
+    } else if (req.mode == 1) {
+        if (req.channel_mask == 0 || (req.channel_mask & ~legal) != 0 || req.hop_dwell_ms == 0) {
+            respond_empty(ctx, MTK_STATUS_INVALID_ARGUMENT); return;
+        }
+        first_channel = 0;
+        for (unsigned c = MTK_154_CHANNEL_MIN; c <= MTK_154_CHANNEL_MAX; c++) {
+            if (req.channel_mask & (1u << c)) { first_channel = (uint8_t)c; break; }
+        }
+    } else {
+        respond_empty(ctx, MTK_STATUS_INVALID_ARGUMENT); return;
+    }
+
+    mtk_op_id_t id;
+    if (!i154_admit(ctx, op, &id)) return;
+
+    i_lock();
+    memset(&s_i154, 0, sizeof(s_i154));
+    s_i154.token = id.token; s_i154.boot_epoch = id.boot_epoch;
+    s_i154.session_generation = ctx->session_generation;
+    s_i154.sink = ctx->sink;
+    s_i154.channel = first_channel;
+    s_i154.promiscuous = 1;          /* a capture sees every frame on the channel */
+    s_i154.active = 1;
+    s_i154.capturing = 1;
+    s_i154.hop_mode = (req.mode == 1) ? 1 : 0;
+    s_i154.hop_mask = req.channel_mask;
+    s_i154.hop_dwell_ms = req.hop_dwell_ms;
+    s_i154.hop_last_ms = now_ms();
+    i_unlock();
+
+    mtk_ieee154_capture_start_resp_t r; r.operation_token = id.token;
+    respond(ctx, MTK_STATUS_ACCEPTED, &r, &mtk_ieee154_capture_start_resp_t_desc);
+    mtk_op_end_admission_guard();
+
+    int rc = (s_hal && s_hal->start) ? s_hal->start(first_channel, 1, i154_rx_cb, NULL) : -1;
+    if (rc != 0) i154_teardown(id.token, id.boot_epoch, MTK_STATUS_IO_ERROR);
+}
+
+static void handle_i154_capture_stop(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t *op,
+                                      const uint8_t *req_bytes, size_t req_len) {
+    mtk_ieee154_capture_stop_req_t req; memset(&req, 0, sizeof(req));
+    if (mtk_decode(op->req_desc, &req, req_bytes, req_len, NULL) != MTK_CODEC_OK) { respond_empty(ctx, MTK_STATUS_PROTOCOL_ERROR); return; }
+    mtk_operation_record_t precheck;
+    if (!mtk_op_snapshot_family(req.operation_token, ctx->boot_epoch, I154_SERVICE_ID, 0x000B, &precheck)) {
+        respond_empty(ctx, MTK_STATUS_NOT_FOUND); return;
+    }
+    i154_teardown(req.operation_token, ctx->boot_epoch, MTK_STATUS_OK);
+    mtk_operation_record_t snap;
+    if (!mtk_op_snapshot_family(req.operation_token, ctx->boot_epoch, I154_SERVICE_ID, 0x000B, &snap)) {
+        respond_empty(ctx, MTK_STATUS_NOT_FOUND); return;
+    }
+    mtk_ieee154_capture_stop_resp_t r;
+    r.final_state = (uint8_t)snap.state;
+    r.final_status = snap.final_status;
+    respond(ctx, MTK_STATUS_OK, &r, &mtk_ieee154_capture_stop_resp_t_desc);
+}
+
+static void handle_i154_capture_status(mtk_request_ctx_t *ctx) {
+    mtk_ieee154_capture_status_resp_t r; memset(&r, 0, sizeof(r));
+    i_lock();
+    r.state = (s_i154.active && s_i154.capturing) ? (uint8_t)MTK_OPS_RUNNING : (uint8_t)MTK_OPS_STOPPED;
+    r.mode = s_i154.hop_mode;
+    r.channel = s_i154.channel;
+    r.frames_received = s_i154.received;
+    r.frames_dropped = s_i154.dropped;
+    r.hop_count = s_i154.hop_count;
+    i_unlock();
+    respond(ctx, MTK_STATUS_OK, &r, &mtk_ieee154_capture_status_resp_t_desc);
+}
+
 mtk_op_id_t mtek_ieee802154_cancel_active_for_peer_reset(void) {
     mtk_op_id_t id = {0, 0};
     mtk_arbiter_snapshot_t snap = mtk_arbiter_snapshot();
@@ -439,9 +586,10 @@ mtk_op_id_t mtek_ieee802154_cancel_active_for_peer_reset(void) {
  * test_opcode_registry.c enforces this agreement. */
 static int opcode_served_in_this_mode(uint16_t opcode) {
 #if CONFIG_OPENTHREAD_ENABLED
-    return opcode >= 0x0008;   /* RCP mode: only the RCP opcodes */
+    return opcode >= 0x0008 && opcode <= 0x000A;   /* RCP mode: the RCP opcodes only */
 #else
-    return opcode <= 0x0007;   /* raw mode: only the raw radio opcodes */
+    /* Raw mode: the raw radio opcodes and Core-managed capture. */
+    return opcode <= 0x0007 || opcode >= 0x000B;
 #endif
 }
 
@@ -459,6 +607,9 @@ static void mtek_ieee802154_dispatch(mtk_request_ctx_t *ctx, const mtk_opcode_en
         case 0x0008: handle_i154_rcp_start(ctx, op, req_bytes, req_len); return;
         case 0x0009: handle_i154_rcp_stop(ctx, op, req_bytes, req_len); return;
         case 0x000A: handle_i154_rcp_status(ctx); return;
+        case 0x000B: handle_i154_capture_start(ctx, op, req_bytes, req_len); return;
+        case 0x000C: handle_i154_capture_stop(ctx, op, req_bytes, req_len); return;
+        case 0x000D: handle_i154_capture_status(ctx); return;
         default: respond_empty(ctx, MTK_STATUS_UNSUPPORTED); return;
     }
 }

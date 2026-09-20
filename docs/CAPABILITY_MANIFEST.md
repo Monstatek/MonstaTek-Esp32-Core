@@ -190,6 +190,7 @@ Core ships three images. See `docs/BUILD_VARIANTS.md` for the full rationale.
 | BLE / GATT | yes | compiled out | compiled out |
 | ESP-NOW | yes | yes | yes |
 | 802.15.4 raw radio (0x0007/0x0001-0x0007) | UNAVAILABLE | **SUPPORTED** | UNAVAILABLE |
+| 802.15.4 capture + hopping (0x0007/0x000B-0x000D) | UNAVAILABLE | **SUPPORTED** | UNAVAILABLE |
 | 802.15.4 OpenThread RCP (0x0007/0x0008-0x000A) | UNAVAILABLE | UNAVAILABLE | **SUPPORTED** |
 
 Two measured constraints produce this split, neither of which is negotiable:
@@ -205,6 +206,11 @@ Two measured constraints produce this split, neither of which is negotiable:
 Capability reporting and dispatch are driven by the same build-time condition,
 so `GET_CAPABILITIES` always matches what the image actually serves. Hosts
 negotiate on capabilities; variant names are diagnostic only.
+
+`GET_API_IDENTITY` (`0x0000/0x000A`) is served by all three images and
+reports the frozen host-contract version (currently **API 1.0**) plus a
+capability count computed from that image's own live opcode table. Variant
+identity is diagnostic only.
 
 Zigbee is intentionally absent on-device: a host-side stack consumes the raw
 802.15.4 service across the same radio boundary Thread uses via RCP.
