@@ -1,8 +1,6 @@
-/* Clean-room implementation from MonstaTek contract. See
- * mtek_async_queue.h for the design rationale (RC7 independent audit P0
- * "Native scheduling can starve or drop control and terminal traffic":
- * fixed priority slots -- RESPONSE > EVENT > STREAM -- replacing the
- * original plain FIFO). */
+/* Clean-room implementation from MonstaTek contract. See mtek_async_queue.h for
+ * the design rationale (fixed priority slots -- RESPONSE > EVENT > STREAM --
+ * replacing the original plain FIFO). */
 #include "mtek_async_queue.h"
 #include "mtek_async_sink.h"
 #include "mtek_codec_api.h"

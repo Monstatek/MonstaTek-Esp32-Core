@@ -38,11 +38,11 @@ MTK_TEST_MAIN_BEGIN
         { 0x0002, 0x0000, 0x0002, NULL, 0 },                 /* GET_STATUS (-> canonical GET_VERSION) */
         { 0x0003, 0x0000, 0x0002, NULL, 0 },                 /* GET_FW_VERSION (-> canonical GET_VERSION) */
         { 0x0005, 0x0000, 0x0006, NULL, 0 },                 /* RESET_INTENT */
-        /* RC12 hardening round, item 5 (P1): TIME_SYNC_START (canonical
-         * 0x0000/0x0008) removed from this SUPPORTED-opcode coverage table
-         * -- its compat_c3 capability is now UNSUPPORTED (no SNTP client),
-         * so it is no longer one of the "opcodes schemas.json marks
-         * capability_state.compat_c3=SUPPORTED" this table enumerates. */
+        /* TIME_SYNC_START (canonical 0x0000/0x0008) removed from
+         * this SUPPORTED-opcode coverage table -- its compat_c3 capability is
+         * now UNSUPPORTED (no SNTP client), so it is no longer one of the
+         * "opcodes schemas.json marks capability_state.compat_c3=SUPPORTED" this
+         * table enumerates. */
         { 0x0103, 0x0001, 0x0003, NULL, 0 },                 /* AP_SCAN_START, chains into AP_SCAN_RESULTS_PAGE (0x0003) for real -- see handle_ap_scan_start */
         { 0x030E, 0x0001, 0x0006, z32, 8 },                  /* STA_SCAN_START */
         { 0x0104, 0x0001, 0x000A, z32, 2 },                  /* STA_CONNECT */
@@ -194,11 +194,9 @@ MTK_TEST_MAIN_BEGIN
         mtek_wifi_set_hal(&g_fake_wifi_hal);
         uint8_t frame[200]; memset(frame, 0, sizeof(frame));
         frame[0] = 0x88; frame[1] = 0x02; /* QoS Data, type=2 subtype=8 */
-        /* RC7 independent audit item 11 "EAPOL frames are not filtered to
-         * the requested AP/station": addr1/addr2/addr3 must name the
-         * target BSSID {1,2,3,4,5,6} this test's own hs_payload (below)
-         * requests, or mtek_wifi_logic.c's new frame_matches_target_bssid
-         * filter would reject this synthetic frame. */
+        /* Addr1/addr2/addr3 must name the target BSSID {1,2,3,4,5,6} this test's
+         * own hs_payload (below) requests, or mtek_wifi_logic.c's new
+         * frame_matches_target_bssid filter would reject this synthetic frame. */
         {
             static const uint8_t bssid[6] = {1,2,3,4,5,6};
             memcpy(frame + 4, bssid, 6); memcpy(frame + 10, bssid, 6); memcpy(frame + 16, bssid, 6);

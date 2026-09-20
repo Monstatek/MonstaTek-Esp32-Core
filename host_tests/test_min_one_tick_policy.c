@@ -1,22 +1,20 @@
-/* RC12 scheduler-fix round (confirmed real M1 hardware root cause):
- * wifi_promisc_tick_task's own vTaskDelay(pdMS_TO_TICKS(5)) computed to
- * vTaskDelay(0) at this build's CONFIG_FREERTOS_HZ=100 (pdMS_TO_TICKS
- * truncates: (5*100)/1000 == 0), which never actually blocks -- FreeRTOS
- * vTaskDelay(0) only yields to equal-priority ready tasks -- so a
- * priority-6 task calling it every iteration stayed continuously ready on
- * the single-core ESP32-C6 forever, starving the idle task the FreeRTOS
- * task watchdog itself depends on running (reproduced on real hardware as
- * a repeating ~5s CPU0 task-watchdog dump). MTK_CLAMP_MIN_ONE_TICK
- * (mtek_hal_common.h) is the fix's own policy macro; this is a pure host
- * test of THAT policy in isolation (integer arithmetic only, no FreeRTOS
- * dependency, matching this suite's own "host tests need no target
+/* wifi_promisc_tick_task's own vTaskDelay(pdMS_TO_TICKS(5)) computed to
+ * vTaskDelay(0) at this build's CONFIG_FREERTOS_HZ=100 (pdMS_TO_TICKS truncates:
+ * (5*100)/1000 == 0), which never actually blocks -- FreeRTOS vTaskDelay(0) only
+ * yields to equal-priority ready tasks -- so a priority-6 task calling it every
+ * iteration stayed continuously ready on the single-core ESP32-C6 forever,
+ * starving the idle task the FreeRTOS task watchdog itself depends on running
+ * (reproduced on real hardware as a repeating ~5s CPU0 task-watchdog dump).
+ * MTK_CLAMP_MIN_ONE_TICK (mtek_hal_common.h) is the fix's own policy macro; this
+ * is a pure host test of THAT policy in isolation (integer arithmetic only, no
+ * FreeRTOS dependency, matching this suite's own "host tests need no target
  * toolchain" design) -- it does not, and cannot, fabricate coverage of
- * app_main.c's own task scheduling, which is not something a host test
- * can meaningfully exercise. What it proves instead: for every
- * (requested_ms, tick_rate_hz) pair a real target build could plausibly
- * use, the SAME truncating formula FreeRTOS's own pdMS_TO_TICKS uses,
- * clamped through this macro, is never 0, and never silently changes an
- * already-safe (>=1 tick) value. */
+ * app_main.c's own task scheduling, which is not something a host test can
+ * meaningfully exercise. What it proves instead: for every (requested_ms,
+ * tick_rate_hz) pair a real target build could plausibly use, the SAME
+ * truncating formula FreeRTOS's own pdMS_TO_TICKS uses, clamped through this
+ * macro, is never 0, and never silently changes an already-safe (>=1 tick)
+ * value. */
 #include "mtk_test.h"
 #include "mtek_hal_common.h"
 

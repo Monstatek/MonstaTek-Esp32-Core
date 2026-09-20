@@ -1,7 +1,7 @@
 menu "MonstaTek M1 Firmware"
 
     menu "Transport adapters"
-        comment "RC7 independent audit P0 'The release artifact starts the wrong transport for shipped M1 compatibility': every adapter enabled below now starts its own physical loop unconditionally at boot (no build-time primary-transport pick, which the audit found contradicts SPI_PROTOCOL_V1.md's own 'Runtime transport selection' requirement). Real cross-transport AUTO selection (mtk_transport_claim_try, mtek_transport_select.h) decides at runtime which ONE adapter actually reaches the canonical router for a given boot session, the first time it sees genuine protocol traffic on its own bus -- every other compiled adapter's physical loop keeps running (never wedging its own peer) but only ever answers neutral/IDLE from that point on. Disable an adapter here only for a product-specific build whose target hardware is never wired to that bus at all."
+        comment "Every adapter enabled below starts its own physical loop unconditionally at boot. There is deliberately no build-time primary-transport pick, which would contradict SPI_PROTOCOL_V1.md's 'Runtime transport selection' requirement. Cross-transport AUTO selection (mtk_transport_claim_try, mtek_transport_select.h) decides at runtime which ONE adapter actually reaches the canonical router for a given boot session, the first time it sees genuine protocol traffic on its own bus -- every other compiled adapter's physical loop keeps running (never wedging its own peer) but only ever answers neutral/IDLE from that point on. Disable an adapter here only for a product-specific build whose target hardware is never wired to that bus at all."
 
         config MTEK_ADAPTER_FACTORY_UART
             bool "Factory M1 UART compatibility adapter"
@@ -44,7 +44,7 @@ menu "MonstaTek M1 Firmware"
     endmenu
 
     menu "Optional capability modules (compatibility/community-convenience, not canonical core)"
-        comment "These are optional, compile-time-selectable modules -- reference-implementation quirks that must not define or bloat the canonical core. Disabling one here means the canonical service layer answers UNSUPPORTED for its opcodes regardless of any adapter's own capability-state table, per docs/ARCHITECTURE.md's module-boundary policy. None of these opcodes' canonical service (radio-behavior) logic is implemented yet this session (docs/PROVENANCE.md) -- these flags establish the compile-time boundary now, ready for whichever module is implemented first, independently of the others."
+        comment "These are optional, compile-time-selectable modules -- reference-implementation quirks that must not define or bloat the canonical core. Disabling one here means the canonical service layer answers UNSUPPORTED for its opcodes regardless of any adapter's own capability-state table, per docs/ARCHITECTURE.md's module-boundary policy. None of these opcodes' canonical service (radio-behavior) logic is implemented (docs/PROVENANCE.md) -- these flags establish the compile-time boundary, ready for whichever module is implemented first, independently of the others."
 
         config MTEK_MODULE_KARMA
             bool "Karma auto-responder (KARMA_START/STOP)"

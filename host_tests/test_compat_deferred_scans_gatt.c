@@ -61,17 +61,17 @@
 static uint64_t s_now = 1000;
 static uint64_t now_ms(void) { return s_now; }
 
-/* ---- stack/core/router/service/HAL lock (single non-recursive mutex,
- * exactly as every other threaded host test wires it -- never nested). --- */
+/* stack/core/router/service/HAL lock (single non-recursive mutex, exactly as
+ * every other threaded host test wires it -- never nested). --- */
 static pthread_mutex_t s_mutex = PTHREAD_MUTEX_INITIALIZER;
 static void v_lock(void) { pthread_mutex_lock(&s_mutex); }
 static void v_unlock(void) { pthread_mutex_unlock(&s_mutex); }
 static void q_lock(void *c) { (void)c; pthread_mutex_lock(&s_mutex); }
 static void q_unlock(void *c) { (void)c; pthread_mutex_unlock(&s_mutex); }
 
-/* ---- forced-synchronization gates (a SEPARATE mutex from the stack lock,
- * so a worker parked in the HAL gate never holds the stack lock the main
- * thread's poll needs). ------------------------------------------------- */
+/* forced-synchronization gates (a SEPARATE mutex from the stack lock, so a
+ * worker parked in the HAL gate never holds the stack lock the main thread's
+ * poll needs). ------------------------- */
 static pthread_mutex_t gmx = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  gcv = PTHREAD_COND_INITIALIZER;
 static int g_start_gate;   /* 0 = worker parked before running the handler */
@@ -107,9 +107,9 @@ static void hal_gate_park(void) {
     pthread_mutex_unlock(&gmx);
 }
 
-/* ---- gated HALs: copies of the fake HALs with only the blocking scan/
- * connect entry points wrapped, delegating to the originals after the
- * gate. ------------------------------------------------------------------ */
+/* gated HALs: copies of the fake HALs with only the blocking scan/ connect entry
+ * points wrapped, delegating to the originals after the gate.
+ * ---------------------------------- */
 static mtk_wifi_hal_t g_gated_wifi;
 static mtk_ble_hal_t  g_gated_ble;
 
@@ -126,7 +126,7 @@ static int gated_gatt_connect(mtk_hal_mac6_t addr, uint8_t addr_type, uint32_t t
     return g_fake_ble_hal.gatt_connect(addr, addr_type, to, vh);
 }
 
-/* ---- runner variants (swapped per phase via mtk_router_set_async_runner) - */
+/* runner variants (swapped per phase via mtk_router_set_async_runner) - */
 static void (*g_pending_fn)(void *);
 static void *g_pending_arg;
 static int g_have_pending;
@@ -293,7 +293,7 @@ MTK_TEST_MAIN_BEGIN
         g_gate_active = 1;
         mtk_router_set_async_runner(threaded_runner);
 
-        /* -- CASE 1: neither response nor event present when dispatch returns. */
+        /* CASE 1: neither response nor event present when dispatch returns. */
         make_req(&req, FEAT[fi].msg, FEAT[fi].plen);
         mtek_compat_dispatch_request(&dctx, &req, FEAT[fi].pl, &rh, rp, &rl);
         MTK_CHECK_EQ(rh.msg_type, MTK_COMPAT_MSG_IDLE);
@@ -301,7 +301,7 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(dctx.pending_have_response, 0);
         MTK_CHECK_EQ(dctx.pending_have_event, 0);
 
-        /* -- CASE 2: worker emits ACCEPTED, parks in the HAL; event pending. */
+        /* CASE 2: worker emits ACCEPTED, parks in the HAL; event pending. */
         gate_open_start();
         gate_wait_in_hal();
         mtek_compat_dispatch_poll_outbound(&dctx, &rh, rp, &rl);
@@ -310,7 +310,7 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(dctx.pending_have_event, 0);              /* terminal event genuinely not yet seen */
         MTK_CHECK_EQ(dctx.pending_start_msg_id, FEAT[fi].msg); /* continuation still owed */
 
-        /* -- release the HAL: worker emits the terminal event and finishes. */
+        /* release the HAL: worker emits the terminal event and finishes. */
         gate_open_hal();
         gate_wait_done();
         mtek_compat_dispatch_poll_outbound(&dctx, &rh, rp, &rl);
@@ -318,7 +318,7 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(rh.msg_id, FEAT[fi].msg);
         MTK_CHECK_EQ(dctx.pending_start_msg_id, 0);            /* continuation cleared */
 
-        /* -- externally visible result + no indefinite IDLE / no duplicate. */
+        /* externally visible result + no indefinite IDLE / no duplicate. */
         if (fi == 0) {
             VERIFY_AP_LIST(rh, rp);
             MTK_CHECK(dctx.ap_scan_has_generation);
@@ -416,16 +416,16 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(dctx.pending_start_msg_id, 0);
     }
 
-    /* ===================================================================
-     * PHASE 6 (RC12 RC12 closure item 1): the EXACT original dispatch
-     * boundary. blocking_runner returns only after the worker has emitted
-     * ACCEPTED and parked in the gated HAL, so dispatch_async_with_event's
-     * OWN INITIAL DRAIN sees {response present, terminal event withheld} --
-     * it must preserve the response half, arm the continuation, and return
-     * IDLE; a later poll then receives the terminal event and produces the
-     * confirmed final Community response. This is the response-only initial-
-     * drain path the earlier phases (worker gated shut until after dispatch)
-     * did not exercise. Forced entirely by condvar handshakes.
+    /* =================================================================== PHASE
+     * 6 (RC12 the EXACT original dispatch boundary. blocking_runner returns only
+     * after the worker has emitted ACCEPTED and parked in the gated HAL, so
+     * dispatch_async_with_event's OWN INITIAL DRAIN sees {response present,
+     * terminal event withheld} -- it must preserve the response half, arm the
+     * continuation, and return IDLE; a later poll then receives the terminal
+     * event and produces the confirmed final Community response. This is the
+     * response-only initial- drain path the earlier phases (worker gated shut
+     * until after dispatch) did not exercise. Forced entirely by condvar
+     * handshakes.
      * =================================================================== */
     for (unsigned fi = 0; fi < 3; fi++) {
         gate_reset();
@@ -475,25 +475,25 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(dctx.pending_start_msg_id, 0);
     }
 
-    /* ===================================================================
-     * PHASE 7 (RC12 RC12 closure item 1, event-only preservation).
+    /* =================================================================== PHASE
+     * 7.
      *
      * Production ordering makes event-before-response IMPOSSIBLE: every
      * ACCEPTED_ASYNC handler calls respond(ACCEPTED) BEFORE the blocking HAL
      * call that precedes any terminal-event emit (e.g. mtek_wifi_logic.c
-     * handle_ap_scan_start respond() then ap_scan() then AP_SCAN_COMPLETE;
-     * mtek_ble_logic.c handle_gatt_connect respond() at :706 then
-     * gatt_connect() then GATT_CONNECT_COMPLETE at :794), and the async
-     * queue is priority-ordered so a drain seeing both returns the RESPONSE
-     * first; dispatch_async_with_event also resets the queue before the
-     * drain, so nothing can be pre-seeded into its own initial drain.
-     * The state machine nonetheless handles an event arriving while the
-     * response is still awaited. This proves that defensive branch of
-     * poll_outbound via the legitimate public queue seam (mtk_async_queue_
-     * push -- the same call the router's sink uses): the continuation is
-     * armed with neither half, ONLY the terminal event is delivered, and it
-     * must be carried into pending state (generation retained) while the
-     * response is still awaited (IDLE); the later response then completes.
+     * handle_ap_scan_start respond then ap_scan then AP_SCAN_COMPLETE;
+     * mtek_ble_logic.c handle_gatt_connect respond at :706 then gatt_connect
+     * then GATT_CONNECT_COMPLETE at :794), and the async queue is
+     * priority-ordered so a drain seeing both returns the RESPONSE first;
+     * dispatch_async_with_event also resets the queue before the drain, so
+     * nothing can be pre-seeded into its own initial drain. The state machine
+     * nonetheless handles an event arriving while the response is still awaited.
+     * This proves that defensive branch of poll_outbound via the legitimate
+     * public queue seam (mtk_async_queue_ push -- the same call the router's
+     * sink uses): the continuation is armed with neither half, ONLY the terminal
+     * event is delivered, and it must be carried into pending state (generation
+     * retained) while the response is still awaited (IDLE); the later response
+     * then completes.
      * =================================================================== */
     {
         g_gate_active = 0;
@@ -527,17 +527,17 @@ MTK_TEST_MAIN_BEGIN
         run_pending(); /* release the held async slot (real handler self-completes; stale frames wiped by the next reset) */
     }
 
-    /* ===================================================================
-     * PHASE 8 (RC12 RC12 closure item 2): honest GATT terminal-failure.
-     * A failed connect (HAL rc != 0 -> terminal GATT_CONNECT_COMPLETE status
-     * TIMEOUT -- mtek_ble_logic.c handle_gatt_connect's only failure status)
-     * must NAK, store NO token, and leave a later GATT_DISCONNECT unable to
-     * reach the HAL. Proven equivalent on the deferred and synchronous
-     * paths, plus one acceptance-level failure (NO_MEMORY).
+    /* =================================================================== PHASE
+     * 8 (RC12 honest GATT terminal-failure. A failed connect (HAL rc != 0 ->
+     * terminal GATT_CONNECT_COMPLETE status TIMEOUT -- mtek_ble_logic.c
+     * handle_gatt_connect's only failure status) must NAK, store NO token, and
+     * leave a later GATT_DISCONNECT unable to reach the HAL. Proven equivalent
+     * on the deferred and synchronous paths, plus one acceptance-level failure
+     * (NO_MEMORY).
      * =================================================================== */
     v_lock(); g_fake_ble.gatt_connect_rc = -1; v_unlock(); /* connect fails -> terminal TIMEOUT */
 
-    /* -- 8a: DEFERRED terminal TIMEOUT (case1 -> case2 -> terminal failure). */
+    /* 8a: DEFERRED terminal TIMEOUT (case1 -> case2 -> terminal failure). */
     {
         gate_reset(); g_gate_active = 1;
         mtk_router_set_async_runner(threaded_runner);
@@ -569,7 +569,7 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(g_fake_ble.gatt_disconnect_call_count, disc_before); /* HAL NOT reached (no connection) */
     }
 
-    /* -- 8b: SYNCHRONOUS terminal TIMEOUT -- equivalent outcome/same HAL. */
+    /* 8b: SYNCHRONOUS terminal TIMEOUT -- equivalent outcome/same HAL. */
     {
         g_gate_active = 0;
         mtk_router_set_async_runner(inline_runner);
@@ -587,7 +587,7 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(g_fake_ble.gatt_disconnect_call_count, disc_before);
     }
 
-    /* -- 8c: one other available failure result -- acceptance-level rejection
+    /* 8c: one other available failure result -- acceptance-level rejection
      * (NO_MEMORY): the terminal event only ever carries OK or TIMEOUT, so the
      * remaining GATT failures are acceptance-level and map to their own NAK. */
     {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Packages a release candidate per RELEASE_DELIVERABLE_CONTRACT.md: merges
+"""Packages a release candidate: merges
 the bootloader/partition-table/application images produced by an ESP-IDF
 build into one flat binary at offset 0x000000, verifies the merged image's
 own application segment against the audited pre-merge application binary
@@ -135,7 +135,7 @@ def validate_merged_image(data, audited_app_bytes, app_offset,
     binding check when a caller has no build-input bytes to compare
     against (e.g. a synthetic negative test); when given, the bootloader
     and partition-table REGIONS embedded in `data` are compared byte-for-
-    byte against them -- RC11 verification correction (independent audit) "byte-compare the bootloader and partition-table regions
+    byte against them -- "byte-compare the bootloader and partition-table regions
     embedded in MtkCore.bin against the exact build inputs, just as the
     application is already bound". Magic-byte checks alone only prove
     "this looks like the right KIND of image at this offset", never "this
@@ -208,7 +208,7 @@ def validate_esp_image(image_path, chip):
     a bigger merged blob; esptool needs the whole image file itself) and
     parses ITS OWN reported checksum/validation-hash verdict.
 
-    RC11 release-finalization correction (independent audit):
+
     "Strengthen package validation so it hard-fails unless esptool
     validates both the extracted bootloader image and application image,
     including chip type, image checksum, and validation hash. Magic bytes
@@ -298,7 +298,7 @@ def validate_map_against_bin(map_obj, merged_bytes, app_offset, chip=None,
     independently-generated artifact an attacker or mistake would also
     have to tamper with to go undetected.
 
-    RC11 release-finalization correction (independent audit):
+
     "Strengthen merged-image-map validation. Require and verify: chip and
     offsets; merged binary size/MD5/SHA-256; application size/MD5/SHA-256;
     nested audited_application_input size/MD5/SHA-256; expected segment
@@ -330,7 +330,7 @@ def validate_map_against_bin(map_obj, merged_bytes, app_offset, chip=None,
     if errors:
         return errors
 
-    # Release-tooling correction (this round): "audited_application_input.file
+    # Release-tooling correction (): "audited_application_input.file
     # must equal 'mtkcore.bin'" -- a FIXED, non-negotiable expected value.
     # Previously the application segment's expected filename (below, in
     # expected_file_map) was derived FROM this same mutable field, so a
@@ -343,7 +343,7 @@ def validate_map_against_bin(map_obj, merged_bytes, app_offset, chip=None,
         errors.append(f"merged_image_map.json audited_application_input.file '{audited['file']}' does not "
                        f"equal the required 'mtkcore.bin'")
 
-    # RC11 verification correction (independent audit): "require
+    # "require
     # merged_binary == MtkCore.bin" -- the approved release filename
     # (requirement #10 of the prior release-artifact-binding round),
     # cross-checked here so a map that describes some OTHER filename
@@ -394,7 +394,7 @@ def validate_map_against_bin(map_obj, merged_bytes, app_offset, chip=None,
             errors.append("merged_image_map.json audited_application_input.sha256_uppercase_hex does not "
                            "match the actual audited application binary")
 
-    # RC11 verification correction (independent audit): "require the
+    # "require the
     # exact mapping 0x000000 -> bootloader/bootloader.bin, 0x008000 ->
     # partition_table/partition-table.bin, 0x010000 -> mtkcore.bin; reject
     # wrong relative filenames, swapped filenames, duplicate offsets, or
@@ -412,7 +412,7 @@ def validate_map_against_bin(map_obj, merged_bytes, app_offset, chip=None,
         if len(set(seg_offset_list)) != len(seg_offset_list):
             errors.append(f"merged_image_map.json has duplicate segment offsets: {seg_offset_list}")
         else:
-            # Release-tooling correction (this round): the expected
+            # Release-tooling correction (): the expected
             # application-segment filename here is now a FIXED literal
             # ("mtkcore.bin"), never derived from audited["file"] -- that
             # field is itself validated against the same fixed literal
@@ -624,7 +624,7 @@ def write_release_notes(out_dir, image_map, identity, hardware_tested):
     lines.append(f"- Build candidate ID: `{identity.get('build_candidate_id') or '(unknown)'}`")
     lines.append(f"- Build epoch (Unix seconds UTC, SOURCE_DATE_EPOCH-style, fixed per candidate): "
                   f"`{identity.get('build_epoch_s') or '(unknown)'}`")
-    # RC11 release-finalization correction (independent audit): "Change
+    # "Change
     # no-VCS build provenance from dirty=0 to an explicit state... Do not
     # imply a clean git tree." The firmware's own wire GET_VERSION response
     # still carries a fixed uint8_t build_dirty field (0) -- that wire
@@ -852,7 +852,7 @@ def _package_into(root, build_dir, out_dir, identity, hardware_tested):
     print(f"Audited application input: {os.path.relpath(audited_app_path, root)} "
           f"({len(audited_app_bytes)} bytes, SHA-256 {audited_app_sha256})")
 
-    # RC11 verification correction (independent audit): "byte-
+    # "byte-
     # compare the bootloader and partition-table regions embedded in
     # MtkCore.bin against the exact build inputs, just as the application
     # is already bound" -- the same audited-input treatment app_offset's
@@ -893,7 +893,7 @@ def _package_into(root, build_dir, out_dir, identity, hardware_tested):
                                     audited_bootloader_bytes=audited_bootloader_bytes,
                                     audited_partition_table_bytes=audited_partition_table_bytes)
 
-    # RC11 release-finalization correction (independent audit):
+    #
     # "Magic bytes alone are insufficient" -- runs esptool's OWN image
     # parser (not this script's own hand-rolled magic-byte check) against
     # the real, standalone bootloader and application image FILES (not a

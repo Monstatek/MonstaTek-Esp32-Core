@@ -1,8 +1,7 @@
-/* Mtek Compatibility/C3 `m1_link` framing (001-profile-bootstrap-feasibility.md Sec 1):
- * header round trip, CRC16-CCITT known-answer, malformed rejection,
- * fragmentation/reassembly, and end-to-end dispatch of a real opcode
- * (DEAUTH_START) proving actual HAL reachability, not just a precondition
- * error. */
+/* Mtek Compatibility/C3 `m1_link` framing: header round trip, CRC16-CCITT
+ * known-answer, malformed rejection, fragmentation/reassembly, and end-to-end
+ * dispatch of a real opcode (DEAUTH_START) proving actual HAL reachability, not
+ * just a precondition error. */
 #include "mtk_test.h"
 #include "mtek_compat_frame.h"
 #include "mtek_compat_dispatch.h"
@@ -84,7 +83,8 @@ MTK_TEST_MAIN_BEGIN
     uint8_t onemore = 0;
     MTK_CHECK_EQ(mtk_compat_reassembly_feed(&ctx, &small, &onemore), MTK_COMPAT_REASM_OVERFLOW);
 
-    /* ---- End-to-end dispatch: DEAUTH_START via real Mtek Compatibility wire bytes ---- */
+    /* End-to-end dispatch: DEAUTH_START via real Mtek Compatibility wire bytes
+     * -- */
     mtk_core_init(0x1234);
     mtk_arbiter_init();
     mtk_router_init();

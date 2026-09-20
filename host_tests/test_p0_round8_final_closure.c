@@ -1,99 +1,86 @@
-/* Release-tooling-round P0 correction, ROUND 8 (follow-up read-only audit,
- * "final concurrency and resource-failure closure"): four further gaps
- * found past round 7's own session-publication closure:
+/* ROUND 8 (follow-up read-only audit, "final concurrency and resource-failure
+ * closure"): four further gaps found past round 7's own session-publication
+ * closure:
  *
- *  1. TIME_SYNC_START (mtek_system_logic.c) is ACCEPTED_ASYNC but its own
- *     natural-completion tail transitioned the token and emitted TIME_
- *     SYNC_RESULT completely unconditionally -- no check that the
- *     transition actually WON, no mtk_op_begin_publish_guard at all. Fixed
- *     to mirror deauth's own established pattern exactly (`won` gates the
- *     publish; the guard closes the remaining reset-race window).
- *  2. Every GATT handler that reads s_gatt.vendor_handle for a HAL call
- *     did so in its own separate, unlocked statement, well after gatt_
- *     check_conn's own (already-released) lock had confirmed connection_
- *     token matched -- a real TOCTOU: a disconnect-then-reconnect landing
- *     in that window (the BLE stack is free to reuse a small vendor_
- *     handle integer for a brand-new, unrelated connection) could hand a
- *     HAL call the WRONG physical connection's own vendor_handle even
- *     though connection_token still nominally matched at the instant of
- *     the earlier check. Fixed with gatt_snapshot_identity/gatt_
- *     revalidate_identity (mtek_ble_logic.c): connection_token AND
- *     vendor_handle are snapshotted together, under lock, before any HAL
- *     call, and the FULL identity (never vendor_handle alone) is re-
- *     validated, under lock, immediately after -- gating both the
- *     eventual response and any shared-state merge (GATT_DISCOVER's own
- *     svc_ranges[], GATT_SUBSCRIBE's own atomic slot-claim). mtek_ble_
- *     gatt_tick's own remote-disconnect/notify-poll paths gained the same
- *     fix (connection_token added to what was previously a vendor_handle-
- *     only re-validation).
- *  3. A callback esp32_promisc_service (mtek_wifi_hal_esp32.c) already
- *     copied (cb, user) together, under its own mutex, an instant BEFORE
- *     a concurrent STOP -- and, on a real target, a brand-new HANDSHAKE_
- *     START/CAPTURE_START could reinitialize s_hs/s_cap for a wholly
- *     different operation before this already-copied, now-stale call
- *     actually executed. hs_frame_cb/frame_cb previously read s_hs/
- *     s_cap.token through a live pointer (`user == &s_hs` for handshake;
- *     always NULL, reading the GLOBAL s_cap directly, for capture) --
- *     carrying no identity of their own at all, so a stale, delayed call
- *     like this would validate against the NEW session's own identity
- *     instead of refusing it, potentially corrupting or even completing
- *     it using frame bytes that actually came from the OLD session's own
- *     radio capture. Fixed: `user` is now each registration's own
- *     IMMUTABLE token (captured once, at promisc_start time, frozen
- *     inside this exact callback's own parameter), compared against s_hs/
- *     s_cap's CURRENT token before touching anything else -- a mismatch
- *     means s_hs/s_cap has moved on, regardless of how self-consistent
- *     whatever it currently holds looks. Every s_cap token/epoch/session
- *     read is also now genuinely under cap_lock (two were not:
- *     mtek_capture_channel_hop_tick's own initial snapshot, handle_
- *     capture_poll_read's own token/mode check).
- *  4. Round 7's own fix made every *_lock_v / *_unlock_v wrapper (main/
- *     app_main.c) null-safe so a failed xSemaphoreCreateMutex could never
- *     reach xSemaphoreTake/Give on a NULL handle -- but mischaracterized
- *     "degrades to a no-op critical section" as itself a SAFE degraded
- *     mode. It is not: every task touching the affected shared state
- *     would still run fully concurrently and UNLOCKED against it on a
- *     real target -- a genuine data-race hazard, not a safe one. Fixed:
- *     app_main.c now creates all four mandatory mutexes FIRST, checks all
- *     four TOGETHER, and calls mtek_enter_safe_failure_state (parks this
- *     task forever, logging clearly) if ANY failed -- BEFORE any lock is
- *     registered or any adapter/service task exists. ble_tick_task/
- *     uart_repl_task/the SPI runtime's own internal task creation are now
- *     also checked (previously silently discarded for two of the three).
- *     mtek_ble_hal_esp32.c's own s_notify_mutex and every one of its ten
- *     xSemaphoreCreateBinary() rendezvous points are now null-checked
- *     too, each failing its own one operation honestly instead of ever
- *     reaching a NULL FreeRTOS handle.
+ * 1. TIME_SYNC_START (mtek_system_logic.c) is ACCEPTED_ASYNC but its own
+ * natural-completion tail transitioned the token and emitted TIME_ SYNC_RESULT
+ * completely unconditionally -- no check that the transition actually WON, no
+ * mtk_op_begin_publish_guard at all. Fixed to mirror deauth's own established
+ * pattern exactly (`won` gates the publish; the guard closes the remaining
+ * reset-race window). 2. Every GATT handler that reads s_gatt.vendor_handle for
+ * a HAL call did so in its own separate, unlocked statement, well after gatt_
+ * check_conn's own (already-released) lock had confirmed connection_ token
+ * matched -- a real TOCTOU: a disconnect-then-reconnect landing in that window
+ * (the BLE stack is free to reuse a small vendor_ handle integer for a
+ * brand-new, unrelated connection) could hand a HAL call the WRONG physical
+ * connection's own vendor_handle even though connection_token still nominally
+ * matched at the instant of the earlier check. Fixed with
+ * gatt_snapshot_identity/gatt_ revalidate_identity (mtek_ble_logic.c):
+ * connection_token AND vendor_handle are snapshotted together, under lock,
+ * before any HAL call, and the FULL identity (never vendor_handle alone) is re-
+ * validated, under lock, immediately after -- gating both the eventual response
+ * and any shared-state merge (GATT_DISCOVER's own svc_ranges[], GATT_SUBSCRIBE's
+ * own atomic slot-claim). mtek_ble_ gatt_tick's own
+ * remote-disconnect/notify-poll paths gained the same fix (connection_token
+ * added to what was previously a vendor_handle- only re-validation). 3. A
+ * callback esp32_promisc_service (mtek_wifi_hal_esp32.c) already copied (cb,
+ * user) together, under its own mutex, an instant BEFORE a concurrent STOP --
+ * and, on a real target, a brand-new HANDSHAKE_ START/CAPTURE_START could
+ * reinitialize s_hs/s_cap for a wholly different operation before this
+ * already-copied, now-stale call actually executed. hs_frame_cb/frame_cb
+ * previously read s_hs/ s_cap.token through a live pointer (`user == &s_hs` for
+ * handshake; always NULL, reading the GLOBAL s_cap directly, for capture) --
+ * carrying no identity of their own at all, so a stale, delayed call like this
+ * would validate against the NEW session's own identity instead of refusing it,
+ * potentially corrupting or even completing it using frame bytes that actually
+ * came from the OLD session's own radio capture. Fixed: `user` is now each
+ * registration's own IMMUTABLE token (captured once, at promisc_start time,
+ * frozen inside this exact callback's own parameter), compared against s_hs/
+ * s_cap's CURRENT token before touching anything else -- a mismatch means
+ * s_hs/s_cap has moved on, regardless of how self-consistent whatever it
+ * currently holds looks. Every s_cap token/epoch/session read is also now
+ * genuinely under cap_lock (two were not: mtek_capture_channel_hop_tick's own
+ * initial snapshot, handle_ capture_poll_read's own token/mode check). 4. Round
+ * 7's own fix made every *_lock_v / *_unlock_v wrapper (main/ app_main.c)
+ * null-safe so a failed xSemaphoreCreateMutex could never reach
+ * xSemaphoreTake/Give on a NULL handle -- but mischaracterized "degrades to a
+ * no-op critical section" as itself a SAFE degraded mode. It is not: every task
+ * touching the affected shared state would still run fully concurrently and
+ * UNLOCKED against it on a real target -- a genuine data-race hazard, not a safe
+ * one. Fixed: app_main.c now creates all four mandatory mutexes FIRST, checks
+ * all four TOGETHER, and calls mtek_enter_safe_failure_state (parks forever,
+ * logging clearly) if ANY failed -- BEFORE any lock is registered or any
+ * adapter/service task exists. ble_tick_task/ uart_repl_task/the SPI runtime's
+ * own internal task creation are now also checked (previously silently discarded
+ * for two of the three). mtek_ble_hal_esp32.c's own s_notify_mutex and every one
+ * of its ten xSemaphoreCreateBinary rendezvous points are now null-checked too,
+ * each failing its own one operation honestly instead of ever reaching a NULL
+ * FreeRTOS handle.
  *
- * This file proves, for each of the four items above:
- *   A. TIME_SYNC_START: (i) paused inside its own guard via mtk_op_set_
- *      won_hook, a concurrent real changed-epoch HELLO genuinely blocks,
- *      and the reset only proceeds strictly after the worker's own
- *      publish; (ii) a real, already-COMPLETED reset (session generation
- *      already bumped) makes mtk_op_begin_publish_guard(old_generation)
- *      -- exactly what this operation's own now-stale ctx->session_
- *      generation would supply -- refuse deterministically, without
- *      needing to win an inherently fuzzy scheduling race against an
- *      opcode with no blocking HAL call of its own to pause at.
- *   B. GATT: a real GATT_DISCOVER is paused (via the fake HAL's new
- *      gatt_op_delay_ms) while a concurrent GATT_DISCONNECT + a brand-new
- *      GATT_CONNECT reuses the EXACT SAME vendor_handle for a different
- *      connection; the stale discover's own svc_ranges[] merge is proven
- *      to never land in the new connection's state. Same proof against
- *      GATT_SUBSCRIBE's own atomic slot-claim.
- *   C. Promiscuous-callback ABA: a capture/handshake frame is staged
- *      (defer_frames) while the old session is active, that old session
- *      is then STOPped and a brand-new one of the same kind STARTed
- *      (reusing the same global s_cap/s_hs struct), and only THEN is the
- *      staged, now-stale delivery resumed (mtk_fake_wifi_deliver_frames)
- *      -- proving it neither mutates nor publishes into the new session.
- *   D. Mutex-allocation failure: mtek_enter_safe_failure_state's own
- *      logic (all four mandatory mutexes checked together) is exercised
- *      directly against the real function signatures this file links
- *      against -- see test_mutex_allocation_failure_is_checked_together's
- *      own doc comment for exactly what is and is not host-testable here
- *      (main/app_main.c itself is ESP-IDF-only, not linked into host
- *      tests at all). */
+ * This file proves, for each of the four items above: A. TIME_SYNC_START: (i)
+ * paused inside its own guard via mtk_op_set_ won_hook, a concurrent real
+ * changed-epoch HELLO genuinely blocks, and the reset only proceeds strictly
+ * after the worker's own publish; (ii) a real, already-COMPLETED reset (session
+ * generation already bumped) makes mtk_op_begin_publish_guard(old_generation) --
+ * exactly what this operation's own now-stale ctx->session_ generation would
+ * supply -- refuse deterministically, without needing to win an inherently fuzzy
+ * scheduling race against an opcode with no blocking HAL call of its own to
+ * pause at. B. GATT: a real GATT_DISCOVER is paused (via the fake HAL's new
+ * gatt_op_delay_ms) while a concurrent GATT_DISCONNECT + a brand-new
+ * GATT_CONNECT reuses the EXACT SAME vendor_handle for a different connection;
+ * the stale discover's own svc_ranges[] merge is proven to never land in the new
+ * connection's state. Same proof against GATT_SUBSCRIBE's own atomic slot-claim.
+ * C. Promiscuous-callback ABA: a capture/handshake frame is staged
+ * (defer_frames) while the old session is active, that old session is then
+ * STOPped and a brand-new one of the same kind STARTed (reusing the same global
+ * s_cap/s_hs struct), and only THEN is the staged, now-stale delivery resumed
+ * (mtk_fake_wifi_deliver_frames) -- proving it neither mutates nor publishes
+ * into the new session. D. Mutex-allocation failure:
+ * mtek_enter_safe_failure_state's own logic (all four mandatory mutexes checked
+ * together) is exercised directly against the real function signatures this file
+ * links against -- see test_mutex_allocation_failure_is_checked_together's own
+ * doc comment for exactly what is and is not host-testable here (main/app_main.c
+ * itself is ESP-IDF-only, not linked into host tests at all). */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtk_test_async_fixture.h"
@@ -105,10 +92,9 @@
 #include <stdlib.h>
 #include <time.h>
 
-/* ---- Lock domains, mirroring main/app_main.c's own real wiring (and
- * test_p0_session_publication_closure_round7.c's own established
- * pattern) -- every dedicated mutex below is genuinely distinct from
- * every other one. ---- */
+/* Lock domains, mirroring main/app_main.c's own real wiring (and
+ * test_p0_session_publication_closure_round7.c's own established pattern) --
+ * every dedicated mutex below is genuinely distinct from every other one. -- */
 static pthread_mutex_t s_router_mutex = PTHREAD_MUTEX_INITIALIZER;
 static void router_lock(void) { pthread_mutex_lock(&s_router_mutex); }
 static void router_unlock(void) { pthread_mutex_unlock(&s_router_mutex); }
@@ -176,10 +162,10 @@ static int wait_for_workers_idle(void) {
     return idle;
 }
 
-/* ---- won-hook pause rendezvous -- identical mechanism to
- * test_p0_session_publication_closure_round7.c's own (mtk_op_set_won_hook
- * fires from inside mtk_op_begin_publish_guard, right before returning 1,
- * still holding the guard's own lock). ---- */
+/* won-hook pause rendezvous -- identical mechanism to
+ * test_p0_session_publication_closure_round7.c's own (mtk_op_set_won_hook fires
+ * from inside mtk_op_begin_publish_guard, right before returning 1, still
+ * holding the guard's own lock). -- */
 typedef struct {
     pthread_mutex_t m; pthread_cond_t cv;
     int arrived; int release;
@@ -224,8 +210,8 @@ static pthread_t spawn_trigger(void (*trigger)(void)) {
     return t;
 }
 
-/* ---- Real native SPI v1 cell plumbing -- identical to
- * test_p0_session_publication_closure_round7.c's own. ---- */
+/* Real native SPI v1 cell plumbing -- identical to
+ * test_p0_session_publication_closure_round7.c's own. -- */
 static mtk_spi_native_header_t base_req_hdr(uint16_t service, uint16_t opcode, uint32_t request_id,
                                              uint16_t payload_len, uint32_t peer_epoch) {
     mtk_spi_native_header_t h; memset(&h, 0, sizeof(h));
@@ -250,16 +236,15 @@ typedef struct {
     uint32_t peer_epoch;
     int done; /* guarded by s_hello_done_m -- see hello_set_done/hello_is_done */
 } hello_thread_arg_t;
-/* RC11 round 10 verification (TSan): `done` is written by the HELLO
- * thread and read by the main thread WHILE that thread is still running
- * (the "genuinely still blocked" check below deliberately reads it
- * mid-flight). `volatile` orders nothing between threads and is not a
- * synchronization primitive, so those two accesses were a real data race
- * by the C memory model -- one TSan happens not to have reported yet,
- * which is not the same as one that cannot fire. A dedicated mutex makes
- * the mid-flight read genuinely well-defined; the post-join read is
- * already ordered by pthread_join itself, and goes through the same
- * accessor purely for consistency. */
+/* `done` is written by the HELLO thread and read by the main thread WHILE that
+ * thread is still running (the "genuinely still blocked" check below
+ * deliberately reads it mid-flight). `volatile` orders nothing between threads
+ * and is not a synchronization primitive, so those two accesses were a real data
+ * race by the C memory model -- one TSan happens not to have reported yet, which
+ * is not the same as one that cannot fire. A dedicated mutex makes the
+ * mid-flight read genuinely well-defined; the post-join read is already ordered
+ * by pthread_join itself, and goes through the same accessor purely for
+ * consistency. */
 static pthread_mutex_t s_hello_done_m = PTHREAD_MUTEX_INITIALIZER;
 static void hello_set_done(hello_thread_arg_t *a) {
     pthread_mutex_lock(&s_hello_done_m);
@@ -311,23 +296,21 @@ static int wait_for_arbiter_class(mtk_arbiter_class_t cls) {
     }
     return 0;
 }
-/* RC11 round 10 verification (TSan): the obvious wait here -- poll
- * promisc_start_count, as this file used to -- returns as soon as that
- * counter bumps, which fake_wifi_promisc_start does EARLY, before its own
- * promisc_start_delay_ms sleep and before it publishes (pending_cb,
- * pending_cb_user) at all. The two ABA tests below
- * then reach in and overwrite pending_cb_user to stage a deliberately
- * stale registration, so they were racing the very worker whose
- * registration they meant to supersede. That is exactly what a full-suite
- * ThreadSanitizer run caught (write/write on pending_cb_user, read/write
- * on pending_cb) -- and it was worse than a reported race: a worker that
- * published late could silently clobber the staged stale token, leaving
- * the delivery below carrying the NEW token and turning the "a stale
- * registration cannot touch the new session" assertion into a tautology
- * that passes for the wrong reason. promisc_registered_count is bumped
- * under the fake HAL's own lock immediately AFTER that publication, so
- * waiting on it is a real happens-before edge for the registration
- * itself, not merely for entry into promisc_start. */
+/* The obvious wait here -- poll promisc_start_count, as this file used to --
+ * returns as soon as that counter bumps, which fake_wifi_promisc_start does
+ * EARLY, before its own promisc_start_delay_ms sleep and before it publishes
+ * (pending_cb, pending_cb_user) at all. The two ABA tests below then reach in
+ * and overwrite pending_cb_user to stage a deliberately stale registration, so
+ * they were racing the very worker whose registration they meant to supersede.
+ * That is exactly what a full-suite ThreadSanitizer run caught (write/write on
+ * pending_cb_user, read/write on pending_cb) -- and it was worse than a reported
+ * race: a worker that published late could silently clobber the staged stale
+ * token, leaving the delivery below carrying the NEW token and turning the "a
+ * stale registration cannot touch the new session" assertion into a tautology
+ * that passes for the wrong reason. promisc_registered_count is bumped under the
+ * fake HAL's own lock immediately AFTER that publication, so waiting on it is a
+ * real happens-before edge for the registration itself, not merely for entry
+ * into promisc_start. */
 static int wait_for_promisc_registered(void) {
     for (int i = 0; i < 20000; i++) {
         fake_wifi_lock();
@@ -387,7 +370,8 @@ static void one_time_setup(void) {
  * won_hook, a concurrent real changed-epoch HELLO must genuinely block. */
 static uint32_t s_ts_peer_epoch;
 static void trigger_time_sync_start(void) {
-    const mtk_opcode_entry_t *op = mtk_test_async_fixture_install() /* RC12 item 5: test-only overlay async op, was TIME_SYNC_START */;
+    const mtk_opcode_entry_t *op = mtk_test_async_fixture_install() /* Test-only overlay async op, was
+                                                                     * TIME_SYNC_START */;
     mtk_time_sync_start_req_t req = {0}; req.timeout_ms = 0;
     feed_request(op, &req, s_ts_peer_epoch);
 }
@@ -401,34 +385,32 @@ static void test_time_sync_reset_during_publish(void) {
     pthread_t trig_tid = spawn_trigger(trigger_time_sync_start);
     pause_wait_arrived();
 
-    /* RC11 round 10 verification (TSan): the trigger thread's OWN
-     * feed_cell call must have fully RETURNED before the HELLO thread
-     * below starts its own. pause_wait_arrived() above only proves the
-     * async WORKER reached the pause hook; the trigger thread is still
-     * finishing feed_cell's own post-dispatch bookkeeping (try_deliver_
-     * frame -> dup_cache_insert) at that moment, so spawning the HELLO
-     * thread here used to put TWO concurrent feed_cell calls on the SAME
-     * dctx -- which TSan duly caught racing dctx->dup_cache_next between
-     * dup_cache_insert and invalidate_prior_epoch_state.
+    /* The trigger thread's OWN feed_cell call must have fully RETURNED before
+     * the HELLO thread below starts its own. pause_wait_arrived above only
+     * proves the async WORKER reached the pause hook; the trigger thread is
+     * still finishing feed_cell's own post-dispatch bookkeeping (try_deliver_
+     * frame -> dup_cache_insert) at that moment, so spawning the HELLO thread
+     * here used to put TWO concurrent feed_cell calls on the SAME dctx -- which
+     * TSan duly caught racing dctx->dup_cache_next between dup_cache_insert and
+     * invalidate_prior_epoch_state.
      *
      * That interleaving is not a production defect and never could be:
      * mtek_spi_native_dispatch_feed_cell has exactly ONE call site in the
-     * shipped firmware (main/mtek_spi_runtime.c's, inside spi_runtime_
-     * task, itself a single xTaskCreate), so a native dctx is only ever
-     * fed from one task and the function needs no internal locking for
-     * these fields. Only dctx.event_queue is separately lock-protected,
-     * precisely because it alone IS touched from other contexts (async
-     * workers emitting events). Two concurrent feed_cell calls was a
-     * scenario this test manufactured, not one the target can reach.
+     * shipped firmware (main/mtek_spi_runtime.c's, inside spi_runtime_ task,
+     * itself a single xTaskCreate), so a native dctx is only ever fed from one
+     * task and the function needs no internal locking for these fields. Only
+     * dctx.event_queue is separately lock-protected, precisely because it alone
+     * IS touched from other contexts (async workers emitting events). Two
+     * concurrent feed_cell calls was a scenario this test manufactured, not one
+     * the target can reach.
      *
-     * Joining here is safe and cannot deadlock: the trigger thread does
-     * not wait on the paused worker (an ACCEPTED_ASYNC dispatch hands the
-     * work to a separate pthread and returns), which the TSan report
-     * itself corroborated -- it listed the trigger thread as `finished`
-     * while the worker was still parked in the hook. The genuine
-     * on-target concurrency this test exists to prove is fully preserved:
-     * the worker is STILL paused mid-publish right now, and the HELLO
-     * below still races exactly that. */
+     * Joining here is safe and cannot deadlock: the trigger thread does not wait
+     * on the paused worker (an ACCEPTED_ASYNC dispatch hands the work to a
+     * separate pthread and returns), which the TSan report itself corroborated
+     * -- it listed the trigger thread as `finished` while the worker was still
+     * parked in the hook. The genuine on-target concurrency this test exists to
+     * prove is fully preserved: the worker is STILL paused mid-publish right
+     * now, and the HELLO below still races exactly that. */
     pthread_join(trig_tid, NULL);
 
     uint32_t generation_before = mtk_core_session_generation();
@@ -441,12 +423,11 @@ static void test_time_sync_reset_during_publish(void) {
     MTK_CHECK_EQ(mtk_core_session_generation(), generation_before);
 
     pause_release();
-    /* The worker's own publish (won && guard-gated TIME_SYNC_RESULT emit)
-     * has now genuinely completed. wait_for_workers_idle() is what
-     * actually establishes that: the trigger-thread join this replaces
-     * never did -- it only ever waited on the DISPATCHING thread, which
-     * had already returned before the worker even reached the hook (see
-     * the join moved above). */
+    /* The worker's own publish (won && guard-gated TIME_SYNC_RESULT emit) has
+     * now genuinely completed. wait_for_workers_idle is what actually
+     * establishes that: the trigger-thread join this replaces never did -- it
+     * only ever waited on the DISPATCHING thread, which had already returned
+     * before the worker even reached the hook (see the join moved above). */
     MTK_CHECK(wait_for_workers_idle());
 
     pthread_join(hello_tid, NULL);
@@ -487,7 +468,8 @@ static void test_time_sync_reset_before_publish(void) {
     /* A genuinely NEW TIME_SYNC_START, admitted under the CURRENT
      * generation, still completes and publishes normally. */
     uint32_t peer2 = s_next_peer_epoch - 1; /* the generation just bumped above belongs to this peer epoch's own session */
-    const mtk_opcode_entry_t *op = mtk_test_async_fixture_install() /* RC12 item 5: test-only overlay async op, was TIME_SYNC_START */;
+    const mtk_opcode_entry_t *op = mtk_test_async_fixture_install() /* Test-only overlay async op, was
+                                                                     * TIME_SYNC_START */;
     mtk_time_sync_start_req_t req = {0}; req.timeout_ms = 0;
     feed_request(op, &req, peer2);
     MTK_CHECK(wait_for_workers_idle()); /* no won_hook registered -- this worker runs to completion on its own */
@@ -508,21 +490,20 @@ static void test_time_sync_reset_before_publish(void) {
  * never lands in the new connection's state, and a subsequent real
  * discover against the NEW connection works cleanly. Then the identical
  * proof against GATT_SUBSCRIBE's own atomic slot-claim. */
-/* P0 correction (this round): mtek_spi_native_dispatch_feed_cell (and its
- * shared `dctx`) is deliberately NOT thread-safe against two concurrent
- * callers -- on a real target, exactly ONE task (spi_runtime_task) ever
- * calls it, one physical SPI transaction at a time; nothing in this tree
- * claims otherwise. The GATT vendor-handle-reuse scenarios below genuinely
- * need TWO overlapping in-flight requests (one deliberately paused inside
- * a blocking HAL call, one racing it to disconnect+reconnect), so they
- * bypass native SPI framing entirely and drive the router directly
+/* mtek_spi_native_dispatch_feed_cell (and its shared `dctx`) is deliberately NOT
+ * thread-safe against two concurrent callers -- on a real target, exactly ONE
+ * task (spi_runtime_task) ever calls it, one physical SPI transaction at a time;
+ * nothing in this tree claims otherwise. The GATT vendor-handle-reuse scenarios
+ * below genuinely need TWO overlapping in-flight requests (one deliberately
+ * paused inside a blocking HAL call, one racing it to disconnect+reconnect), so
+ * they bypass native SPI framing entirely and drive the router directly
  * (mtk_test_call/mtk_router_dispatch, mtk_test_bootstrap.h) -- genuinely
- * thread-safe for concurrent callers (mtk_router_set_lock's own real
- * mutex), exactly like test_peer_reset_concurrency_round4.c's and test_
- * p0_concurrency_closure_round5.c's own established concurrent-request
- * patterns. session_generation stays 0 (unfenced) throughout, which is
- * correct here: these two tests are about connection_token/vendor_handle
- * identity, not session_generation. */
+ * thread-safe for concurrent callers (mtk_router_set_lock's own real mutex),
+ * exactly like test_peer_reset_concurrency_round4.c's and test_
+ * p0_concurrency_closure_round5.c's own established concurrent-request patterns.
+ * session_generation stays 0 (unfenced) throughout, which is correct here: these
+ * two tests are about connection_token/vendor_handle identity, not
+ * session_generation. */
 static uint32_t poll_for_op_token(mtk_fake_sink_state_t *sink) {
     uint32_t token = 0;
     for (int i = 0; i < 20000 && token == 0; i++) {
@@ -592,7 +573,7 @@ static void test_gatt_discover_survives_vendor_handle_reuse(void) {
     uint32_t old_conn_tok = connect_gatt_direct(addr);
     s_gatt_conn_tok = old_conn_tok;
 
-    /* Pause the real gatt_discover() HAL call. */
+    /* Pause the real gatt_discover HAL call. */
     g_fake_ble.gatt_op_delay_ms = 400;
     pthread_t trig_tid = spawn_trigger(trigger_gatt_discover);
     usleep(100000); /* let the trigger thread genuinely enter the blocked HAL call */
@@ -604,11 +585,10 @@ static void test_gatt_discover_survives_vendor_handle_reuse(void) {
     disconnect_gatt_direct(old_conn_tok);
     MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_NONE);
 
-    /* P0 correction (this round): the stale discover trigger (trig_tid)
-     * may still be reading gatt_op_delay_ms/gatt_service_count/
-     * gatt_services[] (mtk_fake_ble_hal.h's own fake_ble_gatt_discover) at
-     * this exact moment -- locked, matching that function's own now-
-     * locked reads. */
+    /* The stale discover trigger (trig_tid) may still be reading
+     * gatt_op_delay_ms/gatt_service_count/ gatt_services[] (mtk_fake_ble_hal.h's
+     * own fake_ble_gatt_discover) at this exact moment -- locked, matching that
+     * function's own now- locked reads. */
     fake_ble_lock();
     g_fake_ble.gatt_op_delay_ms = 0; /* the NEW connect/discover below must not itself be delayed */
     g_fake_ble.gatt_service_count = 1; g_fake_ble.gatt_services[0].start_handle = 100; g_fake_ble.gatt_services[0].end_handle = 110; /* deliberately DIFFERENT service range than the old connection's own */
@@ -661,7 +641,7 @@ static void test_gatt_subscribe_survives_vendor_handle_reuse(void) {
     s_gatt_conn_tok = old_conn_tok;
     discover_gatt_direct(old_conn_tok);
 
-    /* Pause the real gatt_subscribe() HAL call. */
+    /* Pause the real gatt_subscribe HAL call. */
     g_fake_ble.gatt_op_delay_ms = 400;
     pthread_t trig_tid = spawn_trigger(trigger_gatt_subscribe);
     usleep(100000);
@@ -669,9 +649,9 @@ static void test_gatt_subscribe_survives_vendor_handle_reuse(void) {
     disconnect_gatt_direct(old_conn_tok);
     MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_NONE);
 
-    /* P0 correction (this round): the stale subscribe trigger (trig_tid)
-     * may still be reading gatt_op_delay_ms at this exact moment -- locked,
-     * matching fake_ble_gatt_subscribe's own now-locked reads. */
+    /* The stale subscribe trigger (trig_tid) may still be reading
+     * gatt_op_delay_ms at this exact moment -- locked, matching
+     * fake_ble_gatt_subscribe's own now-locked reads. */
     fake_ble_lock();
     g_fake_ble.gatt_op_delay_ms = 0;
     fake_ble_unlock();
@@ -738,11 +718,10 @@ static void test_capture_promisc_callback_aba(void) {
     /* START a BRAND-NEW capture session -- reinitializes the global
      * s_cap struct this callback's own `user` (the OLD token) is NOT a
      * pointer into. */
-    /* RC11 round 10 verification (TSan): mtk_fake_wifi_reset() memsets the
-     * WHOLE g_fake_wifi struct from this thread. Every worker dispatched
-     * above must therefore be genuinely finished first -- otherwise the
-     * memset races an in-flight fake-HAL call's own field writes. The
-     * arbiter check above proves the STOP took effect, not that the
+    /* mtk_fake_wifi_reset memsets the WHOLE g_fake_wifi struct from this thread.
+     * Every worker dispatched above must therefore be genuinely finished first
+     * -- otherwise the memset races an in-flight fake-HAL call's own field
+     * writes. The arbiter check above proves the STOP took effect, not that the
      * worker thread that ran it has returned. */
     MTK_CHECK(wait_for_workers_idle());
     mtk_fake_wifi_reset(); /* clears promisc_start_count/promisc_registered_count/pending_cb bookkeeping the wait_for_promisc_registered below needs fresh, but NOT g_fake_wifi.frames/frame_count/defer_frames -- restored right after */
@@ -756,15 +735,14 @@ static void test_capture_promisc_callback_aba(void) {
     uint32_t new_token = mtk_arbiter_active_token();
     MTK_CHECK(new_token != old_token);
 
-    /* NOTE: mtk_fake_wifi_reset() above also cleared g_fake_wifi.pending_
-     * cb/pending_cb_user -- but the NEW handle_capture_start's own
-     * promisc_start call just re-armed them to (frame_cb, new_token),
-     * exactly overwriting what would, on a real target, still name the
-     * OLD registration. To genuinely exercise "a callback already copied
-     * BEFORE the reinit fires AFTER it", this test drives frame_cb
-     * directly with the OLD token, standing in for exactly the delayed
-     * invocation esp32_promisc_service would have made with its own
-     * already-copied, now-stale (cb, user) pair. */
+    /* NOTE: mtk_fake_wifi_reset above also cleared g_fake_wifi.pending_
+     * cb/pending_cb_user -- but the NEW handle_capture_start's own promisc_start
+     * call just re-armed them to (frame_cb, new_token), exactly overwriting what
+     * would, on a real target, still name the OLD registration. To genuinely
+     * exercise "a callback already copied BEFORE the reinit fires AFTER it",
+     * this test drives frame_cb directly with the OLD token, standing in for
+     * exactly the delayed invocation esp32_promisc_service would have made with
+     * its own already-copied, now-stale (cb, user) pair. */
     mtk_async_queue_reset(&dctx.event_queue);
     /* Directly invoke the registered callback with the OLD token, exactly
      * as esp32_promisc_service would if it had copied (frame_cb, old_
@@ -880,25 +858,25 @@ static void test_handshake_promisc_callback_aba(void) {
 }
 
 /* ==== D. Mutex-allocation failure (item 4). ==============================
- * main/app_main.c is ESP-IDF-only (FreeRTOS/esp_timer/NimBLE headers) and
- * is not linked into host tests at all -- mtek_enter_safe_failure_state
- * and the real xSemaphoreCreateMutex call sites it gates are therefore
- * not directly host-testable, exactly like requirement 7's own equivalent
- * gap in round 7. What IS host-testable, and proven here, is the
- * mechanism every one of those call sites depends on: mtk_op_set_
+ * main/app_main.c is ESP-IDF-only (FreeRTOS/esp_timer/NimBLE headers) and is not
+ * linked into host tests at all -- mtek_enter_safe_failure_state and the real
+ * xSemaphoreCreateMutex call sites it gates are therefore not directly
+ * host-testable, exactly like requirement 7's own equivalent gap in round 7.
+ * What IS host-testable, and proven here, is the mechanism every one of those
+ * call sites depends on: mtk_op_set_
  * publish_lock/mtek_ble_service_set_lock/mtek_capture_set_lock/mtek_wifi_
- * service_set_lock/mtek_ble_hal_esp32.c's own notify_lock all correctly
- * degrade to safe no-op calls (never a crash) when never registered at
- * all -- the same proof test_p0_session_publication_closure_round7.c's
- * own test_unregistered_locks_do_not_crash already makes for the publish
- * guard and BLE lock domains specifically. This test additionally proves
- * that mtk_core_set_lock/mtk_arbiter_set_lock/mtk_router_set_lock -- the
- * three lock domains a failed s_shared_mutex would leave unregistered --
- * are ALSO null-call-tolerant when never registered, completing the set
- * of domains a real mandatory-mutex failure could affect. The actual
- * SAFETY property (never reaching this degraded state on a real target at
- * all) is enforced by main/app_main.c's own boot-time gate, reviewed by
- * inspection of the exact diff in this round's own source changes. */
+ * service_set_lock/mtek_ble_hal_esp32.c's own notify_lock all correctly degrade
+ * to safe no-op calls (never a crash) when never registered at all -- the same
+ * proof test_p0_session_publication_closure_round7.c's own
+ * test_unregistered_locks_do_not_crash already makes for the publish guard and
+ * BLE lock domains specifically. This test additionally proves that
+ * mtk_core_set_lock/mtk_arbiter_set_lock/mtk_router_set_lock -- the three lock
+ * domains a failed s_shared_mutex would leave unregistered -- are ALSO
+ * null-call-tolerant when never registered, completing the set of domains a real
+ * mandatory-mutex failure could affect. The actual SAFETY property (never
+ * reaching this degraded state on a real target at all) is enforced by
+ * main/app_main.c's own boot-time gate, reviewed by inspection of the exact diff
+ * in the source changes. */
 static void test_core_locks_are_null_call_tolerant_when_unregistered(void) {
     mtk_core_set_lock(NULL, NULL);
     mtk_arbiter_set_lock(NULL, NULL);

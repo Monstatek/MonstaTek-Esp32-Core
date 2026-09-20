@@ -1,30 +1,26 @@
-/* RC5 independent audit P0 "UART asynchronous response lifetime is
- * unsafe": the universal target installs one global mtk_router async
- * runner regardless of which transport originated a request
- * (main/mtek_spi_runtime.c); the router used to defer every
- * ACCEPTED_ASYNC opcode's handler whenever that runner was registered,
- * with no regard for which adapter dispatched it. The factory UART
- * adapter (mtek_uart_adapter.c) builds its response capture/sink on the
- * calling handler function's own stack for every command -- exactly the
- * shape mtek_router.h's own SAFETY CONTRACT documents as unsafe to defer,
- * since that stack frame is gone by the time a background worker would
- * get around to writing through it.
+/* The universal target installs one global mtk_router async runner regardless of
+ * which transport originated a request (main/mtek_spi_runtime.c); the router
+ * used to defer every ACCEPTED_ASYNC opcode's handler whenever that runner was
+ * registered, with no regard for which adapter dispatched it. The factory UART
+ * adapter (mtek_uart_adapter.c) builds its response capture/sink on the calling
+ * handler function's own stack for every command -- exactly the shape
+ * mtek_router.h's own SAFETY CONTRACT documents as unsafe to defer, since that
+ * stack frame is gone by the time a background worker would get around to
+ * writing through it.
  *
- * This test installs the SAME kind of global async runner + lock the
- * universal firmware registers (a real pthread worker, not a
- * single-threaded simulation, with a deliberate delay standing in for
- * genuine radio-HAL latency), then issues a UART command ("scan -a") that
- * maps to AP_SCAN_START -- a real ACCEPTED_ASYNC opcode -- and proves the
- * fix (mtek_router.c's transport-aware gate: never defer
- * MTK_PROFILE_FACTORY_UART) holds: the command's response is real and
- * available synchronously, in the same call, matching the exact shipped
- * UART command/response behavior, not deferred to the background worker
- * at all. Built and run under ASan/UBSan; a regression here (the gate
- * removed or bypassed) would show up either as a wrong/empty synchronous
- * result (the old, functionally-broken behavior -- dispatch returns
- * before the stack-local capture is ever populated) or, if the delayed
- * worker eventually did touch the by-then-reused stack, as a sanitizer
- * violation. */
+ * This test installs the SAME kind of global async runner + lock the universal
+ * firmware registers (a real pthread worker, not a single-threaded simulation,
+ * with a deliberate delay standing in for genuine radio-HAL latency), then
+ * issues a UART command ("scan -a") that maps to AP_SCAN_START -- a real
+ * ACCEPTED_ASYNC opcode -- and proves the fix (mtek_router.c's transport-aware
+ * gate: never defer MTK_PROFILE_FACTORY_UART) holds: the command's response is
+ * real and available synchronously, in the same call, matching the exact shipped
+ * UART command/response behavior, not deferred to the background worker at all.
+ * Built and run under ASan/UBSan; a regression here (the gate removed or
+ * bypassed) would show up either as a wrong/empty synchronous result (the old,
+ * functionally-broken behavior -- dispatch returns before the stack-local
+ * capture is ever populated) or, if the delayed worker eventually did touch the
+ * by-then-reused stack, as a sanitizer violation. */
 #include "mtk_test.h"
 #include "mtek_uart_adapter.h"
 #include "mtek_core.h"
@@ -81,15 +77,13 @@ MTK_TEST_MAIN_BEGIN
      * router, independent of which adapter is calling. */
     mtk_router_set_async_runner(pthread_runner);
     mtk_router_set_lock(router_lock, router_unlock);
-    /* RC11 independent correction order P0 verification fallout (same
-     * real TSan-caught gap as test_spi_native_dup_cache.c/test_spi_
-     * native_async.c's own identical fix): a real async runner is
-     * registered above, and this file exercises AP_SCAN_START and
-     * DEAUTH_START's own completion paths concurrently, each genuinely
-     * touching shared operation-table/wifi-service/fake-HAL state from a
-     * different thread than a concurrent STOP/status request -- every one
-     * of these must share the SAME real mutex as mtk_router_set_lock
-     * above. */
+    /* Verification fallout (same real TSan-caught gap as
+     * test_spi_native_dup_cache.c/test_spi_ native_async.c's own identical fix):
+     * a real async runner is registered above, and this file exercises
+     * AP_SCAN_START and DEAUTH_START's own completion paths concurrently, each
+     * genuinely touching shared operation-table/wifi-service/fake-HAL state from
+     * a different thread than a concurrent STOP/status request -- every one of
+     * these must share the SAME real mutex as mtk_router_set_lock above. */
     mtk_core_set_lock(router_lock, router_unlock);
     mtek_wifi_service_set_lock(router_lock, router_unlock);
     mtk_fake_wifi_set_lock(router_lock, router_unlock);

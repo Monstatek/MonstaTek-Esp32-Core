@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Computer-side negative tests for the release artifact/sidecar pair
-(RELEASE_CANDIDATE_CHECKLIST.md "Computer-side negative tests") and for
+"""Host-side negative tests for the release artifact/sidecar pair, and for
 tools/package_release.py's own merge/map validation logic: missing binary,
 missing sidecar, malformed sidecar, one-byte binary mutation, a
 substituted/renamed pair, a missing merged-image map, a STALE map (present
@@ -69,10 +68,9 @@ def make_synthetic_merged_image(app_bytes, corrupt_bootloader=False, corrupt_par
 
     `corrupt_bootloader_region`/`corrupt_partition_table_region` flip a
     byte WELL INSIDE the respective region but never at its own magic-byte
-    position -- RC11 verification correction (independent audit)
-    "byte-compare the bootloader and partition-table regions ... just as
-    the application is already bound": these prove that NEW check
-    specifically, distinct from `corrupt_bootloader`/`corrupt_partition_
+    position. They exercise the byte-comparison of the bootloader and
+    partition-table regions -- binding them just as the application is
+    already bound -- distinct from `corrupt_bootloader`/`corrupt_partition_
     table` above (which corrupt the magic byte itself, already caught by
     the pre-existing magic-byte check alone)."""
     app_offset = 0x10000
@@ -459,7 +457,7 @@ def main():
             failures.append("a merged image whose application segment differs from the audited "
                              "build was accepted")
 
-        # ---- RC11 verification correction (independent audit):
+        # ----
         # "byte-compare the bootloader and partition-table regions
         # embedded in MtkCore.bin against the exact build inputs, just as
         # the application is already bound." A valid pair must pass; a
@@ -516,7 +514,7 @@ def main():
                                         audited_app_bytes=audited_app):
             failures.append("a genuinely current, valid map was rejected")
 
-        # ---- RC11 release-finalization correction (independent audit): "Strengthen merged-image-map validation... Add negative
+        # ---- "Strengthen merged-image-map validation... Add negative
         # tests for each stale or corrupted field." One targeted mutation
         # per required field, each against an otherwise-valid baseline map
         # (never a hand-built partial map, which would trip the unrelated
@@ -526,7 +524,7 @@ def main():
             ("flash_offset", "0x001000"),
             ("partition_table_offset", "0x009000"),
             ("application_offset", "0x020000"),
-            ("merged_binary", "SomeOtherName.bin"),  # RC11 verification correction: "require merged_binary == MtkCore.bin"
+            ("merged_binary", "SomeOtherName.bin"),  # "require merged_binary == MtkCore.bin"
             ("merged_binary_size", current_map["merged_binary_size"] + 1),
             ("md5_uppercase_hex", "0" * 32),
             ("sha256_uppercase_hex", "0" * 64),
@@ -575,7 +573,7 @@ def main():
         if not pr.validate_map_against_bin(corrupted, good_merged, app_offset):
             failures.append("a map with an absolute-path segment entry was accepted")
 
-        # ---- RC11 verification correction (independent audit):
+        # ----
         # "require the exact mapping 0x000000 -> bootloader/bootloader.bin,
         # 0x008000 -> partition_table/partition-table.bin, 0x010000 ->
         # mtkcore.bin; reject wrong relative filenames, swapped filenames,
@@ -610,14 +608,14 @@ def main():
         if not pr.validate_map_against_bin(corrupted, good_merged, app_offset):
             failures.append("a map with a wrong relative bootloader filename was accepted")
 
-        # ---- Release-tooling correction (this round): "audited_application_
+        # ---- Release-tooling correction (): "audited_application_
         # input.file must equal 'mtkcore.bin', and the application segment
         # mapping must remain exactly 0x010000 -> mtkcore.bin -- even when
         # BOTH fields are changed together to the same wrong value." Three
         # cases, per the requirement: (1) only the nested audited-input
         # field is changed, (2) both the nested field AND the matching
         # segment's file are changed to the SAME incorrect filename (the
-        # exact coordinated-corruption case this round's fix closes -- prior
+        # exact coordinated-corruption case's fix closes -- prior
         # to the fix, the segment's own expected filename was DERIVED from
         # this same mutable field, so the two moved in lockstep and this
         # case passed undetected), (3) the genuinely valid current map still
@@ -652,7 +650,7 @@ def main():
             failures.append("a genuinely current, valid map (audited_application_input.file == "
                              "application segment file == 'mtkcore.bin') was rejected")
 
-        # ---- RC11 release-finalization correction (independent audit): "Strengthen package validation so it hard-fails unless
+        # ---- "Strengthen package validation so it hard-fails unless
         # esptool validates both the extracted bootloader image and
         # application image, including chip type, image checksum, and
         # validation hash. Magic bytes alone are insufficient. Add a
@@ -697,7 +695,7 @@ def main():
                   "plain host_tests Python3, with no ESP-IDF environment sourced; tools/package_release.py "
                   "itself always runs from an ESP-IDF-sourced environment, where this check is real).")
 
-        # RC9 independent correction order P1 "the synthetic Python negative
+        # "the synthetic Python negative
         # tests do not validate the actual release pair either": cross-check
         # the REAL release/MtkCore.bin + MtkCore.md5, when present, with this
         # independent MD5 implementation (Python hashlib) -- agreeing with

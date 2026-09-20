@@ -1,27 +1,22 @@
-/* RC8 independent audit P0-9 "Implement a complete prior-state snapshot
- * and transactional restore for station/AP mode, connection/reconnect
- * intent, channel, and promiscuous state" + "Define and enforce
- * coexistence explicitly: connected Wi-Fi station operation and single-
- * channel monitor/injection must never be silently treated as
- * concurrent."
+/* + "Define and enforce coexistence explicitly: connected Wi-Fi station
+ * operation and single- channel monitor/injection must never be silently treated
+ * as concurrent."
  *
  * Part 1 proves the real prior-state round-trip fix in
- * mtek_wifi_hal_esp32.c/mtk_fake_wifi_hal.h's own restore_sta_mode
- * contract: a genuinely non-default prior mode/channel (previously
- * silently discarded -- the old code hard-coded WIFI_MODE_STA and never
- * touched the channel at all) is captured once at session entry and
- * restored exactly, not overwritten by the session's own later channel
- * disturbance (deauth's per-round channel select).
+ * mtek_wifi_hal_esp32.c/mtk_fake_wifi_hal.h's own restore_sta_mode contract: a
+ * genuinely non-default prior mode/channel (previously silently discarded -- the
+ * old code hard-coded WIFI_MODE_STA and never touched the channel at all) is
+ * captured once at session entry and restored exactly, not overwritten by the
+ * session's own later channel disturbance (deauth's per-round channel select).
  *
- * Part 2 proves the explicit coexistence policy: mtek_arbiter.h's own
- * accepted single-active-class design (002-resource-arbiter.md Sec 2)
- * means BLE and Wi-Fi List B sessions share ONE platform-wide active-
- * class slot -- they are mutually exclusive, never independently
- * arbitrated and never genuinely concurrent. A BLE advertisement started
- * first correctly makes a Wi-Fi deauth attempted while it is still
- * running fail BUSY (never silently allowed to run at the same time);
- * once that BLE session actually stops, the identical deauth request
- * succeeds -- real, correct mutual exclusion, not a permanent lockout. */
+ * Part 2 proves the explicit coexistence policy: mtek_arbiter.h's own accepted
+ * single-active-class design means BLE and Wi-Fi List B sessions share ONE
+ * platform-wide active- class slot -- they are mutually exclusive, never
+ * independently arbitrated and never genuinely concurrent. A BLE advertisement
+ * started first correctly makes a Wi-Fi deauth attempted while it is still
+ * running fail BUSY (never silently allowed to run at the same time); once that
+ * BLE session actually stops, the identical deauth request succeeds -- real,
+ * correct mutual exclusion, not a permanent lockout. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtek_schema_message_descs.h"
@@ -33,8 +28,8 @@ MTK_TEST_MAIN_BEGIN
     mtk_fake_sink_state_t sink; memset(&sink, 0, sizeof(sink));
     mtk_request_ctx_t ctx = mtk_test_ctx(&sink, 1);
 
-    /* ---- Part 1a: a non-default prior mode/channel round-trips through
-     * a one-shot (count=1, synchronous fallback) BROADCAST deauth. */
+    /* Part 1a: a non-default prior mode/channel round-trips through a one-shot
+     * (count=1, synchronous fallback) BROADCAST deauth. */
     g_fake_wifi.mode = 2;            /* APSTA -- never the hard-coded STA the old code always restored to */
     g_fake_wifi.current_channel = 9; /* the real pre-session channel -- never touched by the old code at all */
     g_fake_wifi.sta_was_connected = 1;
@@ -52,10 +47,10 @@ MTK_TEST_MAIN_BEGIN
     MTK_CHECK_EQ(g_fake_wifi.current_channel, 9);  /* restored to the real prior channel, not left at 6 (the deauth's own operating channel) */
     MTK_CHECK(g_fake_wifi.reconnect_attempted_count >= 1); /* was_connected=1 threaded through the snapshot */
 
-    /* ---- Part 1b: the snapshot is captured EXACTLY ONCE per session --
-     * a session that disturbs the channel repeatedly (several packets)
-     * must still restore the ORIGINAL prior channel, not whatever the
-     * last per-packet channel select left behind. */
+    /* Part 1b: the snapshot is captured EXACTLY ONCE per session -- a session
+     * that disturbs the channel repeatedly (several packets) must still restore
+     * the ORIGINAL prior channel, not whatever the last per-packet channel
+     * select left behind. */
     mtk_fake_wifi_reset();
     g_fake_wifi.mode = 1;             /* AP */
     g_fake_wifi.current_channel = 11;
@@ -73,11 +68,10 @@ MTK_TEST_MAIN_BEGIN
     MTK_CHECK_EQ(g_fake_wifi.current_channel, 11);  /* still the ORIGINAL prior channel, not 3 */
     MTK_CHECK_EQ(g_fake_wifi.reconnect_attempted_count, 0); /* was_connected=0 -- no reconnect attempted */
 
-    /* ---- Part 1c: failure injection -- a channel-selection failure
-     * during the session must not corrupt the ALREADY-captured prior
-     * state (captured before the first, successful, set_channel call in
-     * Part 1b's own reset session below), and restore must still run to
-     * completion using the real snapshot. */
+    /* Part 1c: failure injection -- a channel-selection failure during the
+     * session must not corrupt the ALREADY-captured prior state (captured before
+     * the first, successful, set_channel call in Part 1b's own reset session
+     * below), and restore must still run to completion using the real snapshot. */
     mtk_fake_wifi_reset();
     g_fake_wifi.mode = 0; /* STA */
     g_fake_wifi.current_channel = 4;
@@ -89,23 +83,23 @@ MTK_TEST_MAIN_BEGIN
         rreq.frame.len = 10; memset(rreq.frame.data, 0x11, 10);
         g_fake_wifi.set_channel_rc = -1; /* the requested channel select itself fails */
         mtk_test_call(&ctx, raw_tx_op, &rreq);
-        MTK_CHECK_EQ(sink.response.status, MTK_STATUS_IO_ERROR); /* never transmits on a channel-selection failure (P0-9 raw-tx fix, re-verified here) */
+        MTK_CHECK_EQ(sink.response.status, MTK_STATUS_IO_ERROR); /* never transmits on a channel-selection
+                                                                  * failure */
         MTK_CHECK_EQ(g_fake_wifi.raw_tx_count, 0);
         g_fake_wifi.set_channel_rc = 0;
     }
 
-    /* ---- Part 2: BLE/Wi-Fi coexistence policy, explicitly proven.
-     * `mtk_arbiter.h`'s own accepted contract (002-resource-arbiter.md
-     * Sec 2) is a SINGLE platform-wide active class -- BLE and Wi-Fi
-     * List B sessions are NOT independently arbitered, they share the
-     * one active-class slot. This is the real enforcement mechanism that
-     * makes "BLE session active" and "Wi-Fi monitor/injection session
-     * active" mutually exclusive, never silently concurrent: a BLE
-     * advertisement holds MTK_ARB_BA for its whole running lifetime (like
-     * a live GATT connection holds MTK_ARB_GC), so a Wi-Fi deauth started
-     * while it is running is correctly rejected BUSY rather than silently
-     * allowed to run at the same time -- proven below, then proven to
-     * un-block cleanly once the BLE session actually stops. */
+    /* Part 2: BLE/Wi-Fi coexistence policy, explicitly proven. `mtk_arbiter.h`'s
+     * own accepted contract is a SINGLE platform-wide active class -- BLE and
+     * Wi-Fi List B sessions are NOT independently arbitered, they share the one
+     * active-class slot. This is the real enforcement mechanism that makes "BLE
+     * session active" and "Wi-Fi monitor/injection session active" mutually
+     * exclusive, never silently concurrent: a BLE advertisement holds MTK_ARB_BA
+     * for its whole running lifetime (like a live GATT connection holds
+     * MTK_ARB_GC), so a Wi-Fi deauth started while it is running is correctly
+     * rejected BUSY rather than silently allowed to run at the same time --
+     * proven below, then proven to un-block cleanly once the BLE session
+     * actually stops. */
     mtk_fake_wifi_reset();
     mtk_fake_ble_reset();
     g_fake_wifi.mode = 0; g_fake_wifi.current_channel = 1;

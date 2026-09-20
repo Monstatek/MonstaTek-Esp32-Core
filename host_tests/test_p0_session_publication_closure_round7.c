@@ -1,64 +1,53 @@
-/* Release-tooling-round P0 correction, ROUND 7 (follow-up read-only audit,
- * "next focused P0 session-publication closure round"): rounds 5/6 closed
- * the publish/reset race for STA_CONNECT alone (mtk_op_begin_publish_guard,
- * test_p0_concurrency_closure_round5.c's own test_won_session_reset_race).
- * This round extends the SAME guard to every other delayed/background
- * producer this tree defines -- deauth's own natural-completion tail,
- * handshake's hs_frame_cb/handshake_finish, MonstaShark capture's frame_cb/
- * mtek_capture_channel_hop_tick/capture_teardown, BLE's mtek_ble_signal_
- * meter_tick, and GATT's mtek_ble_gatt_tick -- and adds a genuinely new
- * dedicated lock domain (mtek_ble_service_set_lock) protecting s_sig/
- * s_gatt, which previously had no lock of any kind at all.
+/* ROUND 7 (follow-up read-only audit, "next focused P0 session-publication
+ * closure round"): rounds 5/6 closed the publish/reset race for STA_CONNECT
+ * alone (mtk_op_begin_publish_guard, test_p0_concurrency_closure_round5.c's own
+ * test_won_session_reset_race). This round extends the SAME guard to every other
+ * delayed/background producer this tree defines -- deauth's own
+ * natural-completion tail, handshake's hs_frame_cb/handshake_finish, MonstaShark
+ * capture's frame_cb/ mtek_capture_channel_hop_tick/capture_teardown, BLE's
+ * mtek_ble_signal_ meter_tick, and GATT's mtek_ble_gatt_tick -- and adds a
+ * genuinely new dedicated lock domain (mtek_ble_service_set_lock) protecting
+ * s_sig/ s_gatt, which previously had no lock of any kind at all.
  *
- * This file proves, for each of the five producer classes named above:
- *   A. A real changed-epoch HELLO landing while the producer is paused
- *      INSIDE mtk_op_begin_publish_guard (mtk_op_set_won_hook, exactly
- *      round 5's own test seam) genuinely BLOCKS -- the session generation
- *      does not change until the producer resumes and releases the guard
- *      -- and the producer's own already-legitimate publish then completes
- *      strictly BEFORE the now-unblocked reset's own cleanup runs.
- *   B. A producer whose long-lived session struct was captured under an
- *      OLDER session_generation, invoked AFTER a real HELLO has already
- *      bumped the generation (this exact struct possibly already torn
- *      down by the SAME reset's own per-service cancel-for-peer-reset
- *      call), publishes nothing at all -- mtk_op_begin_publish_guard
- *      itself refuses before any sink call is ever reached -- and a
- *      genuinely NEW session of the same kind, started immediately
- *      afterward under the new generation, works normally end-to-end
- *      with no leftover state from the old one.
- * Plus two smaller, direct proofs:
- *   C. Every non-native adapter's request carries session_generation==0
- *      (mtk_test_ctx's own established convention) -- mtk_op_begin_
- *      publish_guard(0) always succeeds, completely unaffected by however
- *      many real peer-session resets have happened in the meantime.
- *   D. mtk_op_set_publish_lock(NULL, NULL) / mtek_ble_service_set_lock
- *      (NULL, NULL) never CRASH: every lock/unlock call the guard and the
- *      BLE lock domain make is itself NULL-checked (mtek_core.c's pub_
- *      lock/pub_unlock, mtek_ble_logic.c's ble_lock/ble_unlock), so an
- *      unregistered lock degrades to a no-op critical section rather than
- *      invoking UB on a NULL FreeRTOS handle -- proven here by running a
- *      full SIGNAL_METER_START/tick/STOP cycle with both explicitly
- *      unregistered.
+ * This file proves, for each of the five producer classes named above: A. A real
+ * changed-epoch HELLO landing while the producer is paused INSIDE
+ * mtk_op_begin_publish_guard (mtk_op_set_won_hook, exactly round 5's own test
+ * seam) genuinely BLOCKS -- the session generation does not change until the
+ * producer resumes and releases the guard -- and the producer's own
+ * already-legitimate publish then completes strictly BEFORE the now-unblocked
+ * reset's own cleanup runs. B. A producer whose long-lived session struct was
+ * captured under an OLDER session_generation, invoked AFTER a real HELLO has
+ * already bumped the generation (this exact struct possibly already torn down by
+ * the SAME reset's own per-service cancel-for-peer-reset call), publishes
+ * nothing at all -- mtk_op_begin_publish_guard itself refuses before any sink
+ * call is ever reached -- and a genuinely NEW session of the same kind, started
+ * immediately afterward under the new generation, works normally end-to-end with
+ * no leftover state from the old one. Plus two smaller, direct proofs: C. Every
+ * non-native adapter's request carries session_generation==0 (mtk_test_ctx's own
+ * established convention) -- mtk_op_begin_ publish_guard(0) always succeeds,
+ * completely unaffected by however many real peer-session resets have happened
+ * in the meantime. D. mtk_op_set_publish_lock(NULL, NULL) /
+ * mtek_ble_service_set_lock (NULL, NULL) never CRASH: every lock/unlock call the
+ * guard and the BLE lock domain make is itself NULL-checked (mtek_core.c's pub_
+ * lock/pub_unlock, mtek_ble_logic.c's ble_lock/ble_unlock), so an unregistered
+ * lock degrades to a no-op critical section rather than invoking UB on a NULL
+ * FreeRTOS handle -- proven here by running a full SIGNAL_METER_START/tick/STOP
+ * cycle with both explicitly unregistered.
  *
- *      P0 correction (follow-up read-only audit, "Round 8: final
- *      concurrency and resource-failure closure", item 5): an EARLIER
- *      version of this doc comment (and of main/app_main.c's own design)
- *      mischaracterized this as itself a SAFE degraded mode on a real
- *      target. It is not: this proof establishes only NULL-CALL
- *      TOLERANCE (the wrapper cannot crash) -- this single-threaded host
- *      test never has two tasks genuinely racing s_sig under an
- *      unregistered lock, so it cannot and does not demonstrate that
- *      running with no synchronization at all is safe. On a real target,
- *      a no-op critical section still lets every task touching the
- *      affected shared state run fully concurrently and UNLOCKED against
- *      it -- a genuine data-race/memory-corruption hazard, not a safe
- *      one. The actual fix for a real allocation failure is main/
- *      app_main.c's own mtek_enter_safe_failure_state (a mandatory-mutex
- *      failure now halts boot before any task that could race anything
- *      ever starts) -- not host-testable directly (no FreeRTOS on host,
- *      and this file cannot make xSemaphoreCreateMutex itself fail), so
- *      this test's only honest claim remains "does not crash when
- *      unregistered", nothing broader. */
+ * An EARLIER version of this doc comment (and of main/app_main.c's own design)
+ * mischaracterized this as itself a SAFE degraded mode on a real target. It is
+ * not: this proof establishes only NULL-CALL TOLERANCE (the wrapper cannot
+ * crash) -- this single-threaded host test never has two tasks genuinely racing
+ * s_sig under an unregistered lock, so it cannot and does not demonstrate that
+ * running with no synchronization at all is safe. On a real target, a no-op
+ * critical section still lets every task touching the affected shared state run
+ * fully concurrently and UNLOCKED against it -- a genuine
+ * data-race/memory-corruption hazard, not a safe one. The actual fix for a real
+ * allocation failure is main/ app_main.c's own mtek_enter_safe_failure_state (a
+ * mandatory-mutex failure now halts boot before any task that could race
+ * anything ever starts) -- not host-testable directly (no FreeRTOS on host, and
+ * this file cannot make xSemaphoreCreateMutex itself fail), so this test's only
+ * honest claim remains "does not crash when unregistered", nothing broader. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtek_spi_native_dispatch.h"
@@ -71,26 +60,24 @@
 #include <time.h>
 #include <stdatomic.h>
 
-/* ---- Lock domains, mirroring main/app_main.c's own real wiring: every
- * dedicated mutex below is genuinely distinct from every other one, since
- * a sink emit call reachable from inside the publish guard (or the new
- * BLE lock domain) must never re-enter a mutex an outer caller already
- * holds. ---- */
+/* Lock domains, mirroring main/app_main.c's own real wiring: every dedicated
+ * mutex below is genuinely distinct from every other one, since a sink emit call
+ * reachable from inside the publish guard (or the new BLE lock domain) must
+ * never re-enter a mutex an outer caller already holds. -- */
 static pthread_mutex_t s_router_mutex = PTHREAD_MUTEX_INITIALIZER;
 static void router_lock(void) { pthread_mutex_lock(&s_router_mutex); }
 static void router_unlock(void) { pthread_mutex_unlock(&s_router_mutex); }
 static void queue_lock(void *ctx) { (void)ctx; pthread_mutex_lock(&s_router_mutex); }
 static void queue_unlock(void *ctx) { (void)ctx; pthread_mutex_unlock(&s_router_mutex); }
 
-/* M3 TSan-harness-correction round (independent review P1 "the new
- * admission test is not fully deterministic yet"): a shared helper for
- * every bounded, condition-variable-based wait below -- computes an
- * absolute CLOCK_REALTIME deadline `timeout_ms` from now, for use with
- * pthread_cond_timedwait. Every wait in this file that used to be a
- * scheduling usleep()-then-check (or an unbounded join with no prior
- * proof) is replaced with a genuine mutex/condition attempt-signal and a
- * bounded wait against a deadline built here -- a lock-order regression
- * now reports a controlled test FAILURE, never a process hang. */
+/* (independent review P1 "the new admission test is not fully deterministic
+ * yet"): a shared helper for every bounded, condition-variable-based wait below
+ * -- computes an absolute CLOCK_REALTIME deadline `timeout_ms` from now, for use
+ * with pthread_cond_timedwait. Every wait in this file that used to be a
+ * scheduling usleep-then-check (or an unbounded join with no prior proof) is
+ * replaced with a genuine mutex/condition attempt-signal and a bounded wait
+ * against a deadline built here -- a lock-order regression now reports a
+ * controlled test FAILURE, never a process hang. */
 static void abstime_after_ms(struct timespec *ts, long timeout_ms) {
     clock_gettime(CLOCK_REALTIME, ts);
     ts->tv_sec += timeout_ms / 1000;
@@ -99,14 +86,14 @@ static void abstime_after_ms(struct timespec *ts, long timeout_ms) {
 }
 
 static pthread_mutex_t s_pub_mutex = PTHREAD_MUTEX_INITIALIZER;
-/* This file's own registered pub_lock implementation (mtk_op_set_
- * publish_lock, below) -- NOT production code, so instrumenting it is
- * not a production-facing hook at all. Every attempt to acquire pub_lock,
- * by any caller, increments `attempts` and broadcasts BEFORE actually
- * blocking on the real mutex -- letting a test bounded-wait for genuine
- * proof that a specific thread (e.g. a real changed-epoch HELLO) has
- * actually reached the point of attempting this lock, replacing a
- * scheduling usleep() that only makes "still blocked" vacuously true. */
+/* This file's own registered pub_lock implementation (mtk_op_set_ publish_lock,
+ * below) -- NOT production code, so instrumenting it is not a production-facing
+ * hook at all. Every attempt to acquire pub_lock, by any caller, increments
+ * `attempts` and broadcasts BEFORE actually blocking on the real mutex --
+ * letting a test bounded-wait for genuine proof that a specific thread (e.g. a
+ * real changed-epoch HELLO) has actually reached the point of attempting this
+ * lock, replacing a scheduling usleep that only makes "still blocked" vacuously
+ * true. */
 static pthread_mutex_t s_pub_lock_attempts_m = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t s_pub_lock_attempts_cv = PTHREAD_COND_INITIALIZER;
 static unsigned s_pub_lock_attempts;
@@ -142,22 +129,21 @@ static pthread_mutex_t s_cap_mutex = PTHREAD_MUTEX_INITIALIZER;
 static void cap_lock_fn(void) { pthread_mutex_lock(&s_cap_mutex); }
 static void cap_unlock_fn(void) { pthread_mutex_unlock(&s_cap_mutex); }
 
-/* P0 correction (this round, requirement 4): the new lock domain for
- * s_sig/s_gatt (mtek_ble_service_set_lock) -- previously nothing at all. */
+/* The new lock domain for s_sig/s_gatt (mtek_ble_service_set_lock) -- previously
+ * nothing at all. */
 static pthread_mutex_t s_ble_mutex = PTHREAD_MUTEX_INITIALIZER;
 static void ble_lock_fn(void) { pthread_mutex_lock(&s_ble_mutex); }
 static void ble_unlock_fn(void) { pthread_mutex_unlock(&s_ble_mutex); }
 
-/* This file's own deferred-worker accounting -- NOT a production concept.
- * Every ACCEPTED_ASYNC dispatch below runs on its own detached pthread
- * (matching a real target's own async runner); with many back-to-back
- * scenarios in one process, TSan's much heavier per-thread bookkeeping
- * can otherwise leave a PRIOR scenario's own worker still winding down
- * while the NEXT scenario's mtk_fake_wifi_reset()/mtk_fake_ble_reset()
- * already clobbers the shared fake-HAL state it is still touching -- a
- * genuine cross-scenario race in this test harness, not in the
- * production code under test. Tracked with a counter/condvar so each
- * scenario can wait for full quiescence before it starts. */
+/* This file's own deferred-worker accounting -- NOT a production concept. Every
+ * ACCEPTED_ASYNC dispatch below runs on its own detached pthread (matching a
+ * real target's own async runner); with many back-to-back scenarios in one
+ * process, TSan's much heavier per-thread bookkeeping can otherwise leave a
+ * PRIOR scenario's own worker still winding down while the NEXT scenario's
+ * mtk_fake_wifi_reset/mtk_fake_ble_reset already clobbers the shared fake-HAL
+ * state it is still touching -- a genuine cross-scenario race in this test
+ * harness, not in the production code under test. Tracked with a counter/condvar
+ * so each scenario can wait for full quiescence before it starts. */
 static pthread_mutex_t s_worker_count_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t s_worker_count_cv = PTHREAD_COND_INITIALIZER;
 static int s_worker_count = 0;
@@ -207,24 +193,23 @@ static int wait_for_workers_idle(void) {
     return idle;
 }
 
-/* ---- won-hook pause rendezvous: pauses whichever producer thread is
- * currently INSIDE mtk_op_begin_publish_guard (still holding the guard's
- * own lock), so a concurrent real HELLO's own attempt to bump the session
- * generation can be proven to genuinely block on the SAME lock -- exactly
- * round 5's own test_won_session_reset_race seam (mtk_op_set_won_hook),
- * reused here for every OTHER producer this round adds guarding to. ---- */
-/* M2 TSan-harness-correction round (independent review addendum P1
- * "synchronization objects are reinitialized"): pthread_mutex_init/
- * pthread_cond_init on an already-initialized object is undefined by
- * POSIX -- this file's own scenarios call *_reset() once per scenario, on
- * the SAME static objects, many times over. Fixed generically: every
- * rendezvous below is statically initialized exactly once (PTHREAD_MUTEX_
- * INITIALIZER/PTHREAD_COND_INITIALIZER) and *_reset() only clears the
- * predicate fields, under the lock -- never touches the mutex/cond
- * objects themselves again. One generic type/four generic functions,
- * reused by every named rendezvous instance in this file (won-hook pause,
- * admission-begin pause, admission-prepublish pause) instead of copying
- * the same four functions per instance. */
+/* won-hook pause rendezvous: pauses whichever producer thread is currently
+ * INSIDE mtk_op_begin_publish_guard (still holding the guard's own lock), so a
+ * concurrent real HELLO's own attempt to bump the session generation can be
+ * proven to genuinely block on the SAME lock -- exactly round 5's own
+ * test_won_session_reset_race seam (mtk_op_set_won_hook), reused here for every
+ * OTHER producer adds guarding to. -- */
+/* (independent review addendum P1 "synchronization objects are reinitialized"):
+ * pthread_mutex_init/ pthread_cond_init on an already-initialized object is
+ * undefined by POSIX -- this file's own scenarios call *_reset once per
+ * scenario, on the SAME static objects, many times over. Fixed generically:
+ * every rendezvous below is statically initialized exactly once (PTHREAD_MUTEX_
+ * INITIALIZER/PTHREAD_COND_INITIALIZER) and *_reset only clears the predicate
+ * fields, under the lock -- never touches the mutex/cond objects themselves
+ * again. One generic type/four generic functions, reused by every named
+ * rendezvous instance in this file (won-hook pause, admission-begin pause,
+ * admission-prepublish pause) instead of copying the same four functions per
+ * instance. */
 typedef struct {
     pthread_mutex_t m; pthread_cond_t cv;
     int arrived; int release;
@@ -279,13 +264,13 @@ static pthread_t spawn_trigger(void (*trigger)(void)) {
     return t;
 }
 
-/* ---- Real native SPI v1 cell plumbing, mirroring test_p0_concurrency_
- * closure_round5.c's own base_req_hdr_b/hello_hdr_b/hello_thread_fn
- * exactly -- only a real changed-epoch HELLO through this exact path
- * actually stamps mtk_request_ctx_t.session_generation and drives
- * mtk_core_bump_session_generation(), which is what this round's own
- * requirement ("issue a real changed-epoch HELLO concurrently") demands,
- * not a direct call to an internal helper. ---- */
+/* Real native SPI v1 cell plumbing, mirroring test_p0_concurrency_
+ * closure_round5.c's own base_req_hdr_b/hello_hdr_b/hello_thread_fn exactly --
+ * only a real changed-epoch HELLO through this exact path actually stamps
+ * mtk_request_ctx_t.session_generation and drives
+ * mtk_core_bump_session_generation, which is what the requirement ("issue a real
+ * changed-epoch HELLO concurrently") demands, not a direct call to an internal
+ * helper. -- */
 static mtk_spi_native_header_t base_req_hdr(uint16_t service, uint16_t opcode, uint32_t request_id,
                                              uint16_t payload_len, uint32_t peer_epoch) {
     mtk_spi_native_header_t h; memset(&h, 0, sizeof(h));
@@ -311,15 +296,14 @@ typedef struct {
     uint32_t peer_epoch;
     int done; /* guarded by s_hello_done_m -- see hello_set_done/hello_is_done */
 } hello_thread_arg_t;
-/* M2 TSan-harness-correction round (diagnosis "same-shape defect not
- * named by this run"): `done` used to be `volatile int`, written by the
- * HELLO thread and read by the main thread WHILE that thread is still
- * running (the "genuinely still blocked" checks below deliberately read
- * it mid-flight) -- a real C data race the TSan run that triggered this
- * correction did not happen to report, which is not the same as one that
- * cannot fire. round8's test_p0_round8_final_closure.c already carries
- * the correct mutex-backed pattern (hello_set_done/hello_is_done); ported
- * here verbatim rather than left to diverge. */
+/* (diagnosis "same-shape defect not named by this run"): `done` used to be
+ * `volatile int`, written by the HELLO thread and read by the main thread WHILE
+ * that thread is still running (the "genuinely still blocked" checks below
+ * deliberately read it mid-flight) -- a real C data race the TSan run that
+ * triggered this correction did not happen to report, which is not the same as
+ * one that cannot fire. round8's test_p0_round8_final_closure.c already carries
+ * the correct mutex-backed pattern (hello_set_done/hello_is_done); ported here
+ * verbatim rather than left to diverge. */
 static pthread_mutex_t s_hello_done_m = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t s_hello_done_cv = PTHREAD_COND_INITIALIZER;
 static void hello_set_done(hello_thread_arg_t *a) {
@@ -334,12 +318,11 @@ static int hello_is_done(hello_thread_arg_t *a) {
     pthread_mutex_unlock(&s_hello_done_m);
     return d;
 }
-/* M3 correction (independent review P1): bounded wait for the HELLO's own
- * actual completion, replacing a scheduling usleep() before an unbounded
- * pthread_join -- a regression (the guard never releasing, a genuine
- * deadlock) now reports a controlled test FAILURE here, with the later
- * join already known-bounded, instead of hanging the whole ctest process
- * with no prior detector at all. */
+/* M3 correction (independent review P1): bounded wait for the HELLO's own actual
+ * completion, replacing a scheduling usleep before an unbounded pthread_join --
+ * a regression (the guard never releasing, a genuine deadlock) now reports a
+ * controlled test FAILURE here, with the later join already known-bounded,
+ * instead of hanging the whole ctest process with no prior detector at all. */
 static int hello_wait_done(hello_thread_arg_t *a, long timeout_ms) {
     struct timespec deadline; abstime_after_ms(&deadline, timeout_ms);
     pthread_mutex_lock(&s_hello_done_m);
@@ -415,28 +398,27 @@ static int wait_for_arbiter_class(mtk_arbiter_class_t cls) {
     return 0;
 }
 
-/* GATT_CONNECT's own arbiter grant happens BEFORE the (fake, but still a
- * real call-through) gatt_connect() HAL call and the guarded s_gatt commit
- * that follows it -- wait_for_arbiter_class alone only proves the connect
- * attempt started, not that s_gatt.connected is actually 1 yet. Polls
- * GATT_STATUS (a MTK_LC_SYNCHRONOUS opcode, answered inline) until it
- * reports connected, so a subsequent GATT_SUBSCRIBE in the same scenario
- * never races the still-in-flight connect. */
+/* GATT_CONNECT's own arbiter grant happens BEFORE the (fake, but still a real
+ * call-through) gatt_connect HAL call and the guarded s_gatt commit that follows
+ * it -- wait_for_arbiter_class alone only proves the connect attempt started,
+ * not that s_gatt.connected is actually 1 yet. Polls GATT_STATUS (a
+ * MTK_LC_SYNCHRONOUS opcode, answered inline) until it reports connected, so a
+ * subsequent GATT_SUBSCRIBE in the same scenario never races the still-in-flight
+ * connect. */
 static int wait_for_gatt_connected(uint32_t connection_token, uint32_t peer_epoch) {
     const mtk_opcode_entry_t *status_op = mtk_test_find_op("GATT_STATUS");
     mtk_gatt_status_req_t req = {0}; req.connection_token = connection_token;
-    /* RC12 hardening round verification: this polls for a DEFERRED GATT_
-     * CONNECT worker's own s_gatt.connected commit. Under ThreadSanitizer's
-     * 10-30x instrumentation slowdown the former tight poll (20000 x 500us,
-     * no yield) could STARVE that worker thread -- the main thread's own
-     * back-to-back feed_cell dispatches monopolised the shared locks the
-     * worker also needs, so the worker made little progress and the wait
-     * intermittently gave up (~15-20% flake, SOLO, TSan-only; ASan 0/25,
-     * and TSan reports zero data races here -- a scheduling-fairness flake,
-     * not a correctness or race bug). The fix gives the worker a genuine
+    /* This polls for a DEFERRED GATT_ CONNECT worker's own s_gatt.connected
+     * commit. Under ThreadSanitizer's 10-30x instrumentation slowdown the former
+     * tight poll (20000 x 500us, no yield) could STARVE that worker thread --
+     * the main thread's own back-to-back feed_cell dispatches monopolised the
+     * shared locks the worker also needs, so the worker made little progress and
+     * the wait intermittently gave up (~15-20% flake, SOLO, TSan-only; ASan
+     * 0/25, and TSan reports zero data races here -- a scheduling-fairness
+     * flake, not a correctness or race bug). The fix gives the worker a genuine
      * uncontended window every poll: yield THEN sleep a few ms with no lock
-     * held, so a merely-slow worker reliably reaches its commit. The happy
-     * path still returns within the first poll or two (a few ms). */
+     * held, so a merely-slow worker reliably reaches its commit. The happy path
+     * still returns within the first poll or two (a few ms). */
     for (int i = 0; i < 20000; i++) {
         uint8_t buf[MTK_SPI_NATIVE_MAX_PAYLOAD]; size_t blen = 0;
         mtk_encode(status_op->req_desc, &req, buf, sizeof(buf), &blen);
@@ -477,23 +459,22 @@ static int wait_for_promisc_start(void) {
 }
 
 /* Same readiness hazard as wait_for_promisc_start, for SIGNAL_METER_START
- * specifically: handle_signal_meter_start's own locked s_sig init runs
- * strictly before its own inline first-sample mtek_ble_signal_meter_tick()
- * call (same thread, real happens-before) -- waiting for that first
- * sample's own SIGNAL_METER_UPDATE to actually land in the queue is a
- * reliable proxy for "s_sig is now fully committed", unlike the arbiter
- * class alone (granted even earlier, before s_sig is touched at all).
+ * specifically: handle_signal_meter_start's own locked s_sig init runs strictly
+ * before its own inline first-sample mtek_ble_signal_meter_tick call (same
+ * thread, real happens-before) -- waiting for that first sample's own
+ * SIGNAL_METER_UPDATE to actually land in the queue is a reliable proxy for
+ * "s_sig is now fully committed", unlike the arbiter class alone (granted even
+ * earlier, before s_sig is touched at all).
  *
- * P0 correction (this round, TSan-caught test-harness bug): the ACCEPTED
- * response for SIGNAL_METER_START itself lands in this SAME queue (a
- * plain frame count, regardless of kind) strictly BEFORE the inline first
- * sample's own now_ms() read -- an earlier version of this helper waited
- * for "count >= 1" alone, which the response frame alone could already
- * satisfy, so a caller proceeding to mutate the test clock right
- * afterward could still race that in-flight read (TSan: "data race ...
- * s_mtk_test_now_ms"). Drains frames until it actually sees one of KIND
- * EVENT specifically -- a real happens-before edge (via the queue's own
- * mutex) from the tick's own push back to this observation. */
+ * The ACCEPTED response for SIGNAL_METER_START itself lands in this SAME queue
+ * (a plain frame count, regardless of kind) strictly BEFORE the inline first
+ * sample's own now_ms read -- an earlier version of this helper waited for
+ * "count >= 1" alone, which the response frame alone could already satisfy, so a
+ * caller proceeding to mutate the test clock right afterward could still race
+ * that in-flight read (TSan: "data race... s_mtk_test_now_ms"). Drains frames
+ * until it actually sees one of KIND EVENT specifically -- a real happens-before
+ * edge (via the queue's own mutex) from the tick's own push back to this
+ * observation. */
 static int wait_for_queue_count_at_least(unsigned n) {
     (void)n; /* always exactly one EVENT -- every call site here waits for the one first-sample SIGNAL_METER_UPDATE */
     for (int i = 0; i < 20000; i++) {
@@ -830,10 +811,10 @@ static void test_gatt_notify_guard(void) {
  * equivalent for STA_CONNECT. ============================================ */
 static void test_stale_producer_publishes_nothing(void) {
     MTK_CHECK(wait_for_workers_idle());
-    /* -- Signal meter: start, let the reset invalidate it, then a stale
-     * tick must not touch anything (no crash, no event, no arbiter
-     * change), and a brand-new SIGNAL_METER_START immediately afterward
-     * must work cleanly under the new generation. -- */
+    /* Signal meter: start, let the reset invalidate it, then a stale tick must
+     * not touch anything (no crash, no event, no arbiter change), and a
+     * brand-new SIGNAL_METER_START immediately afterward must work cleanly under
+     * the new generation. -- */
     mtk_fake_ble_reset();
     g_fake_ble.signal_rc = 0; g_fake_ble.signal_rssi = -50;
     uint32_t peer1 = fresh_session();
@@ -874,11 +855,10 @@ static void test_stale_producer_publishes_nothing(void) {
     feed_request(sig_stop, &stopreq, peer2);
     MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_NONE);
 
-    /* -- GATT: connect, subscribe, reset (stale), stale notify tick
-     * publishes nothing, then a genuinely new connect+subscribe+notify
-     * cycle works cleanly under the new generation, proving the old
-     * connection's own s_gatt fields (vendor_handle/connection_token/
-     * subs[]) never leak into the new one. -- */
+    /* GATT: connect, subscribe, reset (stale), stale notify tick publishes
+     * nothing, then a genuinely new connect+subscribe+notify cycle works cleanly
+     * under the new generation, proving the old connection's own s_gatt fields
+     * (vendor_handle/connection_token/ subs[]) never leak into the new one. -- */
     MTK_CHECK(wait_for_workers_idle());
     mtk_fake_ble_reset();
     g_fake_ble.gatt_connect_rc = 0; g_fake_ble.gatt_vendor_handle = 11;
@@ -973,44 +953,39 @@ static void test_unregistered_locks_do_not_crash(void) {
     mtek_ble_service_set_lock(ble_lock_fn, ble_unlock_fn);
 }
 
-/* ============================================================================
- * Diagnosed ownership-publication fix (TSan-exposed, this exact file's own
- * test_gatt_notify_guard scenario at 79.49s wall-clock under TSan): a
+/* ============================================================================ a
  * producer previously acquired its arbiter class with placeholder token 0,
  * minted the real token, THEN force-transferred it in -- a real, externally
  * observable window where the arbiter reports a token-backed class owned by
  * token 0. Fixed by mtk_op_begin_admission_guard/mtk_op_end_admission_guard
- * (mtek_core.h) serializing admission against mtk_core_bump_session_
- * generation the same way the publish guard above already does, and by
- * minting the token BEFORE acquiring the arbiter so ownership publishes
- * atomically in one call.
+ * (mtek_core.h) serializing admission against mtk_core_bump_session_ generation
+ * the same way the publish guard above already does, and by minting the token
+ * BEFORE acquiring the arbiter so ownership publishes atomically in one call.
  *
- * M2 TSan-harness-correction round: the first version of this proof below
- * paused admission, then spin-polled mtk_arbiter_snapshot() from a second
- * thread while merely joining the DISPATCHING thread (spawn_trigger's own
- * thread) -- which only waits for feed_request's own call to return, not
- * for the actual (possibly detached, async-runner-dispatched) worker that
- * performs admission. That polling thread also shared its own stop flag
- * with the main thread through a plain `volatile int`, a real, TSan-caught
- * C data race. Both are replaced here with a genuinely deterministic
- * two-phase rendezvous, using the SECOND, distinct test seam
- * (mtk_op_set_admission_prepublish_hook, mtek_core.h) that fires at the
- * OPPOSITE end of the same guard span, still holding pub_lock: phase 1
- * (mtk_op_set_admission_hook) pauses BEFORE the token exists, proving a
- * real changed-epoch HELLO genuinely blocks; phase 2
- * (mtk_op_set_admission_prepublish_hook) pauses AFTER the real token is
- * minted, arbiter ownership published, cancellation-visible state
- * committed, and the single synchronous result (ACCEPTED, or a guarded
- * rejection/failure) already queued -- while the guard is STILL held and
- * the SAME HELLO remains blocked -- so every assertion below is backed by
- * a real happens-before edge, never a timing guess. Covers all ten
- * token-backed producer families named by the governing prompt (a shared
- * parameterized runner, since the admission shape is identical across all
- * ten; deauth's GUARDED-tolerant path and BLE advertising's own inline
- * HAL failure path each get their own dedicated call), a dedicated proof
- * that RAW_TX's token 0 remains its own genuine, unchanged identity, and a
- * concurrency proof for the mtk_arbiter_snapshot() coherent-read API.
- * ==========================================================================*/
+ * The first version of this proof below paused admission, then spin-polled
+ * mtk_arbiter_snapshot from a second thread while merely joining the DISPATCHING
+ * thread (spawn_trigger's own thread) -- which only waits for feed_request's own
+ * call to return, not for the actual (possibly detached,
+ * async-runner-dispatched) worker that performs admission. That polling thread
+ * also shared its own stop flag with the main thread through a plain `volatile
+ * int`, a real, TSan-caught C data race. Both are replaced here with a genuinely
+ * deterministic two-phase rendezvous, using the SECOND, distinct test seam
+ * (mtk_op_set_admission_prepublish_hook, mtek_core.h) that fires at the OPPOSITE
+ * end of the same guard span, still holding pub_lock: phase 1
+ * (mtk_op_set_admission_hook) pauses BEFORE the token exists, proving a real
+ * changed-epoch HELLO genuinely blocks; phase 2
+ * (mtk_op_set_admission_prepublish_hook) pauses AFTER the real token is minted,
+ * arbiter ownership published, cancellation-visible state committed, and the
+ * single synchronous result (ACCEPTED, or a guarded rejection/failure) already
+ * queued -- while the guard is STILL held and the SAME HELLO remains blocked --
+ * so every assertion below is backed by a real happens-before edge, never a
+ * timing guess. Covers all ten token-backed producer families named by the
+ * governing prompt (a shared parameterized runner, since the admission shape is
+ * identical across all ten; deauth's GUARDED-tolerant path and BLE advertising's
+ * own inline HAL failure path each get their own dedicated call), a dedicated
+ * proof that RAW_TX's token 0 remains its own genuine, unchanged identity, and a
+ * concurrency proof for the mtk_arbiter_snapshot coherent-read API.
+ * ========================================================================== */
 
 static rendezvous_t s_admission_pause = RENDEZVOUS_INIT;
 static void admission_hook_pause(uint32_t generation) { (void)generation; rendezvous_pause(&s_admission_pause); }
@@ -1107,13 +1082,13 @@ static void run_admission_race(const mtk_opcode_entry_t *op, void (*trigger)(voi
     pthread_t hello_tid;
     MTK_CHECK(pthread_create(&hello_tid, NULL, hello_thread_fn, &hello_arg) == 0);
 
-    /* M3 correction (independent review P1 "usleep as the only evidence
-     * ... a delayed thread makes !done vacuously true"): a real, mutex/
-     * condition-backed proof that the HELLO thread has genuinely
-     * ATTEMPTED to acquire pub_lock -- admission itself already holds
-     * pub_lock throughout this window (paused inside the begin hook, not
-     * re-attempting anything), so no thread other than this HELLO can be
-     * the source of an attempt observed here. */
+    /* M3 correction (independent review P1 "usleep as the only evidence... a
+     * delayed thread makes !done vacuously true"): a real, mutex/
+     * condition-backed proof that the HELLO thread has genuinely ATTEMPTED to
+     * acquire pub_lock -- admission itself already holds pub_lock throughout
+     * this window (paused inside the begin hook, not re-attempting anything), so
+     * no thread other than this HELLO can be the source of an attempt observed
+     * here. */
     MTK_CHECK(wait_for_pub_lock_attempt_past(pub_lock_baseline, 5000));
     MTK_CHECK(!hello_is_done(&hello_arg)); /* genuinely still blocked -- cannot bump while admission is open */
     MTK_CHECK_EQ(mtk_core_session_generation(), generation_before);
@@ -1163,23 +1138,22 @@ static void run_admission_race(const mtk_opcode_entry_t *op, void (*trigger)(voi
      * count condition variable. */
     MTK_CHECK(wait_for_workers_idle());
 
-    /* Reset-cancellation proof, generically true across every family
-     * (confirmed directly against mtek_wifi_cancel_active_for_peer_reset/
+    /* Reset-cancellation proof, generically true across every family (confirmed
+     * directly against mtek_wifi_cancel_active_for_peer_reset/
      * mtek_ble_cancel_active_for_peer_reset/mtek_capture_cancel_active_
      * for_peer_reset: every branch forces a RUNNING token to a terminal
-     * mtk_op_transition_by_token(..., STOPPED, ...) via arbiter-ownership
-     * alone, independent of whatever blocking HAL call the worker's own
-     * call stack may or may not have reached yet): the exact captured
-     * token must now be either evicted or terminal -- never still
-     * RUNNING. Family-specific "no stale HAL resource/event" coverage
-     * (radio actually restored, promiscuous mode actually stopped, GATT
-     * actually disconnected, etc.) already exists as dedicated tests
-     * elsewhere in this file (test_deauth_completion_guard,
+     * mtk_op_transition_by_token(..., STOPPED,...) via arbiter-ownership alone,
+     * independent of whatever blocking HAL call the worker's own call stack may
+     * or may not have reached yet): the exact captured token must now be either
+     * evicted or terminal -- never still RUNNING. Family-specific "no stale HAL
+     * resource/event" coverage (radio actually restored, promiscuous mode
+     * actually stopped, GATT actually disconnected, etc.) already exists as
+     * dedicated tests elsewhere in this file (test_deauth_completion_guard,
      * test_handshake_progress_guard, test_gatt_notify_guard,
-     * test_capture_stream_guard, test_signal_meter_guard), which pause at
-     * the LATER terminal-publish point via the pre-existing won-hook --
-     * not duplicated here, since this proof's own scope is the admission
-     * window specifically. */
+     * test_capture_stream_guard, test_signal_meter_guard), which pause at the
+     * LATER terminal-publish point via the pre-existing won-hook -- not
+     * duplicated here, since this proof's own scope is the admission window
+     * specifically. */
     mtk_operation_record_t final_snap;
     if (mtk_op_snapshot(snap.token, mtk_core_boot_epoch(), &final_snap)) {
         MTK_CHECK(mtk_op_state_is_terminal(final_snap.state));
@@ -1399,11 +1373,11 @@ static void trigger_ble_adv_failure_admission(void) {
     mtk_ble_adv_start_req_t req; memset(&req, 0, sizeof(req));
     feed_request(op, &req, s_admission_peer_epoch);
 }
-/* BLE-advertising failure shape: g_fake_ble.adv_start_rc forces the
- * in-guard adv_start() HAL call to fail, driving the immediate IO_ERROR
- * path (handle_ble_adv_start's own dedicated failure branch, distinct
- * from every other site's NO_MEMORY/BUSY-only shape) -- proving that
- * response, too, is published before the guard unlocks. */
+/* BLE-advertising failure shape: g_fake_ble.adv_start_rc forces the in-guard
+ * adv_start HAL call to fail, driving the immediate IO_ERROR path
+ * (handle_ble_adv_start's own dedicated failure branch, distinct from every
+ * other site's NO_MEMORY/BUSY-only shape) -- proving that response, too, is
+ * published before the guard unlocks. */
 static void test_admission_guard_ble_adv_failure_race(void) {
     MTK_CHECK(wait_for_workers_idle());
     mtk_fake_ble_reset();
@@ -1677,27 +1651,26 @@ static void test_raw_tx_token_stays_zero(void) {
     MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_NONE);
 }
 
-/* mtk_arbiter_snapshot() concurrency proof (diagnosis verification list:
- * "Snapshot coherence tests under concurrent ownership changes"). A
- * second thread continuously flips ownership between two classes, each
- * with a token whose high 16 bits are a class-specific marker; the main
- * thread samples mtk_arbiter_snapshot() 20000 times and asserts every
- * single observed pair is internally consistent (never a class from one
- * flip paired with a token from a different one) -- a torn read would be
- * detectable as a marker/class mismatch or an impossible class.
+/* mtk_arbiter_snapshot concurrency proof (diagnosis verification list: "Snapshot
+ * coherence tests under concurrent ownership changes"). A second thread
+ * continuously flips ownership between two classes, each with a token whose high
+ * 16 bits are a class-specific marker; the main thread samples
+ * mtk_arbiter_snapshot 20000 times and asserts every single observed pair is
+ * internally consistent (never a class from one flip paired with a token from a
+ * different one) -- a torn read would be detectable as a marker/class mismatch
+ * or an impossible class.
  *
- * M2 TSan-harness-correction round: `stop` is now a real C11 atomic
- * (`stop`/`transitions` were both a plain `volatile int` before -- the
- * SAME kind of data race Finding 2 in the diagnosis names; `volatile`
- * orders nothing between threads). `transitions` also gives this test a
- * synchronized started/transition-count rendezvous (diagnosis: "the test
- * also lacks a deterministic proof that the flap thread performed any
- * ownership transition before the main thread completed its 20000
- * snapshots... can make the test vacuous on an unfavorable schedule") --
- * the main thread bounded-waits for real evidence of at least one
- * transition before its own sampling loop starts, and re-checks it
- * afterward, so this can never trivially "pass" against an arbiter that
- * never actually changed ownership during the sampling window. */
+ * `stop` is now a real C11 atomic (`stop`/`transitions` were both a plain
+ * `volatile int` before -- the SAME kind of data race Finding 2 in the diagnosis
+ * names; `volatile` orders nothing between threads). `transitions` also gives
+ * this test a synchronized started/transition-count rendezvous (diagnosis: "the
+ * test also lacks a deterministic proof that the flap thread performed any
+ * ownership transition before the main thread completed its 20000 snapshots...
+ * can make the test vacuous on an unfavorable schedule") -- the main thread
+ * bounded-waits for real evidence of at least one transition before its own
+ * sampling loop starts, and re-checks it afterward, so this can never trivially
+ * "pass" against an arbiter that never actually changed ownership during the
+ * sampling window. */
 typedef struct { atomic_int stop; atomic_uint transitions; } flap_arg_t;
 static void *flap_thread_fn(void *arg) {
     flap_arg_t *a = (flap_arg_t *)arg;

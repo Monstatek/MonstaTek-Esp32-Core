@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""RC8 independent audit P0-1 "Eliminate target stack overflow paths" /
+"""/
 Required verification #4 "Target-ELF stack report shows safe margins for
 every task/callback path; no nested path exceeds its allocated stack":
 measures REAL per-function stack frame sizes (GCC's own `-fstack-usage`,
@@ -194,10 +194,10 @@ CHAINS = [
         ],
     },
     {
-        # RC8 independent audit P0-6 "BLE list <id>/list -d detail block":
+        #
         # format_ble_device_detail's own ble_ad_info_t local (Service
         # UUID16/128 lists, Service Data, unknown-AD-type text buffer) is
-        # a genuinely new, non-trivial stack frame this round added --
+        # a genuinely new, non-trivial stack frame added --
         # audited here rather than left as an unmeasured new UART path
         # (RC8's own "audit every task/callback entry path... not just
         # the 3 named functions" instruction).
@@ -211,10 +211,10 @@ CHAINS = [
         ],
     },
     {
-        # RC8 independent audit P0-6 "BLE connection discovery lacks
+        # "BLE connection discovery lacks
         # nested service/char/descriptor counts/listing": gatt_discover_
         # tree's own decoded-response locals (services/chars/descs pages)
-        # are a new stack frame this round added -- audited here for the
+        # are a new stack frame added -- audited here for the
         # same reason as the entry above.
         "task": "uart_repl_task (BLE nested GATT discovery worst path)",
         "stack_bytes": 12288,
@@ -240,7 +240,7 @@ CHAINS = [
         "task": "Wi-Fi driver promiscuous RX callback (promisc_trampoline)",
         # This context's real stack budget is still owned by the Wi-Fi
         # driver, not this project's own task creation -- not independently
-        # confirmed this session (disclosed hardware/ESP-IDF-internals
+        # confirmed (disclosed hardware/ESP-IDF-internals
         # gap, docs/PROVENANCE.md). Conservatively assumed no larger than
         # CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE (2304 bytes on this
         # sdkconfig), the smallest real task stack this project's own
@@ -253,7 +253,7 @@ CHAINS = [
         ],
     },
     {
-        # RC10 independent correction order P0 "STA scan cancel and
+        # "STA scan cancel and
         # callback state are target data races": sta_scan_promisc_cb is a
         # SEPARATE, still-direct Wi-Fi driver RX callback registration
         # (STA_SCAN's own, via esp32_sta_scan -- unrelated to promisc_

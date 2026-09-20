@@ -1,6 +1,6 @@
-/* Resource arbiter: 66 distinct-class pairs + 14 self-pairs
- * (002-resource-arbiter.md Sec 3/4), single-active-class model, and the
- * D->H guarded-transition failure path's unconditional slot release. */
+/* Resource arbiter: 66 distinct-class pairs + 14 self-pairs, single-active-class
+ * model, and the D->H guarded-transition failure path's unconditional slot
+ * release. */
 #include "mtk_test.h"
 #include "mtek_arbiter.h"
 
@@ -14,20 +14,25 @@ MTK_TEST_MAIN_BEGIN
     static const mtk_arbiter_class_t active[] = {
         MTK_ARB_WMC, MTK_ARB_WS, MTK_ARB_BEACON, MTK_ARB_D, MTK_ARB_H, MTK_ARB_M,
         MTK_ARB_BS, MTK_ARB_BA, MTK_ARB_SM, MTK_ARB_GC, MTK_ARB_SAP, MTK_ARB_RAW,
+        MTK_ARB_ESPNOW,
     };
     unsigned n = sizeof(active) / sizeof(active[0]);
-    MTK_CHECK_EQ(n, 12);
+    MTK_CHECK_EQ(n, 13);
     unsigned pair_count = 0;
     for (unsigned i = 0; i < n; i++)
         for (unsigned j = i + 1; j < n; j++) {
             pair_count++;
             mtk_arbiter_policy_for(active[i], active[j]); /* must not assert/crash */
         }
-    MTK_CHECK_EQ(pair_count, 66);
+    /* Every unordered pair among the 13 implemented classes is declared:
+     * ESPNOW joined them, so 12*11/2 = 66 became 13*12/2 = 78. */
+    MTK_CHECK_EQ(pair_count, 78);
 
-    /* Self-pairs: BUSY for every active class, DISABLED for reserved. */
+    /* Self-pairs: BUSY for every active class, DISABLED for reserved.
+     * ESPNOW is now an implemented, acquirable class, so it is BUSY against
+     * itself like every other active class; only RESV_154 remains reserved. */
     for (unsigned i = 0; i < n; i++) MTK_CHECK_EQ(mtk_arbiter_policy_for(active[i], active[i]), MTK_POLICY_BUSY);
-    MTK_CHECK_EQ(mtk_arbiter_policy_for(MTK_ARB_RESV_ESPNOW, MTK_ARB_RESV_ESPNOW), MTK_POLICY_DISABLED);
+    MTK_CHECK_EQ(mtk_arbiter_policy_for(MTK_ARB_ESPNOW, MTK_ARB_ESPNOW), MTK_POLICY_BUSY);
     MTK_CHECK_EQ(mtk_arbiter_policy_for(MTK_ARB_RESV_154, MTK_ARB_RESV_154), MTK_POLICY_DISABLED);
 
     /* Single-active-class model: WS active excludes WMC (serialized) and

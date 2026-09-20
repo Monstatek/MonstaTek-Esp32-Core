@@ -1,5 +1,5 @@
-# MonstaTek M1 ESP32-C6 partition table (RELEASE_DELIVERABLE_CONTRACT.md
-# "Partition compatibility" -- do not move, resize, remove, or rename
+# MonstaTek M1 ESP32-C6 partition table (partition compatibility is
+# frozen -- do not move, resize, remove, or rename
 # without a reviewed data-migration and rollback plan).
 # Name,      Type, SubType,  Offset,   Size,     Flags
 nvs,         data, nvs,      0x9000,   0x6000,

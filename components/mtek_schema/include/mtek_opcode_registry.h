@@ -26,7 +26,7 @@ typedef struct {
     const mtk_struct_desc_t *resp_desc;
 } mtk_opcode_entry_t;
 
-#define MTK_OPCODE_COUNT 93
+#define MTK_OPCODE_COUNT 99
 extern const mtk_opcode_entry_t mtk_opcode_table[MTK_OPCODE_COUNT];
 const mtk_opcode_entry_t *mtk_opcode_find(uint16_t service_id, uint16_t opcode);
 
@@ -124,4 +124,10 @@ typedef enum {
     MTK_OP_GET_FAULT_SUMMARY,
     MTK_OP_GATT_DISCOVER_CHARS,
     MTK_OP_GATT_DISCOVER_DESCS,
+    MTK_OP_ESPNOW_START,
+    MTK_OP_ESPNOW_STOP,
+    MTK_OP_ESPNOW_ADD_PEER,
+    MTK_OP_ESPNOW_SEND,
+    MTK_OP_ESPNOW_POLL_RECV,
+    MTK_OP_ESPNOW_STATS,
 } mtk_op_index_t;

@@ -1,12 +1,11 @@
-/* RC7 independent audit P0 "Native 512-to-1024 discovery transition is
- * still wrong": proves the exact transaction-by-transaction cold-boot
- * sequence the audit itself demanded -- "neutral/HELLO at 512, HELLO_ACK
- * at 512, then 1024 only after the ACK transaction completes." A prior
- * round's own single-flag version upgraded exactly one transaction too
- * early (the very transaction carrying the HELLO_ACK response itself);
- * this proves the fix transaction-by-transaction, not by inspection of
- * mtek_spi_runtime.c (which is target-only and not itself host-testable
- * -- see mtek_transport_select.h's own doc comment on that boundary). */
+/* Proves the exact transaction-by-transaction cold-boot sequence the audit
+ * itself demanded -- "neutral/HELLO at 512, HELLO_ACK at 512, then 1024 only
+ * after the ACK transaction completes." A prior round's own single-flag version
+ * upgraded exactly one transaction too early (the very transaction carrying the
+ * HELLO_ACK response itself); this proves the fix transaction-by-transaction,
+ * not by inspection of mtek_spi_runtime.c (which is target-only and not itself
+ * host-testable -- see mtek_transport_select.h's own doc comment on that
+ * boundary). */
 #include "mtk_test.h"
 #include "mtek_transport_select.h"
 
@@ -24,10 +23,10 @@ MTK_TEST_MAIN_BEGIN
     cell = mtk_native_cellsize_negotiator_tick(&n, cell, NATIVE_SIZE);
     MTK_CHECK_EQ(cell, DISCOVERY_SIZE);
 
-    /* Transaction N: this transaction's rx buffer IS the HELLO -- the
-     * caller recognizes it only AFTER this transaction's tick call (the
-     * tick for N already happened above using the pre-HELLO state), so it
-     * calls hello_recognized() now, arming the upgrade. */
+    /* Transaction N: this transaction's rx buffer IS the HELLO -- the caller
+     * recognizes it only AFTER this transaction's tick call (the tick for N
+     * already happened above using the pre-HELLO state), so it calls
+     * hello_recognized now, arming the upgrade. */
     mtk_native_cellsize_negotiator_hello_recognized(&n);
 
     /* Transaction N+1: this is the transaction whose MISO carries the

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""RC6 independent audit gate #2 "The exact target stack/RAM/heap budget is
+""""The exact target stack/RAM/heap budget is
 published and mechanically checked in CI/build scripts": parses the real
 ESP-IDF linker map for this build (`idf.py size`'s own underlying
 `esp_idf_size` tool, `--format json2`) and fails if the DIRAM (the shared
@@ -73,7 +73,7 @@ def main():
         print(f"check_resource_budget: FAIL -- only {free} bytes of DIRAM free for runtime "
               f"heap (FreeRTOS task stacks, esp_wifi_init, NimBLE, lwIP, NVS), below the "
               f"documented {MIN_FREE_DIRAM_BYTES}-byte minimum (docs/RESOURCE_BUDGET.md). "
-              f"This is the exact class of defect RC6's independent audit found (P0 "
+              f"This is the exact class of defect RC6's review found (P0 "
               f"'Target stack usage is catastrophically larger than the configured "
               f"stacks').", file=sys.stderr)
         return 1

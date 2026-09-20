@@ -98,10 +98,16 @@ const mtk_opcode_entry_t mtk_opcode_table[MTK_OPCODE_COUNT] = {
     { "GET_FAULT_SUMMARY", 0x0005, 0x0004, MTK_LC_SYNCHRONOUS, MTK_ARB_NONE, 1, MTK_CAP_SUPPORTED, MTK_CAP_UNSUPPORTED, MTK_CAP_UNSUPPORTED, 1000, 100, 1000, 0, 1, NULL, &mtk_get_fault_summary_resp_t_desc },
     { "GATT_DISCOVER_CHARS", 0x0003, 0x0009, MTK_LC_SYNCHRONOUS, MTK_ARB_NONE, 1, MTK_CAP_SUPPORTED, MTK_CAP_SUPPORTED, MTK_CAP_UNSUPPORTED, 2000, 500, 5000, 0, 1, &mtk_gatt_discover_chars_req_t_desc, &mtk_gatt_discover_chars_resp_t_desc },
     { "GATT_DISCOVER_DESCS", 0x0003, 0x000A, MTK_LC_SYNCHRONOUS, MTK_ARB_NONE, 1, MTK_CAP_SUPPORTED, MTK_CAP_SUPPORTED, MTK_CAP_UNSUPPORTED, 2000, 500, 5000, 0, 1, &mtk_gatt_discover_descs_req_t_desc, &mtk_gatt_discover_descs_resp_t_desc },
+    { "ESPNOW_START", 0x0006, 0x0001, MTK_LC_ACCEPTED_ASYNC, MTK_ARB_ESPNOW, 0, MTK_CAP_SUPPORTED, MTK_CAP_UNAVAILABLE, MTK_CAP_UNAVAILABLE, 1000, 100, 2000, 1, 0, &mtk_espnow_start_req_t_desc, &mtk_espnow_start_resp_t_desc },
+    { "ESPNOW_STOP", 0x0006, 0x0002, MTK_LC_SYNCHRONOUS, MTK_ARB_NONE, 1, MTK_CAP_SUPPORTED, MTK_CAP_UNAVAILABLE, MTK_CAP_UNAVAILABLE, 1000, 100, 2000, 0, 1, &mtk_espnow_stop_req_t_desc, &mtk_espnow_stop_resp_t_desc },
+    { "ESPNOW_ADD_PEER", 0x0006, 0x0003, MTK_LC_SYNCHRONOUS, MTK_ARB_NONE, 1, MTK_CAP_SUPPORTED, MTK_CAP_UNAVAILABLE, MTK_CAP_UNAVAILABLE, 1000, 100, 2000, 0, 1, &mtk_espnow_add_peer_req_t_desc, NULL },
+    { "ESPNOW_SEND", 0x0006, 0x0004, MTK_LC_SYNCHRONOUS, MTK_ARB_NONE, 1, MTK_CAP_SUPPORTED, MTK_CAP_UNAVAILABLE, MTK_CAP_UNAVAILABLE, 1000, 100, 2000, 0, 1, &mtk_espnow_send_req_t_desc, NULL },
+    { "ESPNOW_POLL_RECV", 0x0006, 0x0005, MTK_LC_SYNCHRONOUS, MTK_ARB_NONE, 1, MTK_CAP_SUPPORTED, MTK_CAP_UNAVAILABLE, MTK_CAP_UNAVAILABLE, 1000, 100, 2000, 0, 1, NULL, NULL },
+    { "ESPNOW_STATS", 0x0006, 0x0006, MTK_LC_SYNCHRONOUS, MTK_ARB_NONE, 1, MTK_CAP_SUPPORTED, MTK_CAP_UNAVAILABLE, MTK_CAP_UNAVAILABLE, 1000, 100, 2000, 0, 1, NULL, &mtk_espnow_stats_resp_t_desc },
 };
 
 const mtk_opcode_entry_t *mtk_opcode_find(uint16_t service_id, uint16_t opcode) {
-    /* RC12 hardening round, item 5 (P1): the test-only overlay is
+    /* The test-only overlay is
      * consulted first. It is permanently empty in production (no
      * production code ever registers an overlay entry), so this is a
      * zero-iteration no-op there and the behavior is identical to the

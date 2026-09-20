@@ -1,21 +1,18 @@
-/* RC5 independent audit P0 "Long-lived Wi-Fi/BLE callbacks retain invalid
- * request context" + the matching UART-side fix (mtek_uart_adapter.c's
- * session_queue): proves real background delivery survives past the
- * initiating command's own call, end-to-end through the UART adapter.
- * Uses the fake Wi-Fi HAL's `defer_frames` mode (frames delivered only
- * when the test explicitly calls mtk_fake_wifi_deliver_frames(), standing
- * in for a real target's promiscuous-mode callback firing later from the
- * Wi-Fi driver's own task, well after `handshake`'s synchronous command
- * call has already returned and its own stack frame has been reused by
- * the REPL loop's subsequent commands). Before this fix, the handshake
- * session stored a raw `mtk_request_ctx_t*` into the router's transient
- * async-pool slot / the UART handler's own stack; delivering a frame
- * after that call returned would write through a dead/reused pointer.
- * With the fix, the session's sink points at
- * mtk_uart_adapter_state_t::session_queue -- alive for the REPL task's
- * entire boot session -- so delivery after return is not just
- * crash-free but functionally correct: mtek_uart_adapter_poll_background
- * must actually surface the real event text. */
+/* + the matching UART-side fix (mtek_uart_adapter.c's session_queue): proves
+ * real background delivery survives past the initiating command's own call,
+ * end-to-end through the UART adapter. Uses the fake Wi-Fi HAL's `defer_frames`
+ * mode (frames delivered only when the test explicitly calls
+ * mtk_fake_wifi_deliver_frames, standing in for a real target's promiscuous-mode
+ * callback firing later from the Wi-Fi driver's own task, well after
+ * `handshake`'s synchronous command call has already returned and its own stack
+ * frame has been reused by the REPL loop's subsequent commands). Before this
+ * fix, the handshake session stored a raw `mtk_request_ctx_t*` into the router's
+ * transient async-pool slot / the UART handler's own stack; delivering a frame
+ * after that call returned would write through a dead/reused pointer. With the
+ * fix, the session's sink points at mtk_uart_adapter_state_t::session_queue --
+ * alive for the REPL task's entire boot session -- so delivery after return is
+ * not just crash-free but functionally correct:
+ * mtek_uart_adapter_poll_background must actually surface the real event text. */
 #include "mtk_test.h"
 #include "mtek_uart_adapter.h"
 #include "mtek_core.h"
@@ -34,11 +31,10 @@ static uint64_t now_ms(void) { return s_now; }
 
 static uint16_t build_eapol_frame(uint8_t *buf, int ack, int mic, int secure, int install) {
     memset(buf, 0, 200);
-    /* RC7 independent audit item 11 "EAPOL frames are not filtered to
-     * the requested AP/station": addr1/addr2/addr3 must name the target
-     * BSSID {1,2,3,4,5,6} used by this file's own HANDSHAKE_START
-     * requests, or mtek_wifi_logic.c's new frame_matches_target_bssid
-     * filter would reject every synthetic frame this test builds. */
+    /* Addr1/addr2/addr3 must name the target BSSID {1,2,3,4,5,6} used by this
+     * file's own HANDSHAKE_START requests, or mtek_wifi_logic.c's new
+     * frame_matches_target_bssid filter would reject every synthetic frame this
+     * test builds. */
     static const uint8_t bssid[6] = {1,2,3,4,5,6};
     memcpy(buf + 4, bssid, 6); memcpy(buf + 10, bssid, 6); memcpy(buf + 16, bssid, 6);
     buf[0] = 0x88; buf[1] = 0x02;
@@ -119,14 +115,12 @@ MTK_TEST_MAIN_BEGIN
     /* Queue is drained after one poll; a second poll finds nothing new. */
     MTK_CHECK_EQ(mtek_uart_adapter_poll_background(&st, out, sizeof(out)), 0);
 
-    /* ---- RC7 independent audit item 9 "remote disconnect clears state
-     * but emits no frozen '[BLE:CONN] disconnected reason=R' output":
-     * a genuine peer-initiated disconnect, observed asynchronously
-     * (mtek_ble_gatt_tick, driven by the same periodic-tick shape as
-     * every other background delivery this test file proves), must
-     * surface through mtek_uart_adapter_poll_background with the exact
-     * same frozen transcript line handle_ble_disconnect already prints
-     * for a caller-issued disconnect. ------------------------------- */
+    /* a genuine peer-initiated disconnect, observed asynchronously
+     * (mtek_ble_gatt_tick, driven by the same periodic-tick shape as every other
+     * background delivery this test file proves), must surface through
+     * mtek_uart_adapter_poll_background with the exact same frozen transcript
+     * line handle_ble_disconnect already prints for a caller-issued disconnect.
+     * ----------------- */
     {
         /* The handshake session above is still RUNNING (only M1 was
          * observed, not a full M1+M2+M4 capture) and still holds the
@@ -153,12 +147,10 @@ MTK_TEST_MAIN_BEGIN
          * already returned -- mtek_ble_gatt_tick (this target's own
          * periodic driver, main/app_main.c's ble_tick_task) is what
          * would observe this on real hardware; called directly here. */
-        /* RC8 independent audit P0-6 "Remote disconnect currently loses
-         * the real reason and emits a hard-coded reason": a genuinely
-         * nonzero reason code here (0x213, NimBLE's own BLE_HS_HCI_ERR
-         * connection-timeout example) proves the real value threads all
-         * the way through the HAL/service/adapter chain, not just that
-         * SOME reason (indistinguishable from the old hard-coded 0) was
+        /* A genuinely nonzero reason code here (0x213, NimBLE's own
+         * BLE_HS_HCI_ERR connection-timeout example) proves the real value
+         * threads all the way through the HAL/service/adapter chain, not just
+         * that SOME reason (indistinguishable from the old hard-coded 0) was
          * printed. */
         g_fake_ble.remote_disconnect_pending = 1;
         g_fake_ble.remote_disconnect_reason = 0x13;

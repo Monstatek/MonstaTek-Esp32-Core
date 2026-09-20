@@ -1,11 +1,10 @@
-/* RC8 independent audit P0-6 "Preserve exact shipped UART behavior":
- * dedicated golden-transcript coverage for the two remaining disclosed
- * BLE gaps this round closed -- `list <id>`/`list -d`'s full per-AD-type
- * detail block (Service UUID16/128, Service Data UUID16, unknown-AD-type
- * fallback, Shortened/Complete Local Name), and `connect`/`services`'s
- * nested service/characteristic/descriptor discovery (GATT_DISCOVER_CHARS/
- * GATT_DISCOVER_DESCS, new purely-additive opcodes). Evidence:
- * `001-command-behavior-matrix.md` lines 68, 69, 74, 75. */
+/* Dedicated golden-transcript coverage for the two remaining disclosed BLE gaps
+ * closed -- `list <id>`/`list -d`'s full per-AD-type detail block (Service
+ * UUID16/128, Service Data UUID16, unknown-AD-type fallback, Shortened/Complete
+ * Local Name), and `connect`/`services`'s nested
+ * service/characteristic/descriptor discovery (GATT_DISCOVER_CHARS/
+ * GATT_DISCOVER_DESCS, new purely-additive opcodes). Evidence: lines 68, 69, 74,
+ * 75. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtek_uart_adapter.h"
@@ -19,10 +18,10 @@ MTK_TEST_MAIN_BEGIN
     st.mode = MTK_UART_MODE_BLE;
     char out[4096];
 
-    /* ---- `list <id>` / `list -d`: one scanned device carrying every AD
-     * type this feature knows how to surface, spread across raw_adv (the
-     * primary advertisement) and raw_scan_rsp (a scan response, proving
-     * the two buffers are walked and merged as documented). */
+    /* `list <id>` / `list -d`: one scanned device carrying every AD type this
+     * feature knows how to surface, spread across raw_adv (the primary
+     * advertisement) and raw_scan_rsp (a scan response, proving the two buffers
+     * are walked and merged as documented). */
     mtk_fake_ble_reset();
     mtk_hal_ble_adv_t *d = &g_fake_ble.scan_results[0];
     memcpy(d->addr.b, (uint8_t[]){0x10,0x20,0x30,0x40,0x50,0x60}, 6);
@@ -106,11 +105,10 @@ MTK_TEST_MAIN_BEGIN
     mtek_uart_process_line(&st, "list abc", out, sizeof(out));
     MTK_CHECK(strcmp(out, "[!] Invalid BLE ID format: abc\n") == 0);
 
-    /* ---- `connect <id>` / `services`: nested service/characteristic/
-     * descriptor discovery. Two services; service 0 has two
-     * characteristics (one Notify-only with a CCCD descriptor, one
-     * Read+Write with no descriptor); service 1 has one Read-only
-     * characteristic with no descriptor. */
+    /* `connect <id>` / `services`: nested service/characteristic/ descriptor
+     * discovery. Two services; service 0 has two characteristics (one
+     * Notify-only with a CCCD descriptor, one Read+Write with no descriptor);
+     * service 1 has one Read-only characteristic with no descriptor. */
     mtk_fake_ble_reset();
     memcpy(g_fake_ble.scan_results[0].addr.b, (uint8_t[]){1,2,3,4,5,6}, 6);
     g_fake_ble.scan_count = 1;

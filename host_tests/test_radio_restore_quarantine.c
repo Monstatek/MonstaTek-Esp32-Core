@@ -1,26 +1,25 @@
-/* RC11 independent correction order: "operation finalization is not
- * exactly-once/truthful" + "if radio restoration fails, retain the
- * prior-state snapshot and keep the radio lease quarantined -- never
- * report/expose it as healthy/free" + "make WIFI_STOP_ALL retry verified
+/* "operation finalization is not exactly-once/truthful" + "if radio restoration
+ * fails, retain the prior-state snapshot and keep the radio lease quarantined --
+ * never report/expose it as healthy/free" + "make WIFI_STOP_ALL retry verified
  * recovery before releasing ownership".
  *
- * Part 1: a DEAUTH operation whose own post-completion restore fails must
- * report IO_ERROR (never a clean OK), call restore exactly once (never
- * double-restored), and leave the D-class lease HELD (quarantined) rather
- * than released -- mtek_wifi_logic.c's own deauth_finalize.
+ * Part 1: a DEAUTH operation whose own post-completion restore fails must report
+ * IO_ERROR (never a clean OK), call restore exactly once (never
+ * double-restored), and leave the D-class lease HELD (quarantined) rather than
+ * released -- mtek_wifi_logic.c's own deauth_finalize.
  *
- * Part 2: same property for a WPA handshake capture's natural M4
- * completion -- mtek_wifi_logic.c's own handshake_finish.
+ * Part 2: same property for a WPA handshake capture's natural M4 completion --
+ * mtek_wifi_logic.c's own handshake_finish.
  *
  * Part 3: WIFI_STOP_ALL against a persistent restore failure must retry a
- * bounded number of times (never just once), never release the lease it
- * cannot confirm safe, and GET_WIFI_RECOVERY_STATE must honestly report
- * "not restored" (never healthy/free) afterward.
+ * bounded number of times (never just once), never release the lease it cannot
+ * confirm safe, and GET_WIFI_RECOVERY_STATE must honestly report "not restored"
+ * (never healthy/free) afterward.
  *
- * Part 4: WIFI_STOP_ALL against a TRANSIENT restore failure (fails on its
- * first attempts, succeeds within the retry budget) must actually recover
- * -- proving the retry loop is not cosmetic -- and release the lease once
- * a retry genuinely confirms success. */
+ * Part 4: WIFI_STOP_ALL against a TRANSIENT restore failure (fails on its first
+ * attempts, succeeds within the retry budget) must actually recover -- proving
+ * the retry loop is not cosmetic -- and release the lease once a retry genuinely
+ * confirms success. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtek_schema_message_descs.h"
@@ -30,8 +29,7 @@ MTK_TEST_MAIN_BEGIN
 
     mtk_test_bootstrap();
 
-    /* ---- Part 1: deauth, one-shot BROADCAST, restore's own "stop" step
-     * fails. ---- */
+    /* Part 1: deauth, one-shot BROADCAST, restore's own "stop" step fails. -- */
     {
         mtk_fake_wifi_reset();
         g_fake_wifi.restore_stop_rc = -1;
@@ -55,11 +53,12 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(g_fake_wifi.restore_count, 1u);  /* exactly once -- never double-restored */
         MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_D); /* lease HELD (quarantined), not released */
         MTK_CHECK(mtek_wifi_radio_is_quarantined());
-        mtk_arbiter_reset(); /* test-harness cleanup only -- see mtk_fake_wifi_reset()'s own established role */
+        mtk_arbiter_reset(); /* test-harness cleanup only -- see
+                              * mtk_fake_wifi_reset's own established role */
     }
 
-    /* ---- Part 2: WPA handshake, natural M4 completion, restore's own
-     * "promiscuous off" step fails. ---- */
+    /* Part 2: WPA handshake, natural M4 completion, restore's own "promiscuous
+     * off" step fails. -- */
     {
         mtk_fake_wifi_reset();
         g_fake_wifi.restore_promisc_off_rc = -1;
@@ -71,12 +70,11 @@ MTK_TEST_MAIN_BEGIN
          * honesty this time. */
         uint8_t *f;
         static const uint8_t bssid[6] = {7,7,7,7,7,7};
-        /* Layout matches classify_eapol()'s own parse exactly (802.11
-         * header 24B + QoS control 2B = hdr 26; LLC/SNAP 8B at hdr; EAPOL
-         * header starts at hdr+8=34; eapol_type at eapol+1=35; key_info at
-         * eapol+5..6=39..40) -- mirrors test_handshake_capture.c's own
-         * build_eapol_frame helper, inlined here as a macro so this file
-         * stays self-contained. */
+        /* Layout matches classify_eapol's own parse exactly (802.11 header 24B +
+         * QoS control 2B = hdr 26; LLC/SNAP 8B at hdr; EAPOL header starts at
+         * hdr+8=34; eapol_type at eapol+1=35; key_info at eapol+5..6=39..40) --
+         * mirrors test_handshake_capture.c's own build_eapol_frame helper,
+         * inlined here as a macro so this file stays self-contained. */
         #define BUILD(idx, ack, mic, secure, install) \
             f = g_fake_wifi.frames[idx].data; memset(f, 0, 200); \
             memcpy(f + 4, bssid, 6); memcpy(f + 10, bssid, 6); memcpy(f + 16, bssid, 6); \
@@ -117,10 +115,9 @@ MTK_TEST_MAIN_BEGIN
         mtk_arbiter_reset();
     }
 
-    /* ---- Part 3: WIFI_STOP_ALL against a PERSISTENT restore failure --
-     * every retry attempt fails, so the lease must stay quarantined, never
-     * released, and the retry loop must actually retry (not just try
-     * once). ---- */
+    /* Part 3: WIFI_STOP_ALL against a PERSISTENT restore failure -- every retry
+     * attempt fails, so the lease must stay quarantined, never released, and the
+     * retry loop must actually retry (not just try once). -- */
     {
         mtk_fake_wifi_reset();
         g_fake_wifi.restore_stop_rc = -1; /* sticky: every attempt fails identically */
@@ -147,9 +144,9 @@ MTK_TEST_MAIN_BEGIN
         mtk_arbiter_reset();
     }
 
-    /* ---- Part 4: WIFI_STOP_ALL against a TRANSIENT restore failure that
-     * clears within the retry budget -- proves recovery actually happens,
-     * not merely that failure is handled safely. ---- */
+    /* Part 4: WIFI_STOP_ALL against a TRANSIENT restore failure that clears
+     * within the retry budget -- proves recovery actually happens, not merely
+     * that failure is handled safely. -- */
     {
         mtk_fake_wifi_reset();
         g_fake_wifi.restore_fail_countdown = 2; /* fails attempts 1-2, succeeds on attempt 3 -- within the 3-attempt budget */

@@ -716,8 +716,8 @@ const mtk_struct_desc_t mtk_captive_portal_get_credentials_req_t_desc = { mtk_ca
 
 static const mtk_field_desc_t mtk_anon_mtk_captive_portal_get_credentials_resp_t_credentials_elem_3_t_fields[] = {
     { "captured_at_epoch_s", MTK_F_U32, offsetof(mtk_anon_mtk_captive_portal_get_credentials_resp_t_credentials_elem_3_t, captured_at_epoch_s), 0, 0, 0, NULL, MTK_F_U8 },
-    { "username", MTK_F_BYTES, offsetof(mtk_anon_mtk_captive_portal_get_credentials_resp_t_credentials_elem_3_t, username), 255, 1, 0, NULL, MTK_F_U8 },
-    { "password", MTK_F_BYTES, offsetof(mtk_anon_mtk_captive_portal_get_credentials_resp_t_credentials_elem_3_t, password), 255, 1, 0, NULL, MTK_F_U8 },
+    { "username", MTK_F_BYTES, offsetof(mtk_anon_mtk_captive_portal_get_credentials_resp_t_credentials_elem_3_t, username), 64, 1, 0, NULL, MTK_F_U8 },
+    { "password", MTK_F_BYTES, offsetof(mtk_anon_mtk_captive_portal_get_credentials_resp_t_credentials_elem_3_t, password), 64, 1, 0, NULL, MTK_F_U8 },
 };
 const mtk_struct_desc_t mtk_anon_mtk_captive_portal_get_credentials_resp_t_credentials_elem_3_t_desc = { mtk_anon_mtk_captive_portal_get_credentials_resp_t_credentials_elem_3_t_fields, sizeof(mtk_anon_mtk_captive_portal_get_credentials_resp_t_credentials_elem_3_t_fields)/sizeof(mtk_anon_mtk_captive_portal_get_credentials_resp_t_credentials_elem_3_t_fields[0]), sizeof(mtk_anon_mtk_captive_portal_get_credentials_resp_t_credentials_elem_3_t) };
 
@@ -1367,3 +1367,54 @@ static const mtk_field_desc_t mtk_gatt_discover_descs_resp_t_fields[] = {
     { "next_index", MTK_F_U16, offsetof(mtk_gatt_discover_descs_resp_t, next_index), 0, 0, 0, NULL, MTK_F_U8 },
 };
 const mtk_struct_desc_t mtk_gatt_discover_descs_resp_t_desc = { mtk_gatt_discover_descs_resp_t_fields, sizeof(mtk_gatt_discover_descs_resp_t_fields)/sizeof(mtk_gatt_discover_descs_resp_t_fields[0]), sizeof(mtk_gatt_discover_descs_resp_t) };
+
+static const mtk_field_desc_t mtk_espnow_start_req_t_fields[] = {
+    { "channel", MTK_F_U8, offsetof(mtk_espnow_start_req_t, channel), 0, 0, 0, NULL, MTK_F_U8 },
+};
+const mtk_struct_desc_t mtk_espnow_start_req_t_desc = { mtk_espnow_start_req_t_fields, sizeof(mtk_espnow_start_req_t_fields)/sizeof(mtk_espnow_start_req_t_fields[0]), sizeof(mtk_espnow_start_req_t) };
+
+static const mtk_field_desc_t mtk_espnow_start_resp_t_fields[] = {
+    { "operation_token", MTK_F_U32, offsetof(mtk_espnow_start_resp_t, operation_token), 0, 0, 0, NULL, MTK_F_U8 },
+};
+const mtk_struct_desc_t mtk_espnow_start_resp_t_desc = { mtk_espnow_start_resp_t_fields, sizeof(mtk_espnow_start_resp_t_fields)/sizeof(mtk_espnow_start_resp_t_fields[0]), sizeof(mtk_espnow_start_resp_t) };
+
+static const mtk_field_desc_t mtk_espnow_stopped_ev_t_fields[] = {
+    { "operation_token", MTK_F_U32, offsetof(mtk_espnow_stopped_ev_t, operation_token), 0, 0, 0, NULL, MTK_F_U8 },
+    { "status", MTK_F_U8, offsetof(mtk_espnow_stopped_ev_t, status), 0, 0, 0, NULL, MTK_F_U8 },
+    { "sent_ok", MTK_F_U32, offsetof(mtk_espnow_stopped_ev_t, sent_ok), 0, 0, 0, NULL, MTK_F_U8 },
+    { "received", MTK_F_U32, offsetof(mtk_espnow_stopped_ev_t, received), 0, 0, 0, NULL, MTK_F_U8 },
+};
+const mtk_struct_desc_t mtk_espnow_stopped_ev_t_desc = { mtk_espnow_stopped_ev_t_fields, sizeof(mtk_espnow_stopped_ev_t_fields)/sizeof(mtk_espnow_stopped_ev_t_fields[0]), sizeof(mtk_espnow_stopped_ev_t) };
+
+static const mtk_field_desc_t mtk_espnow_stop_req_t_fields[] = {
+    { "operation_token", MTK_F_U32, offsetof(mtk_espnow_stop_req_t, operation_token), 0, 0, 0, NULL, MTK_F_U8 },
+};
+const mtk_struct_desc_t mtk_espnow_stop_req_t_desc = { mtk_espnow_stop_req_t_fields, sizeof(mtk_espnow_stop_req_t_fields)/sizeof(mtk_espnow_stop_req_t_fields[0]), sizeof(mtk_espnow_stop_req_t) };
+
+static const mtk_field_desc_t mtk_espnow_stop_resp_t_fields[] = {
+    { "final_state", MTK_F_U8, offsetof(mtk_espnow_stop_resp_t, final_state), 0, 0, 0, NULL, MTK_F_U8 },
+    { "final_status", MTK_F_U8, offsetof(mtk_espnow_stop_resp_t, final_status), 0, 0, 0, NULL, MTK_F_U8 },
+};
+const mtk_struct_desc_t mtk_espnow_stop_resp_t_desc = { mtk_espnow_stop_resp_t_fields, sizeof(mtk_espnow_stop_resp_t_fields)/sizeof(mtk_espnow_stop_resp_t_fields[0]), sizeof(mtk_espnow_stop_resp_t) };
+
+static const mtk_field_desc_t mtk_espnow_add_peer_req_t_fields[] = {
+    { "peer", MTK_F_MAC6, offsetof(mtk_espnow_add_peer_req_t, peer), 0, 0, 0, NULL, MTK_F_U8 },
+    { "channel", MTK_F_U8, offsetof(mtk_espnow_add_peer_req_t, channel), 0, 0, 0, NULL, MTK_F_U8 },
+    { "encrypt", MTK_F_BOOL, offsetof(mtk_espnow_add_peer_req_t, encrypt), 0, 0, 0, NULL, MTK_F_U8 },
+    { "lmk", MTK_F_BYTES, offsetof(mtk_espnow_add_peer_req_t, lmk), 16, 1, 0, NULL, MTK_F_U8 },
+};
+const mtk_struct_desc_t mtk_espnow_add_peer_req_t_desc = { mtk_espnow_add_peer_req_t_fields, sizeof(mtk_espnow_add_peer_req_t_fields)/sizeof(mtk_espnow_add_peer_req_t_fields[0]), sizeof(mtk_espnow_add_peer_req_t) };
+
+static const mtk_field_desc_t mtk_espnow_send_req_t_fields[] = {
+    { "peer", MTK_F_MAC6, offsetof(mtk_espnow_send_req_t, peer), 0, 0, 0, NULL, MTK_F_U8 },
+    { "data", MTK_F_BYTES, offsetof(mtk_espnow_send_req_t, data), 250, 1, 0, NULL, MTK_F_U8 },
+};
+const mtk_struct_desc_t mtk_espnow_send_req_t_desc = { mtk_espnow_send_req_t_fields, sizeof(mtk_espnow_send_req_t_fields)/sizeof(mtk_espnow_send_req_t_fields[0]), sizeof(mtk_espnow_send_req_t) };
+
+static const mtk_field_desc_t mtk_espnow_stats_resp_t_fields[] = {
+    { "sent_ok", MTK_F_U32, offsetof(mtk_espnow_stats_resp_t, sent_ok), 0, 0, 0, NULL, MTK_F_U8 },
+    { "send_fail", MTK_F_U32, offsetof(mtk_espnow_stats_resp_t, send_fail), 0, 0, 0, NULL, MTK_F_U8 },
+    { "received", MTK_F_U32, offsetof(mtk_espnow_stats_resp_t, received), 0, 0, 0, NULL, MTK_F_U8 },
+    { "dropped", MTK_F_U32, offsetof(mtk_espnow_stats_resp_t, dropped), 0, 0, 0, NULL, MTK_F_U8 },
+};
+const mtk_struct_desc_t mtk_espnow_stats_resp_t_desc = { mtk_espnow_stats_resp_t_fields, sizeof(mtk_espnow_stats_resp_t_fields)/sizeof(mtk_espnow_stats_resp_t_fields[0]), sizeof(mtk_espnow_stats_resp_t) };

@@ -1,26 +1,22 @@
-/* RC5 independent audit P0 "Native SPI discovery drops the first
- * request": main/mtek_spi_runtime.c's physical loop bumped the
- * transaction cell size to the negotiated 1024-byte steady state in the
- * SAME iteration that recognizes the discovery HELLO, before the
- * HELLO_ACK answering that HELLO has actually gone out to the peer --
- * which the master, having only just sent a 512-byte discovery HELLO and
- * not yet seen any acknowledgement, still expects at the 512-byte
- * cadence. The fix (deferring the cell-size upgrade by one further
- * transaction) lives in main/mtek_spi_runtime.c, which is ESP-IDF-target-
- * only and cannot be host-built/tested (see docs/TEST_MATRIX.md's own
- * disclosed gap) -- the physical spi_slave transaction timing itself is
- * therefore not something this suite can exercise end-to-end without
- * hardware.
+/* main/mtek_spi_runtime.c's physical loop bumped the transaction cell size to
+ * the negotiated 1024-byte steady state in the SAME iteration that recognizes
+ * the discovery HELLO, before the HELLO_ACK answering that HELLO has actually
+ * gone out to the peer -- which the master, having only just sent a 512-byte
+ * discovery HELLO and not yet seen any acknowledgement, still expects at the
+ * 512-byte cadence. The fix (deferring the cell-size upgrade by one further
+ * transaction) lives in main/mtek_spi_runtime.c, which is ESP-IDF-target- only
+ * and cannot be host-built/tested (see docs/TEST_MATRIX.md's own disclosed gap)
+ * -- the physical spi_slave transaction timing itself is therefore not something
+ * this suite can exercise end-to-end without hardware.
  *
- * What IS host-testable, and proven here byte-exact, is the content-
- * correctness half of the fix: mtek_spi_native_dispatch_feed_cell (the
- * portable dispatch layer the runtime loop calls into for that very
- * HELLO, in the same physical transaction it was received in -- see the
- * runtime loop's own comment) correctly recognizes and answers a HELLO
- * cell with a real HELLO_ACK, even when the cell it is fed lives in a
- * buffer sized to the 512-byte discovery transaction the master actually
- * used to send it -- exactly the runtime's own call shape for the first
- * cold-boot HELLO. */
+ * What IS host-testable, and proven here byte-exact, is the content- correctness
+ * half of the fix: mtek_spi_native_dispatch_feed_cell (the portable dispatch
+ * layer the runtime loop calls into for that very HELLO, in the same physical
+ * transaction it was received in -- see the runtime loop's own comment)
+ * correctly recognizes and answers a HELLO cell with a real HELLO_ACK, even when
+ * the cell it is fed lives in a buffer sized to the 512-byte discovery
+ * transaction the master actually used to send it -- exactly the runtime's own
+ * call shape for the first cold-boot HELLO. */
 #include "mtk_test.h"
 #include "mtek_spi_native_dispatch.h"
 #include "mtek_compat_frame.h"
@@ -30,10 +26,9 @@
 
 #define MTK_DISCOVERY_CELL_SIZE MTK_COMPAT_CELL_SIZE /* 512: shared discovery-phase transaction size */
 
-/* Release-tooling-round P0 correction (independent audit, "Native SPI
- * confuses the STM32 and ESP boot epochs"): deliberately DISTINCT from the
- * peer's own HELLO epoch (0x1234) below -- proves HELLO_ACK stamps the
- * ESP's own canonical epoch (mtk_core_boot_epoch()), never the peer's. */
+/* Deliberately DISTINCT from the peer's own HELLO epoch (0x1234) below -- proves
+ * HELLO_ACK stamps the ESP's own canonical epoch (mtk_core_boot_epoch), never
+ * the peer's. */
 #define TEST_ESP_BOOT_EPOCH 0x77776666u
 
 MTK_TEST_MAIN_BEGIN
@@ -95,9 +90,9 @@ MTK_TEST_MAIN_BEGIN
     MTK_CHECK_EQ(resp_hdr.msg_class, MTK_SPI_CLASS_HELLO_ACK);
     MTK_CHECK_EQ(resp_hdr.status, MTK_STATUS_OK);
     MTK_CHECK_EQ(resp_len, 0); /* disclosed minimal HELLO_ACK: empty payload */
-    /* HELLO_ACK stamps the ESP's OWN canonical epoch (mtk_core_boot_
-     * epoch()), never the peer's HELLO epoch (0x1234, deliberately
-     * different from TEST_ESP_BOOT_EPOCH here). */
+    /* HELLO_ACK stamps the ESP's OWN canonical epoch (mtk_core_boot_ epoch),
+     * never the peer's HELLO epoch (0x1234, deliberately different from
+     * TEST_ESP_BOOT_EPOCH here). */
     MTK_CHECK_EQ(resp_hdr.boot_epoch, TEST_ESP_BOOT_EPOCH);
 
     /* Byte-exact: building the ACK cell and re-parsing it round-trips

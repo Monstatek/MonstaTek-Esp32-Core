@@ -1,22 +1,20 @@
-/* WPA handshake capture lifecycle (002-wifi-service.md Sec 2.5): fixed
- * channel, EAPOL M1-M4 classification from raw 802.11 frames, HANDSHAKE_EVENT
- * progress phases, HANDSHAKE_READ byte range, and the terminal
- * HANDSHAKE_STOPPED event. */
+/* WPA handshake capture lifecycle: fixed channel, EAPOL M1-M4 classification
+ * from raw 802.11 frames, HANDSHAKE_EVENT progress phases, HANDSHAKE_READ byte
+ * range, and the terminal HANDSHAKE_STOPPED event. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtek_schema_message_descs.h"
 #include <string.h>
 
-/* Builds a minimal 802.11 QoS data frame carrying one EAPOL-Key message
- * with the given Key Information bits, matching classify_eapol()'s parse
- * in mtek_wifi_logic.c exactly (802.11-2020 Sec 12.7.2). */
+/* Builds a minimal 802.11 QoS data frame carrying one EAPOL-Key message with the
+ * given Key Information bits, matching classify_eapol's parse in
+ * mtek_wifi_logic.c exactly (802.11-2020 Sec 12.7.2). */
 static uint16_t build_eapol_frame(uint8_t *buf, int ack, int mic, int secure, int install) {
     memset(buf, 0, 200);
-    /* RC7 independent audit item 11 "EAPOL frames are not filtered to
-     * the requested AP/station": addr1/addr2/addr3 must name the target
-     * BSSID {1,2,3,4,5,6} used by this file's own HANDSHAKE_START
-     * requests, or mtek_wifi_logic.c's new frame_matches_target_bssid
-     * filter would reject every synthetic frame this test builds. */
+    /* Addr1/addr2/addr3 must name the target BSSID {1,2,3,4,5,6} used by this
+     * file's own HANDSHAKE_START requests, or mtek_wifi_logic.c's new
+     * frame_matches_target_bssid filter would reject every synthetic frame this
+     * test builds. */
     static const uint8_t bssid[6] = {1,2,3,4,5,6};
     memcpy(buf + 4, bssid, 6); memcpy(buf + 10, bssid, 6); memcpy(buf + 16, bssid, 6);
     buf[0] = 0x88; buf[1] = 0x02; /* QoS Data, type=2 subtype=8 */
@@ -105,13 +103,11 @@ MTK_TEST_MAIN_BEGIN
     mtk_test_call(&ctx2, op, &bad);
     MTK_CHECK_EQ(sink.response.status, MTK_STATUS_INVALID_ARGUMENT);
 
-    /* RC5 independent audit P1 "Handshake capture is unsafe and
-     * semantically incomplete": "completion check accepts message 4 plus
-     * either message 1 or 2 rather than proving the declared capture
-     * criteria." M1 + M4 with NO M2 observed must NOT be reported as a
-     * successful capture -- an offline crack attempt is mathematically
-     * impossible without the station's SNonce+MIC (M2), regardless of
-     * M4 having arrived. */
+    /* "completion check accepts message 4 plus either message 1 or 2 rather than
+     * proving the declared capture criteria." M1 + M4 with NO M2 observed must
+     * NOT be reported as a successful capture -- an offline crack attempt is
+     * mathematically impossible without the station's SNonce+MIC (M2),
+     * regardless of M4 having arrived. */
     {
         mtk_fake_wifi_reset();
         uint16_t l1 = build_eapol_frame(g_fake_wifi.frames[0].data, 1, 0, 0, 0); /* M1 */
@@ -156,16 +152,14 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(hstopsink.response.status, MTK_STATUS_OK);
     }
 
-    /* ---- RC7 independent audit P0 "Shared operation/session state
-     * remains data-racy" + item 11 "natural success ... normally does
-     * not stop promiscuous mode, release the arbiter, restore STA, or
-     * emit the terminal stopped event": with frames delivered AFTER
-     * HANDSHAKE_START already returned (matching a real target's
-     * asynchronous Wi-Fi-driver-task delivery, not the synchronous-
-     * within-promisc_start default every earlier section above relies
-     * on), natural M4 completion must still perform full cleanup exactly
+    /* + item 11 "natural success... normally does not stop promiscuous mode,
+     * release the arbiter, restore STA, or emit the terminal stopped event":
+     * with frames delivered AFTER HANDSHAKE_START already returned (matching a
+     * real target's asynchronous Wi-Fi-driver-task delivery, not the
+     * synchronous- within-promisc_start default every earlier section above
+     * relies on), natural M4 completion must still perform full cleanup exactly
      * once, and an explicit STOP arriving afterward must be a safe,
-     * non-double-cleaning no-op. -------------------------------------- */
+     * non-double-cleaning no-op. -------------------- */
     {
         mtk_fake_wifi_reset();
         g_fake_wifi.defer_frames = 1; /* promisc_start only records the callback; frames replay later */
@@ -180,9 +174,8 @@ MTK_TEST_MAIN_BEGIN
         mtk_fake_sink_state_t asink; mtk_fake_sink_reset(&asink);
         mtk_request_ctx_t actx = mtk_test_ctx(&asink, 7);
         mtk_handshake_start_req_t areq = {0};
-        /* Must match build_eapol_frame's own hardcoded {1,2,3,4,5,6}
-         * address fields (RC7 independent audit item 11's new
-         * frame_matches_target_bssid filter). */
+        /* Must match build_eapol_frame's own hardcoded {1,2,3,4,5,6} address
+         * fields ('s new frame_matches_target_bssid filter). */
         memcpy(areq.target_bssid.b, (uint8_t[]){1,2,3,4,5,6}, 6);
         areq.channel = 6; areq.deauth_count = 0;
         mtk_test_call(&actx, op, &areq);
@@ -209,14 +202,13 @@ MTK_TEST_MAIN_BEGIN
         const mtk_fake_event_t *astopped = mtk_fake_find_event(&asink, "HANDSHAKE_STOPPED");
         MTK_CHECK(astopped != NULL);
 
-        /* An explicit STOP arriving afterward (a real, if narrow, race
-         * against natural completion) must be a safe no-op -- NOT a
-         * second promisc_stop/restore/arbiter_release/HANDSHAKE_STOPPED.
-         * This is the exact defect class this round closes: before this
-         * fix, hs_frame_cb's own M4 completion never did this cleanup at
-         * all, so only a REAL race even existed once handshake_finish was
-         * introduced -- this proves the introduced fix doesn't ALSO
-         * introduce a double-cleanup bug of its own. */
+        /* An explicit STOP arriving afterward (a real, if narrow, race against
+         * natural completion) must be a safe no-op -- NOT a second
+         * promisc_stop/restore/arbiter_release/HANDSHAKE_STOPPED. This is the
+         * exact defect class closes: before this fix, hs_frame_cb's own M4
+         * completion never did this cleanup at all, so only a REAL race even
+         * existed once handshake_finish was introduced -- this proves the
+         * introduced fix doesn't ALSO introduce a double-cleanup bug of its own. */
         const mtk_opcode_entry_t *stop_op2 = mtk_test_find_op("HANDSHAKE_STOP");
         mtk_handshake_stop_req_t stopreq2 = {0}; stopreq2.operation_token = astarted.operation_token;
         mtk_fake_sink_state_t stopsink2; mtk_fake_sink_reset(&stopsink2);
@@ -228,12 +220,10 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK(mtk_fake_find_event(&stopsink2, "HANDSHAKE_STOPPED") == NULL); /* STOP's own response carries final state; it does not re-emit the terminal event */
     }
 
-    /* ---- RC7 independent audit item 11 "EAPOL frames are not filtered
-     * to the requested AP/station": a real EAPOL-Key frame from a
-     * DIFFERENT BSSID than the one requested must be ignored entirely --
-     * no HANDSHAKE_EVENT, no progress, no false completion -- even
-     * though it is otherwise a perfectly well-formed M1/M2/M4 sequence
-     * classify_eapol would happily accept from the right network. ------ */
+    /* a real EAPOL-Key frame from a DIFFERENT BSSID than the one requested must
+     * be ignored entirely -- no HANDSHAKE_EVENT, no progress, no false
+     * completion -- even though it is otherwise a perfectly well-formed M1/M2/M4
+     * sequence classify_eapol would happily accept from the right network. ---- */
     {
         mtk_fake_wifi_reset();
         uint16_t l1 = build_eapol_frame(g_fake_wifi.frames[0].data, 1, 0, 0, 0); /* M1 */

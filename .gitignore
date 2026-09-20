@@ -53,6 +53,16 @@ sdkconfig.*.old
 # Local editor state and caches
 .idea/
 .vscode/
+
+# Local assistant/agent configuration: machine-specific, never published
+CLAUDE.md
+.claude/
+AGENTS.md
+.cursor/
+.cursorrules
+.aider*
+.github/copilot-instructions.md
+
 .DS_Store
 __pycache__/
 *.py[cod]
@@ -61,3 +71,6 @@ __pycache__/
 venv/
 *.swp
 *.swo
+
+# Internal engineering history: retained locally, excluded from the public tree
+/internal/

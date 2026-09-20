@@ -1,130 +1,113 @@
-/* Release-tooling-round P0 correction, ROUND 9 (based on the Round 8
- * follow-up read-only audit): six further gaps found past round 8's own
- * concurrency and resource-failure closure:
+/* ROUND 9 (based on the Round 8 follow-up read-only audit): six further gaps
+ * found past round 8's own concurrency and resource-failure closure:
  *
- *  1. mtek_wifi_hal_esp32_init() could fail (a required mutex/event-group/
- *     queue/netif not created), but app_main.c installed the Wi-Fi HAL
- *     unconditionally regardless -- esp32_connect/esp32_disconnect use
- *     s_wifi_events/s_prior_state_mutex directly, with no resources-ready
- *     gate of their own (unlike the radio-disturbing entry points, which
- *     already refuse via capture_prior_state_once). Fixed: wifi_hal_ready
- *     mirrors ble_hal_ready's own established pattern -- mtek_wifi_set_hal
- *     is skipped entirely on failure, so every Wi-Fi opcode (STA_CONNECT
- *     included) honestly refuses via mtek_wifi_logic.c's own pre-existing
- *     `s_hal &&` guards. Not host-testable (main/app_main.c is ESP-IDF-
- *     only) -- verified by inspection, exactly like round 8's own item 4
- *     (mutex-allocation failure)'s equivalent gap.
- *  2. GATT_SUBSCRIBE's own CCCD-bounding end_handle was looked up in a
- *     SEPARATE, later lock acquisition than the connection-identity check
- *     that produced vendor_handle -- "the service range retrieved
- *     separately from the connection identity". GATT_UNSUBSCRIBE had this
- *     PLUS three more real defects: a check-then-use TOCTOU (gatt_check_
- *     conn's own lock, released, then a second lock reading vendor_handle
- *     unconditionally), the local subscription cleared BEFORE the HAL
- *     outcome was known, and MTK_STATUS_OK reported unconditionally
- *     regardless of the HAL call's own (entirely discarded) return value.
- *     Fixed: gatt_snapshot_identity_with_range captures connection_token,
- *     vendor_handle, AND the containing service's end_handle together, in
- *     ONE lock acquisition; GATT_UNSUBSCRIBE now mirrors GATT_SUBSCRIBE's
- *     own three-phase shape (snapshot -> HAL call -> re-validated commit),
- *     never clearing local state or reporting OK before the HAL call's own
- *     result is known.
- *  3. mtek_capture_channel_hop_tick snapshotted an operation token but its
- *     later gates checked only hop_active -- unable to distinguish "my own
- *     session is still hopping" from "an entirely different, newer
- *     session that also happens to be hop-mode now occupies s_cap"
- *     (capture_teardown's own mtk_op_claim_finalization/mtk_op_
- *     transition_by_token(...STOPPED...) pair is not atomic with mtek_
- *     wifi_restore_and_release's own arbiter release, leaving a real
- *     window where a brand-new capture_start can reinitialize s_cap before
- *     the OLD token's own op-table record has transitioned to terminal). A
- *     tick preempted in that window could change the radio channel,
- *     mutate state, or emit an event for the replacement session. Fixed:
- *     every gate after the op-table check now also re-checks s_cap.token
- *     == snap_token, the identity captured at entry.
- *  4. A serial log alone was not honest protocol-level failure handling
- *     when main/app_main.c's ble_tick_task failed to start -- SIGNAL_
- *     METER_START/GATT_SUBSCRIBE/a duration-bounded or hop-mode CAPTURE_
- *     START were still silently ACCEPTED as if their own tick-driven
- *     background delivery worked. Fixed: mtek_ble_service_mark_tick_task_
- *     failed/mtek_capture_service_mark_tick_task_failed (called once from
- *     app_main.c on that xTaskCreate failure) make these three opcode
- *     families refuse honestly (MTK_STATUS_NOT_READY) instead.
- *  5. mtek_ble_hal_esp32.c's esp32_gatt_discover/_chars/_descs reported an
- *     allocation failure (xSemaphoreCreateBinary) as a bare 0 -- identical
- *     to a genuinely empty discovery -- and mtek_ble_logic.c's own `if (n <
- *     0) n = 0;` in all three handlers discarded the HAL's own -1 failure
- *     signal the same way, both turning a real resource failure into an
- *     apparently successful, empty result. bound_to_own_characteristic
- *     went further: on allocation failure it returned service_end_handle,
- *     its own pre-existing "no narrower bound found" fallback -- silently
- *     BROADENING the caller's own CCCD search to the full, unnarrowed
- *     service range. Fixed: -1 (discover/_chars/_descs), a reserved
- *     0xFFFF sentinel (find_cccd_handle_in_range), and 0 (bound_to_own_
- *     characteristic, never otherwise a legitimate return) are now
- *     distinct, honest failure signals threaded all the way up to
- *     MTK_STATUS_IO_ERROR; the HAL-internal sentinels are ESP32/NimBLE-
- *     specific and not host-testable (mtek_ble_hal_esp32.c is not linked
- *     into host tests at all), but the SERVICE-LAYER handling of a
- *     negative HAL return is, and is proven here via the fake HAL's new
- *     gatt_discover_force_fail injection.
- *  6. [SUPERSEDED by RC12 hardening round, item 5 (P1).] This round's own
- *     text below (kept for historical continuity) documented DEFERRING the
- *     TIME_SYNC_START capability downgrade because four host tests borrowed
- *     it as their only generic MTK_LC_ACCEPTED_ASYNC + MTK_ARB_NONE
- *     vehicle. RC12 removed that coupling: those tests now use a test-only
- *     overlay opcode (host_tests/support/mtk_test_async_fixture.h, routed
- *     to the SAME handler), and TIME_SYNC_START's native/Mtek Compatibility capability
- *     is now truthfully UNSUPPORTED in the generated registry. The
- *     historical reasoning that follows no longer reflects the shipped
- *     capability state.
- *     TIME_SYNC_START's own generated registry entry USED TO declare
- *     MTK_CAP_SUPPORTED for both the native and Mtek Compatibility/C3 profiles, but this
- *     candidate has no SNTP client wired in at all -- handle_time_sync_
- *     start ALWAYS completes FAILED/IO_ERROR, unconditionally, every call
- *     (see its own doc comment). Making it refuse UNSUPPORTED was
- *     deferred in round 9: TIME_SYNC_START was then the ONLY
- *     MTK_LC_ACCEPTED_ASYNC + MTK_ARB_NONE opcode in the entire registry,
- *     and four independent, unrelated host tests (test_op_alloc_aba_
- *     service.c, test_spi_native_4inflight.c, test_peer_session_
- *     invalidation_services.c, test_spi_native_deferred_and_retained.c)
- *     rely on exactly that unique arbiter-free shape as their own generic
- *     async/ABA/eviction/deferred-delivery test vehicle -- disabling it
- *     would regress all four at the protocol level, a real, confirmed
- *     regression (not a hypothetical one; this was tried, and reverted).
- *     Documented instead as a disclosed, understood limitation, per this
- *     item's own "document a precise reason this cannot be changed
- *     without a protocol exception" alternative -- see cap_for's own doc
- *     comment (mtek_system_logic.c) for the full reasoning. No behavior
- *     change; nothing to test here beyond round 8's own existing TIME_
- *     SYNC_START lifecycle coverage.
+ * 1. mtek_wifi_hal_esp32_init could fail (a required mutex/event-group/
+ * queue/netif not created), but app_main.c installed the Wi-Fi HAL
+ * unconditionally regardless -- esp32_connect/esp32_disconnect use
+ * s_wifi_events/s_prior_state_mutex directly, with no resources-ready gate of
+ * their own (unlike the radio-disturbing entry points, which already refuse via
+ * capture_prior_state_once). Fixed: wifi_hal_ready mirrors ble_hal_ready's own
+ * established pattern -- mtek_wifi_set_hal is skipped entirely on failure, so
+ * every Wi-Fi opcode (STA_CONNECT included) honestly refuses via
+ * mtek_wifi_logic.c's own pre-existing `s_hal &&` guards. Not host-testable
+ * (main/app_main.c is ESP-IDF- only) -- verified by inspection, exactly like
+ * round 8's own item 4 (mutex-allocation failure)'s equivalent gap. 2.
+ * GATT_SUBSCRIBE's own CCCD-bounding end_handle was looked up in a SEPARATE,
+ * later lock acquisition than the connection-identity check that produced
+ * vendor_handle -- "the service range retrieved separately from the connection
+ * identity". GATT_UNSUBSCRIBE had this PLUS three more real defects: a
+ * check-then-use TOCTOU (gatt_check_ conn's own lock, released, then a second
+ * lock reading vendor_handle unconditionally), the local subscription cleared
+ * BEFORE the HAL outcome was known, and MTK_STATUS_OK reported unconditionally
+ * regardless of the HAL call's own (entirely discarded) return value. Fixed:
+ * gatt_snapshot_identity_with_range captures connection_token, vendor_handle,
+ * AND the containing service's end_handle together, in ONE lock acquisition;
+ * GATT_UNSUBSCRIBE now mirrors GATT_SUBSCRIBE's own three-phase shape (snapshot
+ * -> HAL call -> re-validated commit), never clearing local state or reporting
+ * OK before the HAL call's own result is known. 3. mtek_capture_channel_hop_tick
+ * snapshotted an operation token but its later gates checked only hop_active --
+ * unable to distinguish "my own session is still hopping" from "an entirely
+ * different, newer session that also happens to be hop-mode now occupies s_cap"
+ * (capture_teardown's own mtk_op_claim_finalization/mtk_op_
+ * transition_by_token(...STOPPED...) pair is not atomic with mtek_
+ * wifi_restore_and_release's own arbiter release, leaving a real window where a
+ * brand-new capture_start can reinitialize s_cap before the OLD token's own
+ * op-table record has transitioned to terminal). A tick preempted in that window
+ * could change the radio channel, mutate state, or emit an event for the
+ * replacement session. Fixed: every gate after the op-table check now also
+ * re-checks s_cap.token == snap_token, the identity captured at entry. 4. A
+ * serial log alone was not honest protocol-level failure handling when
+ * main/app_main.c's ble_tick_task failed to start -- SIGNAL_
+ * METER_START/GATT_SUBSCRIBE/a duration-bounded or hop-mode CAPTURE_ START were
+ * still silently ACCEPTED as if their own tick-driven background delivery
+ * worked. Fixed: mtek_ble_service_mark_tick_task_
+ * failed/mtek_capture_service_mark_tick_task_failed (called once from app_main.c
+ * on that xTaskCreate failure) make these three opcode families refuse honestly
+ * (MTK_STATUS_NOT_READY) instead. 5. mtek_ble_hal_esp32.c's
+ * esp32_gatt_discover/_chars/_descs reported an allocation failure
+ * (xSemaphoreCreateBinary) as a bare 0 -- identical to a genuinely empty
+ * discovery -- and mtek_ble_logic.c's own `if (n < 0) n = 0;` in all three
+ * handlers discarded the HAL's own -1 failure signal the same way, both turning
+ * a real resource failure into an apparently successful, empty result.
+ * bound_to_own_characteristic went further: on allocation failure it returned
+ * service_end_handle, its own pre-existing "no narrower bound found" fallback --
+ * silently BROADENING the caller's own CCCD search to the full, unnarrowed
+ * service range. Fixed: -1 (discover/_chars/_descs), a reserved 0xFFFF sentinel
+ * (find_cccd_handle_in_range), and 0 (bound_to_own_ characteristic, never
+ * otherwise a legitimate return) are now distinct, honest failure signals
+ * threaded all the way up to MTK_STATUS_IO_ERROR; the HAL-internal sentinels are
+ * ESP32/NimBLE- specific and not host-testable (mtek_ble_hal_esp32.c is not
+ * linked into host tests at all), but the SERVICE-LAYER handling of a negative
+ * HAL return is, and is proven here via the fake HAL's new
+ * gatt_discover_force_fail injection. 6. [SUPERSEDED by item 5 (P1).] This
+ * round's own text below (kept for historical continuity) documented DEFERRING
+ * the TIME_SYNC_START capability downgrade because four host tests borrowed it
+ * as their only generic MTK_LC_ACCEPTED_ASYNC + MTK_ARB_NONE vehicle. RC12
+ * removed that coupling: those tests now use a test-only overlay opcode
+ * (host_tests/support/mtk_test_async_fixture.h, routed to the SAME handler), and
+ * TIME_SYNC_START's native/Mtek Compatibility capability is now truthfully
+ * UNSUPPORTED in the generated registry. The historical reasoning that follows
+ * no longer reflects the shipped capability state. TIME_SYNC_START's own
+ * generated registry entry USED TO declare MTK_CAP_SUPPORTED for both the native
+ * and Mtek Compatibility/C3 profiles, but this candidate has no SNTP client
+ * wired in at all -- handle_time_sync_ start ALWAYS completes FAILED/IO_ERROR,
+ * unconditionally, every call (see its own doc comment). Making it refuse
+ * UNSUPPORTED was deferred in TIME_SYNC_START was then the ONLY
+ * MTK_LC_ACCEPTED_ASYNC + MTK_ARB_NONE opcode in the entire registry, and four
+ * independent, unrelated host tests (test_op_alloc_aba_ service.c,
+ * test_spi_native_4inflight.c, test_peer_session_ invalidation_services.c,
+ * test_spi_native_deferred_and_retained.c) rely on exactly that unique
+ * arbiter-free shape as their own generic async/ABA/eviction/deferred-delivery
+ * test vehicle -- disabling it would regress all four at the protocol level, a
+ * real, confirmed regression (not a hypothetical one; this was tried, and
+ * reverted). Documented instead as a disclosed, understood limitation, per this
+ * item's own "document a precise reason this cannot be changed without a
+ * protocol exception" alternative -- see cap_for's own doc comment
+ * (mtek_system_logic.c) for the full reasoning. No behavior change; nothing to
+ * test here beyond round 8's own existing TIME_ SYNC_START lifecycle coverage.
  *
- * This file proves, for each of items 1-5 above (item 6 is documentation-
- * only -- see its own doc comment just above, and section F below):
- *   A. (item 1) Not host-testable -- see its own doc comment above.
- *   B. (item 2) GATT_UNSUBSCRIBE: a HAL failure is reported IO_ERROR and
- *      never clears local subscription state; a HAL success clears it; a
- *      stale, in-flight UNSUBSCRIBE (delayed inside the real HAL call)
- *      that straddles a disconnect-then-reconnect reusing the exact same
- *      vendor_handle never clears the REPLACEMENT connection's own,
- *      independently-subscribed state for the same attr_handle.
- *   C. (item 3) A hop-mode capture's own periodic tick is paused (via the
- *      new mtek_capture_set_hop_tick_pause_hook) immediately after it has
- *      already passed the op-table terminal check for the OLD session;
- *      that OLD session is then STOPped for real and a brand-new hop-mode
- *      session STARTed (reinitializing the global s_cap struct); resuming
- *      the paused tick must never call the HAL's own set_channel, mutate
- *      state, or emit CAPTURE_CHANNEL_EVENT for the replacement session.
- *   D. (item 4) SIGNAL_METER_START, GATT_SUBSCRIBE, and a duration-bounded
- *      or hop-mode CAPTURE_START all refuse MTK_STATUS_NOT_READY once
- *      mtek_ble_service_mark_tick_task_failed/mtek_capture_service_mark_
- *      tick_task_failed have been called -- an unbounded, non-hopping
- *      CAPTURE_START remains unaffected.
- *   E. (item 5) GATT_DISCOVER: a HAL-layer failure (fake HAL's gatt_
- *      discover_force_fail) is reported MTK_STATUS_IO_ERROR, never an
- *      apparently successful empty discovery.
- *   F. (item 6) Documentation-only -- see the doc comment at its own
- *      section below. */
+ * This file proves, for each of items 1-5 above (item 6 is documentation- only
+ * -- see its own doc comment just above, and section F below): A. (item 1) Not
+ * host-testable -- see its own doc comment above. B. (item 2) GATT_UNSUBSCRIBE:
+ * a HAL failure is reported IO_ERROR and never clears local subscription state;
+ * a HAL success clears it; a stale, in-flight UNSUBSCRIBE (delayed inside the
+ * real HAL call) that straddles a disconnect-then-reconnect reusing the exact
+ * same vendor_handle never clears the REPLACEMENT connection's own,
+ * independently-subscribed state for the same attr_handle. C. (item 3) A
+ * hop-mode capture's own periodic tick is paused (via the new
+ * mtek_capture_set_hop_tick_pause_hook) immediately after it has already passed
+ * the op-table terminal check for the OLD session; that OLD session is then
+ * STOPped for real and a brand-new hop-mode session STARTed (reinitializing the
+ * global s_cap struct); resuming the paused tick must never call the HAL's own
+ * set_channel, mutate state, or emit CAPTURE_CHANNEL_EVENT for the replacement
+ * session. D. (item 4) SIGNAL_METER_START, GATT_SUBSCRIBE, and a
+ * duration-bounded or hop-mode CAPTURE_START all refuse MTK_STATUS_NOT_READY
+ * once mtek_ble_service_mark_tick_task_failed/mtek_capture_service_mark_
+ * tick_task_failed have been called -- an unbounded, non-hopping CAPTURE_START
+ * remains unaffected. E. (item 5) GATT_DISCOVER: a HAL-layer failure (fake HAL's
+ * gatt_ discover_force_fail) is reported MTK_STATUS_IO_ERROR, never an
+ * apparently successful empty discovery. F. (item 6) Documentation-only -- see
+ * the doc comment at its own section below. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtek_spi_native_dispatch.h"
@@ -135,9 +118,9 @@
 #include <stdlib.h>
 #include <time.h>
 
-/* ---- Lock domains, mirroring main/app_main.c's own real wiring (and
- * test_p0_round8_final_closure.c's own established pattern) -- every
- * dedicated mutex below is genuinely distinct from every other one. ---- */
+/* Lock domains, mirroring main/app_main.c's own real wiring (and
+ * test_p0_round8_final_closure.c's own established pattern) -- every dedicated
+ * mutex below is genuinely distinct from every other one. -- */
 static pthread_mutex_t s_router_mutex = PTHREAD_MUTEX_INITIALIZER;
 static void router_lock(void) { pthread_mutex_lock(&s_router_mutex); }
 static void router_unlock(void) { pthread_mutex_unlock(&s_router_mutex); }
@@ -204,10 +187,10 @@ static int wait_for_workers_idle(void) {
     return idle;
 }
 
-/* ---- generic pause rendezvous -- identical mechanism to
+/* generic pause rendezvous -- identical mechanism to
  * test_p0_round8_final_closure.c's own won-hook pause (there tied to
- * mtk_op_set_won_hook specifically; here reused for both that hook and the
- * new, void-returning mtek_capture_set_hop_tick_pause_hook). ---- */
+ * mtk_op_set_won_hook specifically; here reused for both that hook and the new,
+ * void-returning mtek_capture_set_hop_tick_pause_hook). -- */
 typedef struct {
     pthread_mutex_t m; pthread_cond_t cv;
     int arrived; int release;
@@ -252,8 +235,8 @@ static pthread_t spawn_trigger(void (*trigger)(void)) {
     return t;
 }
 
-/* ---- Real native SPI v1 cell plumbing -- identical to
- * test_p0_round8_final_closure.c's own. ---- */
+/* Real native SPI v1 cell plumbing -- identical to
+ * test_p0_round8_final_closure.c's own. -- */
 static mtk_spi_native_header_t base_req_hdr(uint16_t service, uint16_t opcode, uint32_t request_id,
                                              uint16_t payload_len, uint32_t peer_epoch) {
     mtk_spi_native_header_t h; memset(&h, 0, sizeof(h));
@@ -355,19 +338,17 @@ static void discover_gatt_direct(uint32_t connection_token) {
     mtk_gatt_discover_req_t req = {0}; req.connection_token = connection_token; req.max_items = 16;
     mtk_test_call(&ctx, disc_op, &req);
 }
-/* P0 correction (this round, test infrastructure): handle_gatt_connect
- * stores `*ctx` (including ctx->sink, a small POD struct carrying a
- * `void *user` pointer) into the long-lived, file-static s_gatt struct
- * (mtek_ble_logic.c) on a successful connect -- mtek_ble_gatt_tick's own
- * later notify-delivery path reads it back and calls sink.emit_event
- * through it, possibly long after the request that established the
- * connection has returned. A STACK-LOCAL mtk_fake_sink_state_t here would
- * leave that pointer dangling the instant this function returns (a real
- * stack-use-after-return once notify_delivers below actually exercises
- * that path -- round 8's own equivalent helper never triggered this,
- * since neither of its own two GATT tests ever called mtek_ble_gatt_tick
- * after connecting). File-static instead, so it remains valid for as
- * long as this whole test process runs. */
+/* handle_gatt_connect stores `*ctx` (including ctx->sink, a small POD struct
+ * carrying a `void *user` pointer) into the long-lived, file-static s_gatt
+ * struct (mtek_ble_logic.c) on a successful connect -- mtek_ble_gatt_tick's own
+ * later notify-delivery path reads it back and calls sink.emit_event through it,
+ * possibly long after the request that established the connection has returned.
+ * A STACK-LOCAL mtk_fake_sink_state_t here would leave that pointer dangling the
+ * instant this function returns (a real stack-use-after-return once
+ * notify_delivers below actually exercises that path -- round 8's own equivalent
+ * helper never triggered this, since neither of its own two GATT tests ever
+ * called mtek_ble_gatt_tick after connecting). File-static instead, so it
+ * remains valid for as long as this whole test process runs. */
 static mtk_fake_sink_state_t s_gatt_conn_sink;
 static uint32_t connect_gatt_direct(mtk_mac6_t addr) {
     const mtk_opcode_entry_t *connect_op = mtk_test_find_op("GATT_CONNECT");
@@ -531,7 +512,7 @@ static void test_gatt_unsubscribe_survives_vendor_handle_reuse(void) {
     g_fake_ble.gatt_subscribe_rc = 0;
     MTK_CHECK_EQ(subscribe_gatt_direct(old_conn_tok, 105, 0), MTK_STATUS_OK);
 
-    /* Pause the real gatt_unsubscribe() HAL call. */
+    /* Pause the real gatt_unsubscribe HAL call. */
     g_fake_ble.gatt_op_delay_ms = 400;
     s_unsub_conn_tok = old_conn_tok;
     pthread_t trig_tid = spawn_trigger(trigger_gatt_unsubscribe);
@@ -603,23 +584,21 @@ static void test_capture_channel_hop_session_replacement(void) {
     MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_NONE);
 
     /* START a brand-new HOP-MODE capture -- reinitializes the global s_cap
-     * struct the paused tick's own snap_token no longer names. Also
-     * hop-mode (not just any capture) so the paused tick's own pre-fix
-     * `if (!s_cap.hop_active) return;` check (hop_active alone, no
-     * identity) would have incorrectly proceeded here -- this genuinely
-     * exercises the new identity re-check, not merely a hop_active==0
-     * false negative. A long hop_dwell_ms means the NEW session's own
-     * hop is not independently due yet.
+     * struct the paused tick's own snap_token no longer names. Also hop-mode
+     * (not just any capture) so the paused tick's own pre-fix `if
+     * (!s_cap.hop_active) return;` check (hop_active alone, no identity) would
+     * have incorrectly proceeded here -- this genuinely exercises the new
+     * identity re-check, not merely a hop_active==0 false negative. A long
+     * hop_dwell_ms means the NEW session's own hop is not independently due yet.
      *
-     * P0 correction (RC11 round 10, item 1 "close the capture-hop pre-HAL
-     * race completely"): handle_capture_start's own reinit now blocks on
-     * mtek_capture_set_action_lock's own lease, still held by the paused
-     * tick above -- this dispatch's own worker thread genuinely starts
-     * (claims the arbiter, which A's own STOP already freed -- mtk_
-     * arbiter_force_transfer runs BEFORE the lease-gated reinit, so
-     * new_token below is real and valid even while the reinit itself
-     * remains blocked), but cannot finish reinitializing s_cap until the
-     * tick below resumes and releases that SAME lease. */
+     * handle_capture_start's own reinit now blocks on
+     * mtek_capture_set_action_lock's own lease, still held by the paused tick
+     * above -- this dispatch's own worker thread genuinely starts (claims the
+     * arbiter, which A's own STOP already freed -- mtk_ arbiter_force_transfer
+     * runs BEFORE the lease-gated reinit, so new_token below is real and valid
+     * even while the reinit itself remains blocked), but cannot finish
+     * reinitializing s_cap until the tick below resumes and releases that SAME
+     * lease. */
     mtk_capture_start_req_t req2 = {0};
     req2.mode = 0; req2.snap_len = 64;
     req2.channel_plan.mode = 1; req2.channel_plan.channel = 1; req2.channel_plan.hop_dwell_ms = 60000;
@@ -630,14 +609,14 @@ static void test_capture_channel_hop_session_replacement(void) {
 
     mtk_async_queue_reset(&dctx.event_queue);
 
-    /* Resume the paused, now-stale tick: it proceeds to call hal->
-     * set_channel() exactly once, for the OLD (already-stopped, but not
-     * yet replaced -- B's own reinit is still blocked) session -- harmless,
-     * since round 10's own action lease guarantees no replacement can
-     * exist yet at that exact moment -- then its own post-HAL re-check
-     * sees hop_active==0 (cleared by capture_teardown, this same round's
-     * own item 1 fix) and correctly bails without committing state or
-     * emitting an event, before finally releasing the lease. */
+    /* Resume the paused, now-stale tick: it proceeds to call hal-> set_channel
+     * exactly once, for the OLD (already-stopped, but not yet replaced -- B's
+     * own reinit is still blocked) session -- harmless, since round 10's own
+     * action lease guarantees no replacement can exist yet at that exact moment
+     * -- then its own post-HAL re-check sees hop_active==0 (cleared by
+     * capture_teardown, this same round's own item 1 fix) and correctly bails
+     * without committing state or emitting an event, before finally releasing
+     * the lease. */
     pause_release();
     pthread_join(trig_tid, NULL);
     mtek_capture_set_hop_tick_pause_hook(NULL);
@@ -734,15 +713,15 @@ static void test_gatt_discover_hal_failure_reports_io_error(void) {
 }
 
 /* ==== F. TIME_SYNC_START capability declaration (item 6). ================
- * [SUPERSEDED by RC12 hardening round, item 5 (P1).] Round 9 DEFERRED the
- * capability downgrade because four host tests borrowed TIME_SYNC_START as
- * their only generic arbiter-free async vehicle. RC12 broke that coupling
- * (test-only overlay opcode, see mtk_test_async_fixture.h) and downgraded
- * the production capability to UNSUPPORTED (native + compat_c3; factory_uart
- * was already UNAVAILABLE). This item is therefore now resolved, not
- * deferred; the operation's own runtime behavior when dispatched under the
- * test overlay (ACCEPTED, then always FAILED/IO_ERROR) is unchanged and is
- * still covered by round 8's own lifecycle tests. */
+ * [SUPERSEDED by item 5 (P1).] Round 9 DEFERRED the capability downgrade because
+ * four host tests borrowed TIME_SYNC_START as their only generic arbiter-free
+ * async vehicle. RC12 broke that coupling (test-only overlay opcode, see
+ * mtk_test_async_fixture.h) and downgraded the production capability to
+ * UNSUPPORTED (native + compat_c3; factory_uart was already UNAVAILABLE). This
+ * item is therefore now resolved, not deferred; the operation's own runtime
+ * behavior when dispatched under the test overlay (ACCEPTED, then always
+ * FAILED/IO_ERROR) is unchanged and is still covered by round 8's own lifecycle
+ * tests. */
 
 /* ==== D. Tick-task-failure readiness gates (item 4). =====================
  * Run LAST: mtek_ble_service_mark_tick_task_failed/mtek_capture_service_

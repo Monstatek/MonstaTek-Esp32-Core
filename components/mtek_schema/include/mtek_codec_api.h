@@ -18,8 +18,7 @@ enum {
  * for an empty message (writes zero bytes). */
 int mtk_encode(const mtk_struct_desc_t *desc, const void *obj, uint8_t *out, size_t cap, size_t *out_len);
 
-/* Decodes `len` bytes at `in` into `obj` per `desc`. Rejects any bool byte
- * that is not exactly 0x00/0x01, any length/count exceeding its field's
- * bound, and any truncated buffer -- never partially executes a malformed
- * message (002-canonical-core-contract.md Sec 1, Sec "Parser requirements"). */
+/* Decodes `len` bytes at `in` into `obj` per `desc`. Rejects any bool byte that
+ * is not exactly 0x00/0x01, any length/count exceeding its field's bound, and
+ * any truncated buffer -- never partially executes a malformed message. */
 int mtk_decode(const mtk_struct_desc_t *desc, void *obj, const uint8_t *in, size_t len, size_t *consumed);

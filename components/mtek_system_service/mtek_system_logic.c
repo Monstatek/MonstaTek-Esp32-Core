@@ -1,5 +1,5 @@
-/* Clean-room implementation from MonstaTek contract (002-system-service.md,
- * 002-service-registry.md). Portable: no ESP-IDF dependency, host-testable. */
+/* Clean-room implementation from MonstaTek contract. Portable: no ESP-IDF
+ * dependency, host-testable. */
 #include "mtek_system_service.h"
 #include "mtek_schema_structs.h"
 #include "mtek_schema_message_descs.h"
@@ -7,8 +7,8 @@
 #include "mtek_arbiter.h"
 #include <string.h>
 
-/* RC12 blocker round, item 1: system-service token families (service
- * 0x0000). TIME_SYNC_STOP consumes a token minted by TIME_SYNC_START. */
+/* System-service token families (service 0x0000). TIME_SYNC_STOP
+ * consumes a token minted by TIME_SYNC_START. */
 #define SYSTEM_SERVICE_ID       0x0000
 #define TIME_SYNC_START_OPCODE  0x0008
 /* Test-only opcodes (see mtek_system_dispatch's own #ifdef block): the
@@ -50,9 +50,9 @@ static void respond_empty(mtk_request_ctx_t *ctx, uint8_t status) {
     ctx->sink.emit_response(ctx->sink.user, ctx->correlation, status, NULL, NULL);
 }
 
-/* 002-service-registry.md Sec 7: the six fixed service namespaces, echoed
- * back verbatim by GET_VERSION.service_summary so a peer can learn every
- * implemented service's version in one round trip. */
+/* the six fixed service namespaces, echoed back verbatim by
+ * GET_VERSION.service_summary so a peer can learn every implemented service's
+ * version in one round trip. */
 static const struct { uint16_t id; uint8_t major, minor; } s_registry_versions[] = {
     {0x0000, 1, 0}, {0x0001, 1, 0}, {0x0002, 1, 0}, {0x0003, 1, 0}, {0x0004, 1, 0}, {0x0005, 1, 0},
 };
@@ -103,58 +103,52 @@ static void handle_get_limits(mtk_request_ctx_t *ctx) {
 
 extern const mtk_opcode_entry_t mtk_opcode_table[MTK_OPCODE_COUNT];
 
-/* RC8 independent audit P0-8 "Make capabilities truthful for the exact
- * build": the generated registry's own cap_native/cap_factory_uart/
- * cap_compat_c3 fields declare several Wi-Fi opcode families as
- * MTK_CAP_SUPPORTED, but mtek_wifi_logic.c's own dispatch switch
- * unconditionally answers every one of them with MTK_STATUS_UNSUPPORTED
- * -- true today regardless of each family's own Kconfig module gate
- * (CONFIG_MTEK_MODULE_*), since not one of them has real radio-behavior
- * logic implemented yet this session (see that switch's own doc comment,
- * mtek_wifi_logic.c). GET_CAPABILITIES must never promise behavior the
- * image actually rejects -- this overlay corrects exactly (and only)
- * those opcodes to MTK_CAP_UNSUPPORTED, leaving the registry's own
- * static table (still the source of truth for every opcode this
- * overlay does not name) untouched. Update this list the moment any one
- * of these families gets a real implementation -- see
- * test_opcode_registry.c's own property test, which fails loud if this
- * list and mtek_wifi_logic.c's own dispatch switch ever drift apart. */
+/* The generated registry's own cap_native/cap_factory_uart/ cap_compat_c3 fields
+ * declare several Wi-Fi opcode families as MTK_CAP_SUPPORTED, but
+ * mtek_wifi_logic.c's own dispatch switch unconditionally answers every one of
+ * them with MTK_STATUS_UNSUPPORTED -- true today regardless of each family's own
+ * Kconfig module gate (CONFIG_MTEK_MODULE_*), since not one of them has real
+ * radio-behavior logic implemented (see that switch's own doc comment,
+ * mtek_wifi_logic.c). GET_CAPABILITIES must never promise behavior the image
+ * actually rejects -- this overlay corrects exactly (and only) those opcodes to
+ * MTK_CAP_UNSUPPORTED, leaving the registry's own static table (still the source
+ * of truth for every opcode this overlay does not name) untouched. Update this
+ * list the moment any one of these families gets a real implementation -- see
+ * test_opcode_registry.c's own property test, which fails loud if this list and
+ * mtek_wifi_logic.c's own dispatch switch ever drift apart. */
 static int opcode_is_unimplemented_optional_wifi_module(uint16_t service_id, uint16_t opcode) {
     if (service_id != 0x0001) return 0;
     switch (opcode) {
         case 0x000D: case 0x000E: case 0x000F: /* BEACON_START/STOP/STATUS */
-        case 0x0019: case 0x001A: case 0x001B: /* SOFTAP_START/STOP/STA_LIST */
         case 0x001C: case 0x001D: /* PROBE_FLOOD_START/STOP */
         case 0x001E: case 0x0026: /* PMKID_CAPTURE_START/STOP */
         case 0x001F: case 0x0020: /* KARMA_START/STOP */
-        case 0x0022: case 0x0023: case 0x0024: case 0x0025: /* CAPTIVE_PORTAL_START/STOP/GET_CREDENTIALS/GET_DIAGNOSTICS */
             return 1;
         default:
             return 0;
     }
 }
 
-/* RC12 hardening round, item 5 (P1) "TIME_SYNC capability truthfulness":
- * this candidate's own handle_time_sync_start below has no SNTP client
- * wired in and ALWAYS completes FAILED/IO_ERROR, so advertising
- * TIME_SYNC_START as SUPPORTED was a dishonest capability claim. Round 9
- * (item 6) had DEFERRED the downgrade because TIME_SYNC_START was then the
- * ONLY MTK_LC_ACCEPTED_ASYNC + MTK_ARB_NONE opcode in the registry and
- * five host tests borrowed exactly that arbiter-free async shape as their
- * generic op-table/async-pool test vehicle -- downgrading would have
- * regressed all five at the protocol level.
+/* This candidate's own
+ * handle_time_sync_start below has no SNTP client wired in and ALWAYS completes
+ * FAILED/IO_ERROR, so advertising TIME_SYNC_START as SUPPORTED was a dishonest
+ * capability claim. Round 9 (item 6) had DEFERRED the downgrade because
+ * TIME_SYNC_START was then the ONLY MTK_LC_ACCEPTED_ASYNC + MTK_ARB_NONE opcode
+ * in the registry and five host tests borrowed exactly that arbiter-free async
+ * shape as their generic op-table/async-pool test vehicle -- downgrading would
+ * have regressed all five at the protocol level.
  *
- * RC12 removed that coupling directly: those tests now register a test-
- * ONLY opcode of the same shape in the opcode overlay (mtek_opcode_
- * overlay.h, empty in production; host_tests/support/mtk_test_async_
- * fixture.h), routed by mtek_system_dispatch to this SAME handler, so they
- * still exercise the real production async machinery. With the tests no
- * longer dependent on it, TIME_SYNC_START's generated capability_state is
- * now the truthful MTK_CAP_UNSUPPORTED for native and Mtek Compatibility/C3
- * (factory-UART was already MTK_CAP_UNAVAILABLE). Restore SUPPORTED only
- * when a real SNTP client exists. No cap_for OVERLAY is needed for this --
- * the generated registry field itself now carries the honest value, so
- * cap_for returns it directly like every other opcode. */
+ * RC12 removed that coupling directly: those tests now register a test- ONLY
+ * opcode of the same shape in the opcode overlay (mtek_opcode_ overlay.h, empty
+ * in production; host_tests/support/mtk_test_async_ fixture.h), routed by
+ * mtek_system_dispatch to this SAME handler, so they still exercise the real
+ * production async machinery. With the tests no longer dependent on it,
+ * TIME_SYNC_START's generated capability_state is now the truthful
+ * MTK_CAP_UNSUPPORTED for native and Mtek Compatibility/C3 (factory-UART was
+ * already MTK_CAP_UNAVAILABLE). Restore SUPPORTED only when a real SNTP client
+ * exists. No cap_for OVERLAY is needed for this -- the generated registry field
+ * itself now carries the honest value, so cap_for returns it directly like every
+ * other opcode. */
 static mtk_capability_state_t cap_for(const mtk_opcode_entry_t *op, mtk_profile_t profile) {
     if (opcode_is_unimplemented_optional_wifi_module(op->service_id, op->opcode)) return MTK_CAP_UNSUPPORTED;
     switch (profile) {
@@ -240,38 +234,32 @@ static void handle_time_sync_start(mtk_request_ctx_t *ctx, const mtk_opcode_entr
     }
     if (!s_sta_query || !s_sta_query()) { respond_empty(ctx, MTK_STATUS_NOT_READY); return; }
     int no_mem = 0;
-    /* Release-tooling-round P0 correction (independent audit, "the
-     * same slot-reuse/ABA hazard remains through every production
-     * mtk_op_alloc() call site"): the identity (token, boot_epoch) is
-     * copied out atomically at mint time (mtk_op_alloc_id's own doc
-     * comment) -- no raw record pointer is ever held past this point,
-     * including across the ACCEPTED response below and the terminal
-     * transition after it. */
+    /* The identity (token, boot_epoch) is copied out atomically at mint time
+     * (mtk_op_alloc_id's own doc comment) -- no raw record pointer is ever held
+     * past this point, including across the ACCEPTED response below and the
+     * terminal transition after it. */
     mtk_op_id_t id = mtk_op_alloc_id(op->service_id, op->opcode, now_ms(), &no_mem);
     if (id.token == 0) { respond_empty(ctx, MTK_STATUS_NO_MEMORY); return; }
     mtk_time_sync_start_resp_t r; r.operation_token = id.token;
     respond(ctx, MTK_STATUS_ACCEPTED, &r, &mtk_time_sync_start_resp_t_desc);
-    /* No SNTP client is wired into this candidate (no network access during
-     * this build/session); the operation always completes FAILED/IO_ERROR
-     * per its own contracted non-success terminal shape (all-zero time
-     * fields) rather than fabricating a successful sync.
+    /* No SNTP client is wired into this candidate (no network access during this
+     * build/session); the operation always completes FAILED/IO_ERROR per its own
+     * contracted non-success terminal shape (all-zero time fields) rather than
+     * fabricating a successful sync.
      *
-     * P0 correction (follow-up read-only audit, "Round 8: final concurrency
-     * and resource-failure closure", item 1): TIME_SYNC_START is ACCEPTED_
-     * ASYNC and this tail runs on a deferred worker exactly like deauth's
-     * own natural-completion tail -- previously it transitioned the token
-     * and emitted TIME_SYNC_RESULT unconditionally, with no check that a
-     * concurrent TIME_SYNC_STOP/peer-session reset had not already claimed
-     * this token, and no guard against a reset landing between winning the
-     * transition and actually publishing. `won` mirrors deauth_finalize's
-     * own convention (mtk_op_transition_by_token's return value IS the
-     * atomic "did I just win this transition" check -- STOP or a
+     * TIME_SYNC_START is ACCEPTED_ ASYNC and this tail runs on a deferred worker
+     * exactly like deauth's own natural-completion tail -- previously it
+     * transitioned the token and emitted TIME_SYNC_RESULT unconditionally, with
+     * no check that a concurrent TIME_SYNC_STOP/peer-session reset had not
+     * already claimed this token, and no guard against a reset landing between
+     * winning the transition and actually publishing. `won` mirrors
+     * deauth_finalize's own convention (mtk_op_transition_by_token's return
+     * value IS the atomic "did I just win this transition" check -- STOP or a
      * concurrent finalize can only have transitioned it once); mtk_op_
-     * begin_publish_guard, held across the whole publish, closes the
-     * remaining reset-race window (see its own doc comment in
-     * mtek_core.h). ctx is this same, still-in-scope request's own
-     * context -- no separate long-lived session struct is needed here,
-     * matching deauth's own established pattern. */
+     * begin_publish_guard, held across the whole publish, closes the remaining
+     * reset-race window (see its own doc comment in mtek_core.h). ctx is this
+     * same, still-in-scope request's own context -- no separate long-lived
+     * session struct is needed here, matching deauth's own established pattern. */
     int won = mtk_op_transition_by_token(id.token, id.boot_epoch, MTK_OPS_FAILED, MTK_STATUS_IO_ERROR, now_ms());
     if (won && mtk_op_begin_publish_guard(ctx->session_generation)) {
         mtk_time_sync_result_ev_t ev; memset(&ev, 0, sizeof(ev));
@@ -289,11 +277,10 @@ static void handle_time_sync_stop(mtk_request_ctx_t *ctx, const mtk_opcode_entry
         respond_empty(ctx, MTK_STATUS_PROTOCOL_ERROR);
         return;
     }
-    /* RC12 item 1: family gate. The real TIME_SYNC_STOP (0x0009) consumes a
-     * TIME_SYNC_START (0x0008) token; the test-only STOP (0x00F1, compiled
-     * only under MTK_ENABLE_TEST_OPCODES) consumes a test-START (0x00F0)
-     * token. A token from any other family is rejected NOT_FOUND with no
-     * transition. */
+    /* Family gate. The real TIME_SYNC_STOP (0x0009) consumes a TIME_SYNC_START
+     * (0x0008) token; the test-only STOP (0x00F1, compiled only under
+     * MTK_ENABLE_TEST_OPCODES) consumes a test-START (0x00F0) token. A token
+     * from any other family is rejected NOT_FOUND with no transition. */
     uint16_t expected_start_opcode = TIME_SYNC_START_OPCODE;
 #ifdef MTK_ENABLE_TEST_OPCODES
     if (op->opcode == TEST_ASYNC_STOP_OPCODE) expected_start_opcode = TEST_ASYNC_START_OPCODE;
@@ -328,21 +315,21 @@ static void mtek_system_dispatch(mtk_request_ctx_t *ctx, const mtk_opcode_entry_
         case 0x0008: handle_time_sync_start(ctx, op, req_bytes, req_len); return;
         case 0x0009: handle_time_sync_stop(ctx, op, req_bytes, req_len); return;
 #ifdef MTK_ENABLE_TEST_OPCODES
-        /* RC12 hardening round, item 5 (P1) + blocker round item 1: a test-
-         * only generic arbiter-free ACCEPTED_ASYNC vehicle (0x00F0 START)
-         * and its paired generic SYNCHRONOUS STOP (0x00F1), routed to the
-         * SAME production handlers as TIME_SYNC_START/STOP so host tests
-         * exercise the real async worker/publish-guard/pool/family machinery
-         * rather than a divergent reimplementation. These opcodes only exist
-         * in the test-only opcode overlay (mtek_opcode_overlay.h) AND this
-         * routing is compiled out entirely of the ESP32 target
-         * (MTK_ENABLE_TEST_OPCODES is defined only for the host-test build,
-         * never the target) -- so they are genuinely not present in the
-         * shipped firmware, satisfying the blocker round's requirement that
-         * TIME_SYNC_STOP be UNSUPPORTED on native while any generic STOP the
-         * tests need lives in a test-only fixture. The handlers are fully
-         * opcode-generic (they key off op->service_id/op->opcode/op->req_desc,
-         * never a hardcoded 0x0008/0x0009). See mtk_test_async_fixture.h. */
+        /* A test- only generic arbiter-free
+         * ACCEPTED_ASYNC vehicle (0x00F0 START) and its paired generic
+         * SYNCHRONOUS STOP (0x00F1), routed to the SAME production handlers as
+         * TIME_SYNC_START/STOP so host tests exercise the real async
+         * worker/publish-guard/pool/family machinery rather than a divergent
+         * reimplementation. These opcodes only exist in the test-only opcode
+         * overlay (mtek_opcode_overlay.h) AND this routing is compiled out
+         * entirely of the ESP32 target (MTK_ENABLE_TEST_OPCODES is defined only
+         * for the host-test build, never the target) -- so they are genuinely
+         * not present in the shipped firmware, satisfying the blocker round's
+         * requirement that TIME_SYNC_STOP be UNSUPPORTED on native while any
+         * generic STOP the tests need lives in a test-only fixture. The handlers
+         * are fully opcode-generic (they key off
+         * op->service_id/op->opcode/op->req_desc, never a hardcoded
+         * 0x0008/0x0009). See mtk_test_async_fixture.h. */
         case TEST_ASYNC_START_OPCODE: handle_time_sync_start(ctx, op, req_bytes, req_len); return;
         case TEST_ASYNC_STOP_OPCODE:  handle_time_sync_stop(ctx, op, req_bytes, req_len); return;
 #endif

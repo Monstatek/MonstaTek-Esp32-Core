@@ -17,33 +17,30 @@ typedef enum {
     MTK_TRANSPORT_COMPAT_C3_SPI,
 } mtk_transport_lock_t;
 
-/* Examines one discovery-phase transaction buffer (SPI_PROTOCOL_V1.md:
- * "a non-dispatching 512-byte discovery phase") and returns which profile
- * it recognizes, or MTK_TRANSPORT_AUTO if neither parser accepts it (stay
- * in AUTO and keep polling). Cross-profile rejection is guaranteed by
- * construction: native's fixed 4-byte magic ("M1S1", wire bytes
- * 4D 31 53 31) and Mtek Compatibility's fixed 2-byte magic (0x4D31 LE, wire bytes
- * 31 4D) are disjoint at byte 0 (0x4D vs 0x31)
- * (001-profile-bootstrap-feasibility.md Sec 2), so at most one of the two
- * bounded parsers below can ever accept the same buffer -- never both. */
+/* Examines one discovery-phase transaction buffer (SPI_PROTOCOL_V1.md: "a
+ * non-dispatching 512-byte discovery phase") and returns which profile it
+ * recognizes, or MTK_TRANSPORT_AUTO if neither parser accepts it (stay in AUTO
+ * and keep polling). Cross-profile rejection is guaranteed by construction:
+ * native's fixed 4-byte magic ("M1S1", wire bytes 4D 31 53 31) and Mtek
+ * Compatibility's fixed 2-byte magic (0x4D31 LE, wire bytes 31 4D) are disjoint
+ * at byte 0 (0x4D vs 0x31), so at most one of the two bounded parsers below can
+ * ever accept the same buffer -- never both. */
 mtk_transport_lock_t mtk_transport_try_recognize_discovery(const uint8_t *buf, size_t len);
 
-/* RC7 independent audit P0 "The release artifact starts the wrong
- * transport for shipped M1 compatibility": SPI_PROTOCOL_V1.md's own
- * "Runtime transport selection" section requires AUTO discovery across a
- * native SPI HELLO, a Mtek Compatibility/C3 discovery frame, OR a valid legacy UART
- * command -- three independent physical listeners (UART0 and the shared
- * SPI bus are genuinely different buses, so both can and must run
- * concurrently before selection) that may all be live at boot, but
- * "only canonical dispatch must become exclusive after the first valid
- * operational input" (the audit's own words). This is that cross-
- * transport exclusivity latch: separate from (and layered on top of)
- * mtk_transport_try_recognize_discovery above, which only arbitrates
- * between the two SPI-bus profiles sharing one physical bus. Portable
- * (no ESP-IDF dependency, host-testable); thread-safe via caller-supplied
- * lock hooks, matching every other cross-task primitive in this tree
- * (mtek_core.h, mtek_arbiter.h, mtek_async_queue.h) -- with no hooks
- * registered, safe only from a single thread of control. */
+/* SPI_PROTOCOL_V1.md's own "Runtime transport selection" section requires AUTO
+ * discovery across a native SPI HELLO, a Mtek Compatibility/C3 discovery frame,
+ * OR a valid legacy UART command -- three independent physical listeners (UART0
+ * and the shared SPI bus are genuinely different buses, so both can and must run
+ * concurrently before selection) that may all be live at boot, but "only
+ * canonical dispatch must become exclusive after the first valid operational
+ * input" (the audit's own words). This is that cross- transport exclusivity
+ * latch: separate from (and layered on top of)
+ * mtk_transport_try_recognize_discovery above, which only arbitrates between the
+ * two SPI-bus profiles sharing one physical bus. Portable (no ESP-IDF
+ * dependency, host-testable); thread-safe via caller-supplied lock hooks,
+ * matching every other cross-task primitive in this tree (mtek_core.h,
+ * mtek_arbiter.h, mtek_async_queue.h) -- with no hooks registered, safe only
+ * from a single thread of control. */
 typedef enum {
     MTK_PUBLIC_ADAPTER_NONE = 0,
     MTK_PUBLIC_ADAPTER_FACTORY_UART,
@@ -72,22 +69,19 @@ int mtk_transport_claim_try(mtk_public_adapter_t which);
 
 mtk_public_adapter_t mtk_transport_claim_get(void);
 
-/* RC7 independent audit P0 "Native 512-to-1024 discovery transition is
- * still wrong": the audit's own required correction was "extract a
- * host-testable physical transaction state machine. Prove the cold-boot
- * sequence byte-for-byte and length-for-length: neutral/HELLO at 512,
- * HELLO_ACK at 512, then 1024 only after the ACK transaction completes."
- * A prior round's own single-flag version (`if (upgrade_pending) {
- * cell_size = 1024; ...}` applied starting the very next transaction)
- * upgraded exactly one transaction too early -- the very transaction that
- * carries the HELLO_ACK response itself, which the master (having only
- * just sent its own HELLO and seen no acknowledgement yet) necessarily
- * still clocks at the 512-byte discovery cadence. This pure, portable
- * state machine is that fix, extracted so the exact transaction-by-
- * transaction sequence can be proven on host, not only trusted by
- * inspection of target-only code (main/mtek_spi_runtime.c, which is not
- * itself host-testable -- see mtek_spi_native_discovery.c's own doc
- * comment on that boundary). */
+/* The audit's own required correction was "extract a host-testable physical
+ * transaction state machine. Prove the cold-boot sequence byte-for-byte and
+ * length-for-length: neutral/HELLO at 512, HELLO_ACK at 512, then 1024 only
+ * after the ACK transaction completes." A prior round's own single-flag version
+ * (`if (upgrade_pending) { cell_size = 1024;...}` applied starting the very next
+ * transaction) upgraded exactly one transaction too early -- the very
+ * transaction that carries the HELLO_ACK response itself, which the master
+ * (having only just sent its own HELLO and seen no acknowledgement yet)
+ * necessarily still clocks at the 512-byte discovery cadence. This pure,
+ * portable state machine is that fix, extracted so the exact transaction-by-
+ * transaction sequence can be proven on host, not only trusted by inspection of
+ * target-only code (main/mtek_spi_runtime.c, which is not itself host-testable
+ * -- see mtek_spi_native_discovery.c's own doc comment on that boundary). */
 typedef struct {
     int countdown; /* 0 = no upgrade pending; N = apply once N more transactions have started */
 } mtk_native_cellsize_negotiator_t;

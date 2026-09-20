@@ -1,15 +1,14 @@
-/* RC5 independent audit P0 "Native events and streams are not
- * implemented": native SPI v1's dispatch layer used to discard every
- * emit_event/emit_stream call for an ACCEPTED_ASYNC operation (cap_event/
- * cap_stream were no-ops) -- signal-meter updates, GATT notifications,
- * capture delivery, and handshake progress could never reach a native
- * SPI peer at all. This proves real, byte-exact delivery for both EVENT
- * and STREAM classes against this implementation's own disclosed wire
- * encoding (mtek_spi_native_dispatch.c's build_event_or_stream_payload
- * doc comment: EVENT = `[name_len:u8][name][canonically-encoded body]`,
- * header.request_id = operation token, STREAM = raw chunk bytes,
- * header.request_id = session token, header.packet_seq = sequence),
- * plus multi-frame ordering and queue-overflow backpressure. */
+/* Native SPI v1's dispatch layer used to discard every emit_event/emit_stream
+ * call for an ACCEPTED_ASYNC operation (cap_event/ cap_stream were no-ops) --
+ * signal-meter updates, GATT notifications, capture delivery, and handshake
+ * progress could never reach a native SPI peer at all. This proves real,
+ * byte-exact delivery for both EVENT and STREAM classes against this
+ * implementation's own disclosed wire encoding (mtek_spi_native_dispatch.c's
+ * build_event_or_stream_payload doc comment: EVENT =
+ * `[name_len:u8][name][canonically-encoded body]`, header.request_id = operation
+ * token, STREAM = raw chunk bytes, header.request_id = session token,
+ * header.packet_seq = sequence), plus multi-frame ordering and queue-overflow
+ * backpressure. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtk_test_async_fixture.h"
@@ -37,21 +36,19 @@ static mtk_spi_native_header_t base_req_hdr(uint16_t service, uint16_t opcode, u
     return h;
 }
 
-/* RC7 independent audit P0 "Native EVENT/STREAM encoding contradicts the
- * accepted header contract": the operation/session token now travels as
- * the payload's own first 4 bytes (little-endian), not header.request_id
- * (which must be 0 for EVENT/STREAM per the accepted protocol). */
+/* The operation/session token now travels as the payload's own first 4 bytes
+ * (little-endian), not header.request_id (which must be 0 for EVENT/STREAM per
+ * the accepted protocol). */
 static uint32_t token_from_payload(const uint8_t *p) {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
 static uint16_t build_eapol_frame(uint8_t *buf, int ack, int mic, int secure, int install) {
     memset(buf, 0, 200);
-    /* RC7 independent audit item 11 "EAPOL frames are not filtered to
-     * the requested AP/station": addr1/addr2/addr3 must name the target
-     * BSSID {1,2,3,4,5,6} used by this file's own HANDSHAKE_START
-     * requests, or mtek_wifi_logic.c's new frame_matches_target_bssid
-     * filter would reject every synthetic frame this test builds. */
+    /* Addr1/addr2/addr3 must name the target BSSID {1,2,3,4,5,6} used by this
+     * file's own HANDSHAKE_START requests, or mtek_wifi_logic.c's new
+     * frame_matches_target_bssid filter would reject every synthetic frame this
+     * test builds. */
     static const uint8_t bssid[6] = {1,2,3,4,5,6};
     memcpy(buf + 4, bssid, 6); memcpy(buf + 10, bssid, 6); memcpy(buf + 16, bssid, 6);
     buf[0] = 0x88; buf[1] = 0x02;
@@ -84,9 +81,9 @@ MTK_TEST_MAIN_BEGIN
     mtk_spi_native_dispatch_ctx_t dctx;
     mtek_spi_native_dispatch_init(&dctx, 0x1234);
 
-    /* ---- EVENT: HANDSHAKE_START's real M1 frame produces a real
-     * HANDSHAKE_EVENT the fake HAL delivers synchronously within
-     * promisc_start -- proves the disclosed EVENT encoding byte-exactly. ---- */
+    /* EVENT: HANDSHAKE_START's real M1 frame produces a real HANDSHAKE_EVENT the
+     * fake HAL delivers synchronously within promisc_start -- proves the
+     * disclosed EVENT encoding byte-exactly. -- */
     const mtk_opcode_entry_t *hs_op = mtk_test_find_op("HANDSHAKE_START");
     uint16_t len = build_eapol_frame(g_fake_wifi.frames[0].data, 1, 0, 0, 0); /* M1: FOUND_EAPOL */
     g_fake_wifi.frames[0].len = len; g_fake_wifi.frames[0].channel = 6;
@@ -112,7 +109,8 @@ MTK_TEST_MAIN_BEGIN
     mtek_spi_native_dispatch_poll_outbound(&dctx, &resp_hdr, resp_payload, &resp_len);
     MTK_CHECK_EQ(resp_hdr.msg_class, MTK_SPI_CLASS_EVENT);
     MTK_CHECK_EQ(resp_hdr.status, MTK_STATUS_OK);
-    MTK_CHECK_EQ(resp_hdr.request_id, 0); /* RC7: request_id=0 for EVENT, per the accepted protocol */
+    MTK_CHECK_EQ(resp_hdr.request_id, 0); /* request_id=0 for EVENT, per the accepted
+                                           * protocol */
     MTK_CHECK_EQ(resp_hdr.packet_seq, 0); /* not meaningful for EVENT */
     MTK_CHECK_EQ(token_from_payload(resp_payload), op_token); /* the operation token instead travels in the payload */
 
@@ -132,7 +130,7 @@ MTK_TEST_MAIN_BEGIN
     mtek_spi_native_dispatch_poll_outbound(&dctx, &resp_hdr, resp_payload, &resp_len);
     MTK_CHECK_EQ(resp_hdr.msg_class, MTK_SPI_CLASS_IDLE);
 
-    /* Clean up this session so it does not interfere with the STREAM test below. */
+    /* Clean up so it does not interfere with the STREAM test below. */
     {
         const mtk_opcode_entry_t *hs_stop = mtk_test_find_op("HANDSHAKE_STOP");
         mtk_handshake_stop_req_t sreq = {0}; sreq.operation_token = op_token;
@@ -146,12 +144,11 @@ MTK_TEST_MAIN_BEGIN
         mtek_spi_native_dispatch_poll_outbound(&dctx, &resp_hdr, resp_payload, &resp_len);
     }
 
-    /* ---- STREAM: MonstaShark PUSH-mode capture delivers real STREAM
-     * chunks -- proves the disclosed STREAM encoding byte-exactly,
-     * including a chunk large enough (>512 bytes, the OLD
-     * MTK_ASYNC_FRAME_MAX_BODY cap) to prove the widening this fix also
-     * required (a smaller cap would have silently truncated captured
-     * frame data). ---- */
+    /* STREAM: MonstaShark PUSH-mode capture delivers real STREAM chunks --
+     * proves the disclosed STREAM encoding byte-exactly, including a chunk large
+     * enough (>512 bytes, the OLD MTK_ASYNC_FRAME_MAX_BODY cap) to prove the
+     * widening this fix also required (a smaller cap would have silently
+     * truncated captured frame data). -- */
     {
         mtek_capture_service_init(now_ms);
         mtek_capture_service_register();
@@ -186,7 +183,8 @@ MTK_TEST_MAIN_BEGIN
         mtek_spi_native_dispatch_poll_outbound(&dctx, &resp_hdr, resp_payload, &resp_len);
         MTK_CHECK_EQ(resp_hdr.msg_class, MTK_SPI_CLASS_STREAM);
         MTK_CHECK_EQ(resp_hdr.status, MTK_STATUS_OK);
-        MTK_CHECK_EQ(resp_hdr.request_id, 0); /* RC7: request_id=0 for STREAM, per the accepted protocol */
+        MTK_CHECK_EQ(resp_hdr.request_id, 0); /* request_id=0 for STREAM, per the
+                                               * accepted protocol */
         MTK_CHECK_EQ(token_from_payload(resp_payload), cap_token); /* the session token instead travels in the payload */
         MTK_CHECK_EQ(resp_len, 4 + 25 + 896);
         MTK_CHECK_EQ(resp_hdr.packet_seq, 0); /* first chunk's sequence */
@@ -206,10 +204,10 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(resp_hdr.msg_class, MTK_SPI_CLASS_IDLE);
     }
 
-    /* ---- Backpressure: a full event_queue never blocks a genuine
-     * RESPONSE from eventually being delivered -- mixed RESPONSE/EVENT/
-     * STREAM traffic under queue pressure still resolves correctly, one
-     * frame drained per poll, none corrupted. ---- */
+    /* Backpressure: a full event_queue never blocks a genuine RESPONSE from
+     * eventually being delivered -- mixed RESPONSE/EVENT/ STREAM traffic under
+     * queue pressure still resolves correctly, one frame drained per poll, none
+     * corrupted. -- */
     {
         mtk_async_queue_reset(&dctx.event_queue);
         for (unsigned i = 0; i < MTK_ASYNC_QUEUE_DEPTH; i++) {
@@ -219,27 +217,23 @@ MTK_TEST_MAIN_BEGIN
             mtk_async_queue_push(&dctx.event_queue, &f);
         }
         MTK_CHECK_EQ(mtk_async_queue_dropped_count(&dctx.event_queue), 0); /* exactly filled, not yet overflowed */
-        /* RC7 independent audit P0 "Native scheduling can starve or drop
-         * control and terminal traffic": mtk_async_queue_push now evicts
-         * a lower-priority occupied slot to make room for a higher-
-         * priority arrival (RESPONSE > EVENT > STREAM) -- `overflow_frame`
-         * must itself be the LOWEST priority (STREAM) to prove the
-         * genuinely-full case here (nothing already queued is lower
-         * priority than it, so it is the one dropped, not a victim);
-         * priority eviction itself is proven directly in
-         * test_async_queue.c. */
+        /* mtk_async_queue_push now evicts a lower-priority occupied slot to make
+         * room for a higher- priority arrival (RESPONSE > EVENT > STREAM) --
+         * `overflow_frame` must itself be the LOWEST priority (STREAM) to prove
+         * the genuinely-full case here (nothing already queued is lower priority
+         * than it, so it is the one dropped, not a victim); priority eviction
+         * itself is proven directly in test_async_queue.c. */
         mtk_async_frame_t overflow_frame; memset(&overflow_frame, 0, sizeof(overflow_frame));
         overflow_frame.kind = MTK_ASYNC_FRAME_STREAM;
         MTK_CHECK_EQ(mtk_async_queue_push(&dctx.event_queue, &overflow_frame), 0);
         MTK_CHECK(mtk_async_queue_dropped_count(&dctx.event_queue) >= 1);
 
-        /* A generic SYNCHRONOUS token-addressed STOP against an unknown
-         * token (never touches dctx->event_queue at all) answers
-         * immediately regardless of the queue backlog above, proving the
-         * transport layer itself is never blocked by a full backlog of
-         * unrelated EVENT/STREAM traffic. RC12 item 1: uses the test-only
-         * overlay STOP (0x00F1) instead of the real TIME_SYNC_STOP, which is
-         * now UNSUPPORTED on native. */
+        /* A generic SYNCHRONOUS token-addressed STOP against an unknown token
+         * (never touches dctx->event_queue at all) answers immediately
+         * regardless of the queue backlog above, proving the transport layer
+         * itself is never blocked by a full backlog of unrelated EVENT/STREAM
+         * traffic. uses the test-only overlay STOP (0x00F1) instead of the real
+         * TIME_SYNC_STOP, which is now UNSUPPORTED on native. */
         const mtk_opcode_entry_t *ts_stop = mtk_test_async_fixture_stop_install();
         mtk_time_sync_stop_req_t sreq = {0}; sreq.operation_token = 0;
         uint8_t sbuf[8]; size_t sblen = 0;
@@ -249,21 +243,19 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(resp_hdr.msg_class, MTK_SPI_CLASS_RESPONSE);
         MTK_CHECK_EQ(resp_hdr.status, MTK_STATUS_NOT_FOUND);
 
-        /* Drain the 8 backlogged synthetic EVENT/STREAM frames -- each
-         * delivered as its own cell, never dropped or merged. RC7
-         * independent audit P0 "Native scheduling can starve or drop
-         * control and terminal traffic": delivery order is now priority-
-         * first (all 4 EVENTs, i=0/2/4/6, before all 4 STREAMs, i=1/3/5/7),
-         * not strict issue order -- exactly the fix this test now proves,
-         * not a regression (the original bug this closes is "FIFO
-         * delivery can also send a stream before a queued response/
-         * event"). FIFO order is preserved WITHIN each priority tier. */
+        /* Drain the 8 backlogged synthetic EVENT/STREAM frames -- each delivered
+         * as its own cell, never dropped or merged. delivery order is now
+         * priority- first (all 4 EVENTs, i=0/2/4/6, before all 4 STREAMs,
+         * i=1/3/5/7), not strict issue order -- exactly the fix this test now
+         * proves, not a regression (the original bug this closes is "FIFO
+         * delivery can also send a stream before a queued response/ event").
+         * FIFO order is preserved WITHIN each priority tier. */
         static const unsigned expect_order[MTK_ASYNC_QUEUE_DEPTH] = {0, 2, 4, 6, 1, 3, 5, 7};
         for (unsigned i = 0; i < MTK_ASYNC_QUEUE_DEPTH; i++) {
             mtek_spi_native_dispatch_poll_outbound(&dctx, &resp_hdr, resp_payload, &resp_len);
             uint8_t expect_class = (i < 4) ? MTK_SPI_CLASS_EVENT : MTK_SPI_CLASS_STREAM;
             MTK_CHECK_EQ(resp_hdr.msg_class, expect_class);
-            MTK_CHECK_EQ(resp_hdr.request_id, 0); /* RC7: request_id=0 for EVENT/STREAM */
+            MTK_CHECK_EQ(resp_hdr.request_id, 0); /* request_id=0 for EVENT/STREAM */
             MTK_CHECK_EQ(token_from_payload(resp_payload), 0xDEAD0000u + expect_order[i]);
         }
         mtek_spi_native_dispatch_poll_outbound(&dctx, &resp_hdr, resp_payload, &resp_len);

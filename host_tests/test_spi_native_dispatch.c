@@ -95,16 +95,13 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(resp_len, 0);
     }
 
-    /* RC6 independent audit P0 "Native reassembly and duplicate safety are
-     * materially incomplete": a second logical message's FIRST fragment
-     * arriving while another is still mid-reassembly is rejected
-     * (LINK_ERROR/BUSY) at the transport layer, and -- the actual
-     * regression this test reproduces -- the first message's in-progress
-     * reassembly survives completely intact and dispatches correctly
-     * afterward. Without this fix, the second FIRST fragment would
-     * silently reset dctx->inbound to itself, permanently losing the
-     * first message's already-received bytes with no error to either
-     * side. */
+    /* A second logical message's FIRST fragment arriving while another is still
+     * mid-reassembly is rejected (LINK_ERROR/BUSY) at the transport layer, and
+     * -- the actual regression this test reproduces -- the first message's
+     * in-progress reassembly survives completely intact and dispatches correctly
+     * afterward. Without this fix, the second FIRST fragment would silently
+     * reset dctx->inbound to itself, permanently losing the first message's
+     * already-received bytes with no error to either side. */
     {
         uint8_t part1[4]; memcpy(part1, req_payload, 4);
         mtk_spi_native_header_t f1 = hdr;
@@ -139,17 +136,16 @@ MTK_TEST_MAIN_BEGIN
     /* A response too large for one cell is delivered as a real multi-cell
      * sequence, drained via poll_outbound -- not a LINK_ERROR/OVERFLOW. */
     {
-        /* No opcode in this session's implemented canonical set has a
-         * response that both (a) genuinely exceeds 984 bytes and (b) is
-         * reachable through a real fake-HAL-driven service call (the one
-         * opcode whose facts describe an over-one-cell response,
-         * CAPTIVE_PORTAL_GET_CREDENTIALS, is not implemented at the
-         * canonical service layer this session -- docs/PROVENANCE.md).
-         * To still exercise the real multi-cell drain sequence
-         * deterministically, this drives a large response synthetically
-         * through the same outbound primitive dispatch_complete_message
-         * itself uses, proving mtek_spi_native_dispatch_poll_outbound's
-         * own physical drain behavior end-to-end. */
+        /* No opcode in's implemented canonical set has a response that both (a)
+         * genuinely exceeds 984 bytes and (b) is reachable through a real
+         * fake-HAL-driven service call (the one opcode whose facts describe an
+         * over-one-cell response, CAPTIVE_PORTAL_GET_CREDENTIALS, is not
+         * implemented at the canonical service layer -- docs/PROVENANCE.md). To
+         * still exercise the real multi-cell drain sequence deterministically,
+         * this drives a large response synthetically through the same outbound
+         * primitive dispatch_complete_message itself uses, proving
+         * mtek_spi_native_dispatch_poll_outbound's own physical drain behavior
+         * end-to-end. */
         static uint8_t big[3000];
         for (unsigned i = 0; i < sizeof(big); i++) big[i] = (uint8_t)(i * 7 + 5);
         mtk_spi_native_header_t tmpl; memset(&tmpl, 0, sizeof(tmpl));

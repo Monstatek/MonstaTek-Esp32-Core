@@ -9,15 +9,13 @@
 #include "mtek_schema_structs.h"
 #include <stdint.h>
 
-/* RC8 independent audit P0-1 "Eliminate target stack overflow paths":
- * moved here from mtek_compat_dispatch.c (where it was previously declared
- * only as a same-file-static-function-signature type) so it can be a
- * NAMED, dctx-owned field below instead of a stack-local -- see that
- * struct's own doc comment for the full before/after accounting. Holds
- * one canonical response capture (status/body/body_len) plus a few
- * opcode-family-specific scratch fields threaded through the dispatch
- * helper functions that build a Mtek Compatibility-shaped reply from one or more
- * canonical dispatch calls. */
+/* Moved here from mtek_compat_dispatch.c (where it was previously declared only
+ * as a same-file-static-function-signature type) so it can be a NAMED,
+ * dctx-owned field below instead of a stack-local -- see that struct's own doc
+ * comment for the full before/after accounting. Holds one canonical response
+ * capture (status/body/body_len) plus a few opcode-family-specific scratch
+ * fields threaded through the dispatch helper functions that build a Mtek
+ * Compatibility-shaped reply from one or more canonical dispatch calls. */
 #define COMPAT_CAP_BODY_MAX MTK_COMPAT_MAX_REASSEMBLY_PAYLOAD
 typedef struct {
     uint8_t status;
@@ -27,13 +25,12 @@ typedef struct {
     uint32_t scan_generation;
     uint8_t got_connection_token;
     uint32_t connection_token;
-    /* RC12 RC12 closure item 2 "honest GATT terminal-failure semantics":
-     * the terminal event's own canonical status (MTK_STATUS_OK on a real
+    /* RC12 the terminal event's own canonical status (MTK_STATUS_OK on a real
      * connect, MTK_STATUS_TIMEOUT on a failed one -- mtek_ble_logic.c
      * handle_gatt_connect's only two terminal outcomes). Lets the GATT
-     * translation emit a bare RESP on success but the mapped NAK on a
-     * terminal failure, instead of an unconditional OK. Meaningfully
-     * non-OK only for GATT; AP/STA scan-complete extracts set it OK. */
+     * translation emit a bare RESP on success but the mapped NAK on a terminal
+     * failure, instead of an unconditional OK. Meaningfully non-OK only for
+     * GATT; AP/STA scan-complete extracts set it OK. */
     uint8_t event_status;
     uint8_t deferred;
 } compat_capture_t;
@@ -121,21 +118,21 @@ typedef struct {
      * that special formatting once its real response is delivered. */
     uint8_t pending_is_capture_raw_errno;
 
-    /* RC12 blocker round, item 2 "real deferred Community execution":
-     * AP_SCAN_START/STA_SCAN_START/GATT_CONNECT produce their real Mtek Compatibility
-     * response only from a TERMINAL EVENT (AP/STA result_generation, GATT
-     * connection_token) that the deferred worker emits AFTER its ACCEPTED
-     * response, possibly several polls later. The bare pending_start_msg_id
-     * machinery above only ever relayed the ACCEPTED status and DISCARDED
-     * that event -- silently losing the scan list / generation / connection
-     * token on the real (async-runner) target. This continuation retains
-     * the owed request kind, consumes the ACCEPTED response and the terminal
-     * event internally across polls (waiting, emitting IDLE, until BOTH have
-     * arrived), captures the needed field, and only then produces the
+    /*
+     * AP_SCAN_START/STA_SCAN_START/GATT_CONNECT produce their real Mtek
+     * Compatibility response only from a TERMINAL EVENT (AP/STA
+     * result_generation, GATT connection_token) that the deferred worker emits
+     * AFTER its ACCEPTED response, possibly several polls later. The bare
+     * pending_start_msg_id machinery above only ever relayed the ACCEPTED status
+     * and DISCARDED that event -- silently losing the scan list / generation /
+     * connection token on the real (async-runner) target. This continuation
+     * retains the owed request kind, consumes the ACCEPTED response and the
+     * terminal event internally across polls (waiting, emitting IDLE, until BOTH
+     * have arrived), captures the needed field, and only then produces the
      * confirmed Community response (for AP scan, by issuing the canonical
      * AP_SCAN_RESULTS_PAGE and building the same network-list bytes the
-     * synchronous path builds). No new Mtek Compatibility wire event or opcode is
-     * introduced. pending_continuation==0 leaves every other deferred opcode
+     * synchronous path builds). No new Mtek Compatibility wire event or opcode
+     * is introduced. pending_continuation==0 leaves every other deferred opcode
      * (DEAUTH/HANDSHAKE/CAPTURE bare-status async) on its existing path,
      * unchanged. */
     uint8_t pending_continuation;      /* 0=none; MTK_COMPAT_CONT_* otherwise */
@@ -144,59 +141,55 @@ typedef struct {
     uint8_t pending_response_status;   /* its canonical status */
     uint8_t pending_have_event;        /* the awaited terminal event has arrived */
     uint8_t pending_event_ok;          /* that event's own status was OK (GATT) */
-    uint8_t pending_event_status;      /* RC12 RC12 closure item 2: the terminal
-                                        * event's canonical status, so a deferred
-                                        * GATT failure maps to the correct NAK
-                                        * instead of an unconditional OK */
+    uint8_t pending_event_status;      /* RC12 the terminal event's canonical
+                                        * status, so a deferred GATT failure maps
+                                        * to the correct NAK instead of an
+                                        * unconditional OK */
     uint32_t pending_event_generation; /* harvested AP/STA result_generation */
     uint32_t pending_event_conn_token; /* harvested GATT connection_token */
 
-    /* RC8 independent audit P0-1 "Eliminate target stack overflow paths":
-     * real ELF disassembly showed mtek_compat_dispatch_request's own frame
-     * (~8,272 bytes, dominated by a stack-local `compat_capture_t cap` --
-     * ~4.1KB -- plus a second, inline ~4KB scratch buffer for one opcode
-     * case) and its nested handle_ap_scan_start path (~10,496 bytes,
-     * dominated by ITS OWN stack-local `compat_capture_t page_cap` plus a
-     * third ~4KB scratch buffer) together reachable well past the
-     * 12,288-byte configured task stack -- at least ~18.7KB just from
-     * these two frames' declared locals, before any deeper call's own
-     * frame. `cap`/`scratch_cap`/`async_complete_cap` below replace every
-     * such stack-local `compat_capture_t` across this whole file (dispatch_
-     * request's own primary capture, every handler needing a SECOND
-     * capture for an intermediate canonical call -- GET_STATUS's
-     * capabilities probe, AP_SCAN_START's own results-page follow-up --
-     * and mtek_compat_dispatch_poll_outbound's own async-completion
-     * capture) with dctx-owned fields; every one of the three ~4KB
-     * per-handler `uint8_t out[COMPAT_CAP_BODY_MAX]` scratch buffers this
-     * audit also found (AP_SCAN_START, STA_SCAN_RESULTS_PAGE,
-     * CAPTURE_POLL_READ) was eliminated entirely rather than relocated --
-     * each already had `cap->body` itself (now dctx-owned) as its exact
-     * final destination, so building the result directly into `cap->body`
-     * (via mtk_encode-shaped writes or memmove for the one genuinely
-     * in-place transform, CAPTURE_POLL_READ) needs no scratch copy at
-     * all. `ap_scan_page` (~2.1KB, `mtk_ap_scan_results_page_resp_t`'s own
-     * 50-record array) replaces AP_SCAN_START's own stack-local decode
-     * target for the same reason -- STA_SCAN_RESULTS_PAGE's equivalent
-     * (32 7-byte station records, ~264 bytes) is small enough to stay a
-     * stack local. Safe as dctx-owned fields for the identical reason
-     * `sync_capture`/`outbound` already are (mtek_spi_native_dispatch.h):
-     * Mtek Compatibility dispatch is strictly single-outstanding-request, one
-     * synchronous call at a time on one physical transaction loop's own
-     * thread of control -- never concurrent with itself. */
+    /* Real ELF disassembly showed mtek_compat_dispatch_request's own frame
+     * (~8,272 bytes, dominated by a stack-local `compat_capture_t cap` -- ~4.1KB
+     * -- plus a second, inline ~4KB scratch buffer for one opcode case) and its
+     * nested handle_ap_scan_start path (~10,496 bytes, dominated by ITS OWN
+     * stack-local `compat_capture_t page_cap` plus a third ~4KB scratch buffer)
+     * together reachable well past the 12,288-byte configured task stack -- at
+     * least ~18.7KB just from these two frames' declared locals, before any
+     * deeper call's own frame. `cap`/`scratch_cap`/`async_complete_cap` below
+     * replace every such stack-local `compat_capture_t` across this whole file
+     * (dispatch_ request's own primary capture, every handler needing a SECOND
+     * capture for an intermediate canonical call -- GET_STATUS's capabilities
+     * probe, AP_SCAN_START's own results-page follow-up -- and
+     * mtek_compat_dispatch_poll_outbound's own async-completion capture) with
+     * dctx-owned fields; every one of the three ~4KB per-handler `uint8_t
+     * out[COMPAT_CAP_BODY_MAX]` scratch buffers this audit also found
+     * (AP_SCAN_START, STA_SCAN_RESULTS_PAGE, CAPTURE_POLL_READ) was eliminated
+     * entirely rather than relocated -- each already had `cap->body` itself (now
+     * dctx-owned) as its exact final destination, so building the result
+     * directly into `cap->body` (via mtk_encode-shaped writes or memmove for the
+     * one genuinely in-place transform, CAPTURE_POLL_READ) needs no scratch copy
+     * at all. `ap_scan_page` (~2.1KB, `mtk_ap_scan_results_page_resp_t`'s own
+     * 50-record array) replaces AP_SCAN_START's own stack-local decode target
+     * for the same reason -- STA_SCAN_RESULTS_PAGE's equivalent (32 7-byte
+     * station records, ~264 bytes) is small enough to stay a stack local. Safe
+     * as dctx-owned fields for the identical reason `sync_capture`/`outbound`
+     * already are (mtek_spi_native_dispatch.h): Mtek Compatibility dispatch is
+     * strictly single-outstanding-request, one synchronous call at a time on one
+     * physical transaction loop's own thread of control -- never concurrent with
+     * itself. */
     compat_capture_t cap;
     compat_capture_t scratch_cap;
     compat_capture_t async_complete_cap;
     mtk_ap_scan_results_page_resp_t ap_scan_page;
 } mtk_compat_dispatch_ctx_t;
 
-/* RC6 independent audit gate #2 -- see mtek_spi_native_dispatch.h's own
- * matching _Static_assert for the full rationale. This struct (~12.3KB,
- * dominated by outbound.data's 4082-byte reassembly buffer) is static in
- * main/mtek_spi_runtime.c, not stack-local. RC8 independent audit P0-1
- * raised this ceiling (20000 -> 30000) to accommodate the three
- * dctx-owned `compat_capture_t` fields plus `ap_scan_page` added above --
- * a deliberate, measured trade of DIRAM for eliminated stack risk (see
- * docs/RESOURCE_BUDGET.md for the real `idf.py size` before/after). */
+/* #2 -- see mtek_spi_native_dispatch.h's own matching _Static_assert for the
+ * full rationale. This struct (~12.3KB, dominated by outbound.data's 4082-byte
+ * reassembly buffer) is static in main/mtek_spi_runtime.c, not stack-local.
+ * raised this ceiling (20000 -> 30000) to accommodate the three dctx-owned
+ * `compat_capture_t` fields plus `ap_scan_page` added above -- a deliberate,
+ * measured trade of DIRAM for eliminated stack risk (see docs/RESOURCE_BUDGET.md
+ * for the real `idf.py size` before/after). */
 #include <assert.h>
 _Static_assert(sizeof(mtk_compat_dispatch_ctx_t) < 30000,
                 "mtk_compat_dispatch_ctx_t grew past its documented RESOURCE_BUDGET.md ceiling -- "

@@ -574,7 +574,7 @@ def gen_registry(schema, out, msg_desc_names):
     src.append("};")
     src.append("")
     src.append("const mtk_opcode_entry_t *mtk_opcode_find(uint16_t service_id, uint16_t opcode) {")
-    src.append("    /* RC12 hardening round, item 5 (P1): the test-only overlay is")
+    src.append("    /* The test-only overlay is")
     src.append("     * consulted first. It is permanently empty in production (no")
     src.append("     * production code ever registers an overlay entry), so this is a")
     src.append("     * zero-iteration no-op there and the behavior is identical to the")

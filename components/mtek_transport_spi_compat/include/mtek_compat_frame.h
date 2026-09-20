@@ -1,11 +1,8 @@
-/* Clean-room implementation from MonstaTek contract
- * (001-profile-bootstrap-feasibility.md Sec 1, evidence extracted from the
- * pinned Mtek Compatibility `m1_link`/`m1_rpc` transport's own header/behavior, and an
- * independently-written frame codec -- no Mtek Compatibility source is transcribed).
+/* Clean-room implementation from MonstaTek contract.
  *
- * Mtek Compatibility/C3 `m1_link` transport: fixed 512-byte full-duplex SPI cells, an
- * 8-byte header, payload, and a 2-byte CRC16-CCITT trailer. Every cell is
- * always a complete, parseable, magic-bearing frame (IDLE when nothing is
+ * Mtek Compatibility/C3 `m1_link` transport: fixed 512-byte full-duplex SPI
+ * cells, an 8-byte header, payload, and a 2-byte CRC16-CCITT trailer. Every cell
+ * is always a complete, parseable, magic-bearing frame (IDLE when nothing is
  * queued) -- never silence or garbage. */
 #pragma once
 #include <stdint.h>
@@ -36,8 +33,8 @@ typedef enum {
 } mtk_compat_msg_type_t;
 
 /* m1esp_status_t (facts Sec 1.2 "Status codes"). ERR_PENDING (0xFF) means
- * "accepted, result arrives later as an EVENT" -- distinct from this
- * task's own ACCEPTED_ASYNC model, translated at the adapter boundary. */
+ * "accepted, result arrives later as an EVENT" -- distinct from the
+ * ACCEPTED_ASYNC model, translated at the adapter boundary. */
 typedef enum {
     MTK_COMPAT_STATUS_OK = 0x00,
     MTK_COMPAT_STATUS_ERR_UNKNOWN = 0x01,
@@ -96,7 +93,7 @@ mtk_compat_parse_result_t mtk_compat_parse_cell(const uint8_t cell[MTK_COMPAT_CE
 mtk_compat_parse_result_t mtk_compat_parse_bounded(const uint8_t *buf, size_t len, mtk_compat_header_t *hdr,
                                                   const uint8_t **payload_out);
 
-/* ---- Bounded reassembly (Sec "Fragmentation") -------------------------- */
+/* Bounded reassembly (Sec "Fragmentation") -------------- */
 
 typedef struct {
     uint8_t active;

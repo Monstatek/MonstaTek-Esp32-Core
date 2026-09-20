@@ -1,56 +1,49 @@
-/* Release-tooling-round P0 correction (independent audit, "Native SPI
- * confuses the STM32 and ESP boot epochs"): mtek_spi_native_dispatch.c used
- * to adopt a real peer's own random HELLO boot_epoch into dctx->boot_epoch,
- * then reuse that SAME field both for the canonical request context's
- * boot_epoch (which 002-canonical-core-contract.md §2/§3.4 requires to be
- * the ESP's own in-memory epoch, mtk_core_boot_epoch()) and for stamping
- * every ESP-originated outbound cell's own boot_epoch header field (which
- * SPI_PROTOCOL_V1.md's Header table requires to be THIS sender's -- the
- * ESP's -- own epoch, never an echo of the peer's). Every pre-existing
- * native-SPI host test used the identical value for the peer's HELLO
- * epoch, the dctx seed, and mtk_core's own epoch (0x1234 or
- * MTK_TEST_BOOT_EPOCH), which could never distinguish "coincidentally
- * equal" from "correctly independent" -- exactly why this defect reached
- * this point undetected by the existing suite (follow-up audit finding).
+/* mtek_spi_native_dispatch.c used to adopt a real peer's own random HELLO
+ * boot_epoch into dctx->boot_epoch, then reuse that SAME field both for the
+ * canonical request context's boot_epoch (which /§3.4 requires to be the ESP's
+ * own in-memory epoch, mtk_core_boot_epoch) and for stamping every
+ * ESP-originated outbound cell's own boot_epoch header field (which
+ * SPI_PROTOCOL_V1.md's Header table requires to be THIS sender's -- the ESP's --
+ * own epoch, never an echo of the peer's). Every pre-existing native-SPI host
+ * test used the identical value for the peer's HELLO epoch, the dctx seed, and
+ * mtk_core's own epoch (0x1234 or MTK_TEST_BOOT_EPOCH), which could never
+ * distinguish "coincidentally equal" from "correctly independent" -- exactly why
+ * this defect reached this point undetected by the existing suite (follow-up
+ * audit finding).
  *
- * Release-tooling-round P0 correction, ROUND 2 (follow-up read-only audit,
- * "the new peer-reboot test encodes the wrong lifecycle"): this test's own
- * FIRST version wrongly asserted that an operation started under
- * PEER_EPOCH_A stays fully usable (STATUS/STOP both succeeding) after a
- * simulated peer reboot to PEER_EPOCH_B. Per SPI_PROTOCOL_V1.md's own
- * "Reset and resynchronization" rule, a changed peer epoch must invalidate
- * "in-flight requests ... and operation tokens for that peer" -- the
- * ESP-epoch-scoped LOOKUP mechanism itself is correct and must stay
- * peer-epoch-independent (that is what the first round's fix achieved),
- * but the SERVICE-LEVEL response to a detected peer reboot must actively
- * cancel/finalize/evict whatever operation the old peer session left
- * running, releasing its radio/arbiter resources rather than leaving them
- * orphaned forever (the old peer, having rebooted, can never send a STOP
- * for it again). mtek_spi_native_dispatch.c's own invalidate_prior_epoch_
- * state now calls cancel_active_operations_for_peer_reset(), which
- * finalizes the active operation (byte-for-byte the same cleanup a real
- * STOP would run) and immediately evicts its now-terminal record
- * (mtk_op_evict) -- this test proves that end-to-end.
+ * ROUND 2 (follow-up read-only audit, "the new peer-reboot test encodes the
+ * wrong lifecycle"): this test's own FIRST version wrongly asserted that an
+ * operation started under PEER_EPOCH_A stays fully usable (STATUS/STOP both
+ * succeeding) after a simulated peer reboot to PEER_EPOCH_B. Per
+ * SPI_PROTOCOL_V1.md's own "Reset and resynchronization" rule, a changed peer
+ * epoch must invalidate "in-flight requests... and operation tokens for that
+ * peer" -- the ESP-epoch-scoped LOOKUP mechanism itself is correct and must stay
+ * peer-epoch-independent (that is what the first round's fix achieved), but the
+ * SERVICE-LEVEL response to a detected peer reboot must actively
+ * cancel/finalize/evict whatever operation the old peer session left running,
+ * releasing its radio/arbiter resources rather than leaving them orphaned
+ * forever (the old peer, having rebooted, can never send a STOP for it again).
+ * mtek_spi_native_dispatch.c's own invalidate_prior_epoch_ state now calls
+ * cancel_active_operations_for_peer_reset, which finalizes the active operation
+ * (byte-for-byte the same cleanup a real STOP would run) and immediately evicts
+ * its now-terminal record (mtk_op_evict) -- this test proves that end-to-end.
  *
- * This test deliberately uses THREE, mutually-distinct epoch values (the
- * ESP's own core epoch, and two different peer epochs simulating a peer
- * reboot mid-session) and proves:
- *  1. HELLO_ACK always stamps the ESP's own fixed epoch, never the peer's,
- *     both before and after a peer-epoch change (simulated reboot).
- *  2. An operation started under PEER_EPOCH_A is genuinely CANCELLED and
- *     its token made unusable (NOT_FOUND for both STATUS and STOP) the
- *     moment the peer reboots to PEER_EPOCH_B -- never silently left
- *     RUNNING nor holding the radio/arbiter lease forever.
- *  3. A NEW operation started under the new peer session (PEER_EPOCH_B)
- *     gets a genuinely different token and completes a full START ->
- *     STATUS -> STOP round trip normally -- the arbiter/radio really was
- *     freed by the cancellation above, not left stuck.
- *  4. A REPEATED HELLO carrying the SAME (already-adopted) peer epoch is
- *     idempotent: it must NOT cancel a live operation that belongs to the
- *     CURRENT peer session.
- *  5. CREDIT and CANCEL correctly reject a stale PEER epoch (compared
- *     against the currently-adopted peer epoch, never the ESP's), accept a
- *     current one, and stamp their own responses with the ESP's epoch. */
+ * This test deliberately uses THREE, mutually-distinct epoch values (the ESP's
+ * own core epoch, and two different peer epochs simulating a peer reboot
+ * mid-session) and proves: 1. HELLO_ACK always stamps the ESP's own fixed epoch,
+ * never the peer's, both before and after a peer-epoch change (simulated
+ * reboot). 2. An operation started under PEER_EPOCH_A is genuinely CANCELLED and
+ * its token made unusable (NOT_FOUND for both STATUS and STOP) the moment the
+ * peer reboots to PEER_EPOCH_B -- never silently left RUNNING nor holding the
+ * radio/arbiter lease forever. 3. A NEW operation started under the new peer
+ * session (PEER_EPOCH_B) gets a genuinely different token and completes a full
+ * START -> STATUS -> STOP round trip normally -- the arbiter/radio really was
+ * freed by the cancellation above, not left stuck. 4. A REPEATED HELLO carrying
+ * the SAME (already-adopted) peer epoch is idempotent: it must NOT cancel a live
+ * operation that belongs to the CURRENT peer session. 5. CREDIT and CANCEL
+ * correctly reject a stale PEER epoch (compared against the currently-adopted
+ * peer epoch, never the ESP's), accept a current one, and stamp their own
+ * responses with the ESP's epoch. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtek_spi_native_dispatch.h"
@@ -183,8 +176,8 @@ MTK_TEST_MAIN_BEGIN
 
     /* dctx seeded with a placeholder distinct from PEER_EPOCH_A/B -- exactly
      * what main/mtek_spi_runtime.c's own real caller does (seeds with
-     * mtk_core_boot_epoch(), a value a real peer's own independent random
-     * epoch is virtually certain to differ from). */
+     * mtk_core_boot_epoch, a value a real peer's own independent random epoch is
+     * virtually certain to differ from). */
     mtk_spi_native_dispatch_ctx_t dctx;
     mtek_spi_native_dispatch_init(&dctx, ESP_EPOCH);
     mtk_async_queue_set_lock(&dctx.event_queue, queue_lock, queue_unlock, NULL);
@@ -195,8 +188,8 @@ MTK_TEST_MAIN_BEGIN
 
     mtk_spi_native_header_t resp_hdr; uint8_t resp_payload[MTK_SPI_NATIVE_MAX_PAYLOAD]; uint16_t resp_len = 0;
 
-    /* ---- 1. Initial HELLO from the peer (PEER_EPOCH_A): HELLO_ACK always
-     * carries the ESP's OWN fixed epoch, never the peer's. -------------- */
+    /* 1. Initial HELLO from the peer (PEER_EPOCH_A): HELLO_ACK always carries
+     * the ESP's OWN fixed epoch, never the peer's. -------- */
     {
         mtk_spi_native_header_t h = hello_hdr(PEER_EPOCH_A);
         mtek_spi_native_dispatch_feed_cell(&dctx, &h, NULL, 1, &resp_hdr, resp_payload, &resp_len);
@@ -204,8 +197,8 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(resp_hdr.boot_epoch, ESP_EPOCH);
     }
 
-    /* ---- 2. START a deauth under PEER_EPOCH_A, confirm it is genuinely
-     * RUNNING. --------------------------------------------------------- */
+    /* 2. START a deauth under PEER_EPOCH_A, confirm it is genuinely RUNNING.
+     * ----------------------------- */
     uint32_t old_token = start_deauth(&dctx, deauth_op, 100, PEER_EPOCH_A, 2);
     wait_for_deauth_count(1);
     {
@@ -222,10 +215,10 @@ MTK_TEST_MAIN_BEGIN
     }
     MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_D); /* the deauth genuinely holds the radio lease */
 
-    /* ---- 3. Simulate a peer reboot: a HELLO with a genuinely DIFFERENT
-     * peer epoch. HELLO_ACK still carries the ESP's own unchanged epoch,
-     * and the old session's deauth is cancelled -- the radio lease is
-     * genuinely released, not left stuck. -------------------------------- */
+    /* 3. Simulate a peer reboot: a HELLO with a genuinely DIFFERENT peer epoch.
+     * HELLO_ACK still carries the ESP's own unchanged epoch, and the old
+     * session's deauth is cancelled -- the radio lease is genuinely released,
+     * not left stuck. ---------------- */
     {
         mtk_spi_native_header_t h = hello_hdr(PEER_EPOCH_B);
         mtek_spi_native_dispatch_feed_cell(&dctx, &h, NULL, 4, &resp_hdr, resp_payload, &resp_len);
@@ -234,9 +227,9 @@ MTK_TEST_MAIN_BEGIN
     }
     MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_NONE); /* the old session's radio lease was genuinely released */
 
-    /* ---- 4. STATUS/STOP against the OLD token now both report NOT_FOUND
-     * -- the token was cancelled and evicted, genuinely unusable, never
-     * silently left RUNNING for a peer that can no longer reach it. ----- */
+    /* 4. STATUS/STOP against the OLD token now both report NOT_FOUND -- the
+     * token was cancelled and evicted, genuinely unusable, never silently left
+     * RUNNING for a peer that can no longer reach it. --- */
     {
         mtk_get_operation_status_req_t sreq = {0}; sreq.operation_token = old_token;
         uint8_t sbuf[8]; size_t sblen = 0;
@@ -260,10 +253,10 @@ MTK_TEST_MAIN_BEGIN
      * transmitting in the background after its own token became unusable. */
     fake_wifi_lock(); unsigned sent_after_cancel = g_fake_wifi.deauth_sent_count; fake_wifi_unlock();
 
-    /* ---- 5. A NEW operation under the NEW peer session (PEER_EPOCH_B)
-     * gets a genuinely different token and completes a full START ->
-     * STATUS -> STOP round trip normally -- proving the arbiter/radio
-     * really was freed above, not left stuck. --------------------------- */
+    /* 5. A NEW operation under the NEW peer session (PEER_EPOCH_B) gets a
+     * genuinely different token and completes a full START -> STATUS -> STOP
+     * round trip normally -- proving the arbiter/radio really was freed above,
+     * not left stuck. --------------- */
     uint32_t new_token = start_deauth(&dctx, deauth_op, 200, PEER_EPOCH_B, 7);
     MTK_CHECK(new_token != old_token);
     wait_for_deauth_count(sent_after_cancel + 1);
@@ -280,9 +273,9 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(st.state, MTK_OPS_RUNNING);
     }
 
-    /* ---- 6. A REPEATED HELLO carrying the SAME (already-adopted) peer
-     * epoch is idempotent: it must NOT cancel new_token, which genuinely
-     * belongs to the CURRENT peer session. ------------------------------ */
+    /* 6. A REPEATED HELLO carrying the SAME (already-adopted) peer epoch is
+     * idempotent: it must NOT cancel new_token, which genuinely belongs to the
+     * CURRENT peer session. ---------------- */
     {
         mtk_spi_native_header_t h = hello_hdr(PEER_EPOCH_B);
         mtek_spi_native_dispatch_feed_cell(&dctx, &h, NULL, 9, &resp_hdr, resp_payload, &resp_len);
@@ -316,8 +309,8 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(st.final_state, MTK_OPS_STOPPED);
     }
 
-    /* ---- 7. CREDIT: stale PEER epoch rejected, current one accepted, ESP
-     * epoch stamped on the response either way. ------------------------- */
+    /* 7. CREDIT: stale PEER epoch rejected, current one accepted, ESP epoch
+     * stamped on the response either way. ------------- */
     {
         uint8_t credit_payload[4] = {0x00, 0x10, 0x00, 0x00};
         mtk_spi_native_header_t chdr; memset(&chdr, 0, sizeof(chdr));
@@ -336,8 +329,8 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(resp_hdr.boot_epoch, ESP_EPOCH);
     }
 
-    /* ---- CANCEL: same stale/current peer-epoch split, same ESP-epoch
-     * stamping on the response. ------------------------------------------ */
+    /* CANCEL: same stale/current peer-epoch split, same ESP-epoch stamping on
+     * the response. ---------------------- */
     {
         uint8_t part1[4] = {1,2,3,4};
         mtk_spi_native_header_t f1 = base_req_hdr(0, 1, 300, 4, PEER_EPOCH_B);

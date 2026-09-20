@@ -9,10 +9,9 @@ was *compiled* with, and must be updated whenever `sdkconfig.defaults` or
 
 ## Build variant: universal (release/factory), `sdkconfig.defaults`
 
-**RC7 correction (independent audit P0 "The release artifact starts the
-wrong transport for shipped M1 compatibility"):** the `MTEK_PRIMARY_
+**Transport selection is runtime, not build-time.** The `MTEK_PRIMARY_
 TRANSPORT_UART`/`MTEK_PRIMARY_TRANSPORT_SPI` build-time Kconfig choice
-this section used to describe was **removed entirely** this round --
+this section once described was **removed entirely** --
 see `docs/DECISION_LOG.md`'s "real cross-transport AUTO selection"
 entry. Every `CONFIG_MTEK_ADAPTER_*` component below is now both
 compiled in AND boot-started UNCONDITIONALLY; `mtk_transport_claim_try`
@@ -30,14 +29,14 @@ directly, with no build-time choice needed or possible.
 | M1 Community Compatibility adapter (legacy Mtek Compatibility/C3 wire profile) | Compiled in; boot-started unconditionally (same AUTO/cross-transport selection as above) |
 | Karma auto-responder module | Compiled in (not yet implemented -- reports `UNSUPPORTED`, see `docs/PROVENANCE.md`) |
 | Probe-request flood module | Compiled in (not yet implemented -- reports `UNSUPPORTED`) |
-| Captive portal module | Compiled in (not yet implemented -- reports `UNSUPPORTED`) |
+| Captive portal module | Compiled in and **implemented** (DNS hijack + HTTP portal over the SoftAP interface; capability-reported SUPPORTED) |
 | Wi-Fi beacon flood module | Compiled in (not yet implemented -- reports `UNSUPPORTED`) |
-| SoftAP / PMKID capture | Compiled in, not module-gated (candidates for canonical-core "general reusable platform capability" status); not yet implemented -- reports `UNSUPPORTED` |
+| SoftAP | Compiled in, not module-gated; **implemented** (class `SAP`, capability-reported SUPPORTED) |
+| PMKID capture | Compiled in, not module-gated; not yet implemented -- reports `UNSUPPORTED` |
 | Lab controls (`WIFI_MODE_SET`) | Disabled (`MTEK_LAB_CONTROLS_ENABLED=n`) |
 
-**RC8 correction (independent audit P0-8 "Make capabilities truthful for
-the exact build"):** every module row above marked "not yet implemented"
-previously still reported `MTK_CAP_SUPPORTED` via the real
+**Capabilities are truthful for the exact build.** Every module row above
+marked "not yet implemented" once reported `MTK_CAP_SUPPORTED` via the real
 `GET_CAPABILITIES` wire response for the native-SPI/M1-Community-Compatibility profiles
 (the generated registry's own static per-opcode table), even though
 `mtek_wifi_logic.c`'s own dispatch switch unconditionally answered
@@ -89,8 +88,7 @@ which exists in this clean-room tree; no factory binary was ever opened
 or copied here) -- it must never be used to label this project's own
 current or future release output again.
 
-**Correction (RC5 independent audit P1 "Governance and integration
-documentation is stale"):** an earlier candidate's version of this
+**Correction:** an earlier version of this
 section claimed the STM32/M1 SD-card updater's own expected-filename
 configuration would need to change for this rename. Direct inspection of
 `m1_esp32_fw_update.c` (the STM32/M1 app loader source, outside this
@@ -100,8 +98,8 @@ basename. `MtkCore.bin`/`MtkCore.md5` therefore require **no STM32
 updater code change** for this specific rename. That claim has been
 removed below.
 
-**Required future coordination (not performed in this task -- no
-external repository was edited):** before any customer-facing release,
+**Required future coordination (no external repository was edited
+here):** before any customer-facing release,
 the following external systems must still be updated to expect
 `MtkCore.bin`/`MtkCore.md5` instead of any prior working name:
 
@@ -109,8 +107,7 @@ the following external systems must still be updated to expect
 - The factory flashing/provisioning procedure documentation.
 - Any public release documentation or customer-facing download page.
 
-Each of those lives outside this working tree and was explicitly
-out-of-scope to edit in this task.
+Each of those lives outside this working tree.
 
 ## Adding a new build variant
 
@@ -122,7 +119,7 @@ the source tree even if a variant disables it -- report it as "Compiled
 out", never omit it, so this document always answers "what does this
 exact binary actually contain" truthfully.
 
-## RC12 hardening round (2026-09-07): TIME_SYNC_START capability correction
+## TIME_SYNC_START capability correction (2026-09-07)
 
 `TIME_SYNC_START` (service 0x0000, opcode 0x0008) capability_state changed
 to reflect the truth that this candidate wires no SNTP client (the
@@ -140,7 +137,7 @@ Host tests that used TIME_SYNC_START as a generic arbiter-free async vehicle
 were migrated to a test-only opcode overlay (`mtk_opcode_overlay`, inert in
 production; `host_tests/support/mtk_test_async_fixture.h`).
 
-## RC12 blocker round (2026-09-07): TIME_SYNC_STOP capability correction
+## TIME_SYNC_STOP capability correction (2026-09-07)
 
 `TIME_SYNC_STOP` (service 0x0000, opcode 0x0009) native capability_state
 changed SUPPORTED -> UNSUPPORTED, to match TIME_SYNC_START (UNSUPPORTED on
@@ -154,3 +151,28 @@ host-test build (MTK_ENABLE_TEST_OPCODES), never the ESP32 target.
 | TIME_SYNC_STOP | native_spi   | SUPPORTED   | **UNSUPPORTED** |
 | TIME_SYNC_STOP | compat_c3     | UNSUPPORTED | UNSUPPORTED (no change) |
 | TIME_SYNC_STOP | factory_uart | UNAVAILABLE | UNAVAILABLE (no change) |
+
+## Capability completion round (2026-09-20)
+
+| Capability | State | Arbiter class | Notes |
+|---|---|---|---|
+| SoftAP | **Implemented** | `SAP` | `SOFTAP_START/STOP/STA_LIST`. Open or WPA2-PSK (8..63 char passphrase); the passphrase is never retained in service state. |
+| Captive portal | **Implemented** | `SAP` (shared with SoftAP) | Brings up an open AP, then a DNS responder answering every A query with the AP address and an HTTP server. Captured credentials survive an ordinary stop and are zeroized on reset and on the next portal start. |
+| ESP-NOW | **Implemented** | `ESPNOW` (new service `0x0006`) | Six opcodes: START/STOP/ADD_PEER/SEND/POLL_RECV/STATS. Shares the Wi-Fi radio, so it serializes against every Wi-Fi class. |
+| IEEE 802.15.4 | **Not implemented** | `RESV_154` (still reserved) | See the blockers below. |
+
+IEEE 802.15.4 is supported by the ESP32-C6 silicon (`SOC_IEEE802154_SUPPORTED`)
+and ESP-IDF ships `esp_ieee802154.h`, but three things must be decided before
+it can be built, none of which is a code-authoring question:
+
+1. **Build configuration.** `CONFIG_IEEE802154_ENABLED` is not set in
+   `sdkconfig.defaults`; enabling it changes the shipped universal artifact.
+2. **Memory budget.** Free DIRAM after the capabilities above is 101,248 bytes
+   against a documented 100,000-byte floor -- roughly 1.2KB of headroom. The
+   802.15.4 MAC/PHY plus its receive-buffer pool does not fit in that, so
+   enabling it requires either reclaiming memory elsewhere or an explicit,
+   owner-approved change to the documented floor.
+3. **Radio coexistence.** 802.15.4 shares the 2.4GHz radio with Wi-Fi and BLE.
+   `RESV_154` is still a reserved class with a `DISABLED` self-pair, and giving
+   it a real pairwise policy against the Wi-Fi and BLE classes is a coexistence
+   decision, not a mechanical change.

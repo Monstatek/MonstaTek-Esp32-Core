@@ -1,7 +1,6 @@
-/* Header-only deterministic fake mtk_wifi_hal_t for host tests. Every call
- * is synchronous: promisc_start immediately replays whatever canned frames
- * the test configured, matching this session's synchronous-HAL design
- * (mtek_wifi_hal.h). */
+/* Header-only deterministic fake mtk_wifi_hal_t for host tests. Every call is
+ * synchronous: promisc_start immediately replays whatever canned frames the test
+ * configured, matching's synchronous-HAL design (mtek_wifi_hal.h). */
 #pragma once
 #include "mtek_wifi_hal.h"
 #include <string.h>
@@ -10,28 +9,25 @@
 
 #define MTK_FAKE_MAX_FRAMES 8
 
-/* RC11 round 10 verification (TSan): named so a caller can snapshot the
- * staged frames into a local batch under the lock and then invoke the
- * frame callback with the lock released -- see mtk_fake_wifi_deliver_
- * frames/fake_wifi_promisc_start below. Layout and field names are
- * unchanged from the anonymous struct this replaces. */
+/* Named so a caller can snapshot the staged frames into a local batch under the
+ * lock and then invoke the frame callback with the lock released -- see
+ * mtk_fake_wifi_deliver_ frames/fake_wifi_promisc_start below. Layout and field
+ * names are unchanged from the anonymous struct this replaces. */
 typedef struct { uint8_t data[1000]; uint16_t len; int8_t rssi; uint8_t channel; } mtk_fake_wifi_frame_t;
 
 typedef struct {
     mtk_hal_ap_record_t ap_results[8]; unsigned ap_count;
     mtk_hal_station_record_t sta_results[8]; unsigned sta_count;
     mtk_hal_connect_result_t connect_result; int connect_rc;
-    /* P0 correction (follow-up read-only audit, "genuine peer-session
-     * ownership"): mirrors promisc_start_delay_ms's own established
-     * precedent -- an optional REAL delay (ms) before connect() checks its
-     * own injected result, giving a test's own concurrent thread a
-     * genuine window to invalidate this exact operation's token (a
-     * simulated native-SPI peer reboot) before the blocking HAL call
-     * returns, proving handle_sta_connect's own fencing (gate every
-     * externally-visible effect on winning the transition, never release
-     * a newer operation's arbiter lease) resolves correctly regardless of
-     * which side reaches its own finish line first. 0 (default) = no
-     * delay, every other connect() test's existing timing unaffected. */
+    /* Mirrors promisc_start_delay_ms's own established precedent -- an optional
+     * REAL delay (ms) before connect checks its own injected result, giving a
+     * test's own concurrent thread a genuine window to invalidate this exact
+     * operation's token (a simulated native-SPI peer reboot) before the blocking
+     * HAL call returns, proving handle_sta_connect's own fencing (gate every
+     * externally-visible effect on winning the transition, never release a newer
+     * operation's arbiter lease) resolves correctly regardless of which side
+     * reaches its own finish line first. 0 (default) = no delay, every other
+     * connect test's existing timing unaffected. */
     unsigned connect_delay_ms;
     unsigned disconnect_call_count; /* proves a fenced-out late "connected" completion tears itself back down */
     mtk_hal_mac6_t last_sta_scan_bssid; uint8_t last_sta_scan_channel;
@@ -54,68 +50,61 @@ typedef struct {
     int raw_tx_rc; unsigned raw_tx_count;
     unsigned restore_count;
     unsigned promisc_start_count, promisc_stop_count;
-    int promisc_start_rc; /* RC8 independent audit P0-9: test-settable failure injection */
+    int promisc_start_rc; /* Test-settable failure injection */
     unsigned pace_delay_call_count; /* counts calls without actually sleeping, so host tests stay fast */
     unsigned sta_was_connected;     /* mirrors mtek_wifi_hal_esp32.c's own s_sta_was_connected for restore-mode tests */
     unsigned reconnect_attempted_count;
     uint8_t current_channel;
     uint8_t last_requested_channel;
     unsigned set_channel_call_count;
-    int set_channel_rc; /* RC8 independent audit P0-9: test-settable failure injection */
+    int set_channel_rc; /* Test-settable failure injection */
     int defer_frames; /* if set, promisc_start only records the callback;
-                        * mtk_fake_wifi_deliver_frames() replays it later,
-                        * simulating frames that arrive after START returns */
+                       * mtk_fake_wifi_deliver_frames replays it later,
+                       * simulating frames that arrive after START returns */
     mtk_hal_frame_cb_t pending_cb; void *pending_cb_user;
-    /* RC11 round 10 verification (TSan): bumped under the fake HAL's own
-     * lock immediately AFTER pending_cb/pending_cb_user are published, so
-     * a test can wait for "the deferred registration is actually visible"
-     * rather than for promisc_start_count, which fake_wifi_promisc_start
-     * bumps EARLY -- before its own promisc_start_delay_ms sleep and long
-     * before it publishes the registration at all. A test that staged a
-     * deliberately-stale pending_cb_user after only the latter was racing
-     * the very worker whose registration it meant to supersede. */
+    /* Bumped under the fake HAL's own lock immediately AFTER
+     * pending_cb/pending_cb_user are published, so a test can wait for "the
+     * deferred registration is actually visible" rather than for
+     * promisc_start_count, which fake_wifi_promisc_start bumps EARLY -- before
+     * its own promisc_start_delay_ms sleep and long before it publishes the
+     * registration at all. A test that staged a deliberately-stale
+     * pending_cb_user after only the latter was racing the very worker whose
+     * registration it meant to supersede. */
     unsigned promisc_registered_count;
-    /* RC8 independent audit P0-9: mirrors mtek_wifi_hal_esp32.c's own
-     * capture_prior_state_once/esp32_restore_sta_mode contract -- a test
-     * sets `mode`/`current_channel` to whatever the "prior" state should
-     * be BEFORE driving a List B operation, then asserts these two fields
-     * hold those exact values again after the operation's own
-     * restore_sta_mode call (not hard-coded back to some fixed mode/
-     * channel), proving a real, non-STA-only, non-zero-channel prior
-     * state actually round-trips. */
+    /* Mirrors mtek_wifi_hal_esp32.c's own
+     * capture_prior_state_once/esp32_restore_sta_mode contract -- a test sets
+     * `mode`/`current_channel` to whatever the "prior" state should be BEFORE
+     * driving a List B operation, then asserts these two fields hold those exact
+     * values again after the operation's own restore_sta_mode call (not
+     * hard-coded back to some fixed mode/ channel), proving a real,
+     * non-STA-only, non-zero-channel prior state actually round-trips. */
     uint8_t prior_state_valid;
     uint8_t prior_mode;
     uint8_t prior_channel;
     uint8_t prior_was_connected;
-    /* RC9 independent correction order P0 "station-target scan bypasses
-     * the transactional radio lifecycle": mirrors mtek_wifi_hal_esp32.c's
-     * own esp32_sta_scan/esp32_sta_scan_cancel contract. sta_scan_rc
-     * injects a transactional-entry failure (a real negative return, not
-     * "0 stations found"). sta_scan_poll_count_per_call/
-     * sta_scan_polls_done let a test prove a real STOP-during-scan
-     * genuinely shortens the call (fewer polls consumed than the full
-     * configured duration would need) instead of merely being ignored
-     * until the full wait elapses. */
+    /* Mirrors mtek_wifi_hal_esp32.c's own esp32_sta_scan/esp32_sta_scan_cancel
+     * contract. sta_scan_rc injects a transactional-entry failure (a real
+     * negative return, not "0 stations found"). sta_scan_poll_count_per_call/
+     * sta_scan_polls_done let a test prove a real STOP-during-scan genuinely
+     * shortens the call (fewer polls consumed than the full configured duration
+     * would need) instead of merely being ignored until the full wait elapses. */
     int sta_scan_rc;
     volatile int sta_scan_cancel_requested;
     unsigned sta_scan_cancel_count;
     unsigned sta_scan_poll_count_per_call; /* how many 5ms polls one full-duration call performs */
     unsigned sta_scan_polls_done;          /* set by the call itself: how many polls it actually did before returning */
     unsigned sta_scan_call_count;
-    /* RC10 independent correction order P0 "transactional entry/teardown
-     * errors are still discarded": mirrors mtek_wifi_hal_esp32.c's own
-     * esp32_sta_scan teardown -- when nonzero, the fake's own teardown
-     * step fails just like a real esp_wifi_set_promiscuous(false)/
-     * esp_wifi_set_promiscuous_rx_cb(NULL) failure would, and the call
-     * must report failure (-1) even though real results may have been
-     * found. */
+    /* Mirrors mtek_wifi_hal_esp32.c's own esp32_sta_scan teardown -- when
+     * nonzero, the fake's own teardown step fails just like a real
+     * esp_wifi_set_promiscuous(false)/ esp_wifi_set_promiscuous_rx_cb(NULL)
+     * failure would, and the call must report failure (-1) even though real
+     * results may have been found. */
     int sta_scan_teardown_promisc_off_rc;
     int sta_scan_teardown_cb_clear_rc;
-    /* RC10 independent correction order P0 "restore is not actually
-     * failure-atomic": mirrors mtek_wifi_hal_esp32.c's own
-     * esp32_restore_sta_mode -- when set, the fake's own restore fails at
-     * the named step (and, per the real HAL's own short-circuit rule,
-     * skips whatever depends on it) instead of always succeeding. */
+    /* Mirrors mtek_wifi_hal_esp32.c's own esp32_restore_sta_mode -- when set,
+     * the fake's own restore fails at the named step (and, per the real HAL's
+     * own short-circuit rule, skips whatever depends on it) instead of always
+     * succeeding. */
     int restore_promisc_off_rc;
     int restore_stop_rc;
     int restore_mode_rc;
@@ -123,75 +112,87 @@ typedef struct {
     int restore_channel_rc;
     int restore_reconnect_rc;
     unsigned quiescence_wait_call_count;
-    /* RC11 independent correction order P0 "make WIFI_STOP_ALL retry
-     * verified recovery before releasing ownership": when nonzero, the
-     * fake's own restore_sta_mode forces a transient failure (never
-     * touching the per-step *_rc fields above, and never clearing the
-     * preserved prior-state snapshot) and decrements this counter --
-     * letting a test prove a bounded-retry caller genuinely recovers
-     * after N transient failures, not just that it gives up on the
-     * first one or retries forever. 0 (default): no transient failure
-     * injected here at all (the per-step *_rc fields above, if any,
-     * still apply normally). */
+    /* When nonzero, the fake's own restore_sta_mode forces a transient failure
+     * (never touching the per-step *_rc fields above, and never clearing the
+     * preserved prior-state snapshot) and decrements this counter -- letting a
+     * test prove a bounded-retry caller genuinely recovers after N transient
+     * failures, not just that it gives up on the first one or retries forever. 0
+     * (default): no transient failure injected here at all (the per-step *_rc
+     * fields above, if any, still apply normally). */
     unsigned restore_fail_countdown;
-    /* RC11 independent correction order P0 "AP scan has the same async
-     * STOP race and false-success behavior": mirrors the sta_scan fields
-     * above exactly, for the same reason (a real pthread AP-scan START/
-     * STOP race test). */
+    /* Mirrors the sta_scan fields above exactly, for the same reason (a real
+     * pthread AP-scan START/ STOP race test). */
     int ap_scan_rc;
     volatile int ap_scan_cancel_requested;
     unsigned ap_scan_cancel_count;
     unsigned ap_scan_poll_count_per_call;
     unsigned ap_scan_polls_done;
     unsigned ap_scan_call_count;
-    /* P0 correction (follow-up read-only audit, "final focused
-     * concurrency-correction round", issue 4): when set, ap_scan_cancel()
-     * still records that cancellation was genuinely signalled
-     * (ap_scan_cancel_count still increments) but deliberately does NOT
-     * set ap_scan_cancel_requested -- simulating a real-world case where
-     * the HAL's own cancel signal does not take effect promptly (e.g. a
-     * transient hardware-busy state), so a test can force the peer-reset
-     * canceller's own bounded quiescence wait to genuinely time out
-     * rather than observe the worker finish early, exactly like every
-     * other test in this suite that DOES observe a prompt cancellation. */
+    /* When set, ap_scan_cancel still records that cancellation was genuinely
+     * signalled (ap_scan_cancel_count still increments) but deliberately does
+     * NOT set ap_scan_cancel_requested -- simulating a real-world case where the
+     * HAL's own cancel signal does not take effect promptly (e.g. a transient
+     * hardware-busy state), so a test can force the peer-reset canceller's own
+     * bounded quiescence wait to genuinely time out rather than observe the
+     * worker finish early, exactly like every other test in this suite that DOES
+     * observe a prompt cancellation. */
     unsigned ap_scan_ignore_cancel;
     unsigned sta_scan_ignore_cancel;
-    /* RC9 independent correction order P0 "handshake capture ignores
-     * monitor-entry failure": an optional real delay (ms) before
-     * promisc_start checks its own injected failure/success, giving a
-     * test's own concurrent thread a genuine window to dispatch a STOP
-     * against the same operation token before promisc_start returns --
-     * proving handle_handshake_start's monitor-entry failure path and a
-     * genuine concurrent STOP resolve to exactly one cleanup, whichever
-     * wins mtk_op_transition. 0 (default) = no delay, every other
-     * promisc_start test's existing timing is unaffected. */
+    /* An optional real delay (ms) before promisc_start checks its own injected
+     * failure/success, giving a test's own concurrent thread a genuine window to
+     * dispatch a STOP against the same operation token before promisc_start
+     * returns -- proving handle_handshake_start's monitor-entry failure path and
+     * a genuine concurrent STOP resolve to exactly one cleanup, whichever wins
+     * mtk_op_transition. 0 (default) = no delay, every other promisc_start
+     * test's existing timing is unaffected. */
     unsigned promisc_start_delay_ms;
-    /* RC9 independent correction order P0 "the prior-state snapshot is
-     * not complete or failure-safe": mirrors mtek_wifi_hal_esp32.c's own
-     * capture_prior_state_once -- when set, a fresh (not-yet-captured)
-     * prior-state snapshot fails entirely (a required mode/channel/
-     * promiscuous read failing on the real HAL), and every real "disturb
-     * the radio" entry point must treat that as its own transactional-
+    /* Mirrors mtek_wifi_hal_esp32.c's own capture_prior_state_once -- when set,
+     * a fresh (not-yet-captured) prior-state snapshot fails entirely (a required
+     * mode/channel/ promiscuous read failing on the real HAL), and every real
+     * "disturb the radio" entry point must treat that as its own transactional-
      * entry failure, never proceeding over unknown prior state. */
     int prior_state_capture_rc;
+    /* SoftAP. Mirrors the real HAL's contract: start records what was
+     * requested and honours an injected failure; stop is always callable,
+     * including with no AP up. sta_count is test-settable, with a failure
+     * injection so the service's "unknown count reports zero" path is
+     * reachable. */
+    unsigned softap_start_count, softap_stop_count;
+    int softap_start_rc;
+    uint8_t softap_last_ssid[32]; uint8_t softap_last_ssid_len;
+    uint8_t softap_last_psk_len; uint8_t softap_last_channel;
+    uint8_t softap_sta_count_value;
+    int softap_sta_count_rc;
+    unsigned softap_active;
+    /* Captive portal. start/stop counts and an injectable failure mirror the
+     * SoftAP fakes; submissions are staged by the test and delivered on the
+     * next portal_service() drain, which is how a real HAL defers delivery out
+     * of its HTTP server's task. */
+    unsigned portal_start_count, portal_stop_count, portal_service_count;
+    int portal_start_rc;
+    uint8_t portal_last_title[95]; uint8_t portal_last_title_len;
+    mtk_hal_portal_cred_cb_t portal_cb; void *portal_cb_user;
+    struct { uint8_t user[64]; uint8_t user_len; uint8_t pass[64]; uint8_t pass_len; } portal_pending[8];
+    unsigned portal_pending_count;
+    uint32_t portal_dns_queries, portal_http_hits;
+    uint8_t portal_last_post[95]; uint8_t portal_last_post_len;
+    int portal_stats_rc;
 } mtk_fake_wifi_state_t;
 
 static mtk_fake_wifi_state_t g_fake_wifi;
 static inline void mtk_fake_wifi_reset(void) { memset(&g_fake_wifi, 0, sizeof(g_fake_wifi)); }
 
-/* RC8 independent audit "Run a supported ThreadSanitizer build" (this
- * round's own verification pass): a real TSan run against
- * test_deauth_continuous.c's genuine pthread worker caught a real data
- * race on g_fake_wifi's own prior-state/channel/mode fields between the
- * async worker thread's in-flight fake_wifi_send_deauth call and a
- * concurrent DEAUTH_STOP's fake_wifi_restore_sta_mode call on another
- * thread -- the exact same real hazard this round's P0-9 fix newly
- * exposed in production too (mtek_wifi_hal_esp32.c's own s_prior_state
- * now needs the analogous fix, see that file). Optional lock hooks,
- * mirroring mtek_wifi_service_set_lock/mtk_core_set_lock's own
- * established pattern -- a no-op default is safe for every other host
- * test (single-threaded, never registers one); only a test with a real
- * concurrent dispatch path (test_deauth_continuous.c) needs to. */
+/* (the verification pass): a real TSan run against test_deauth_continuous.c's
+ * genuine pthread worker caught a real data race on g_fake_wifi's own
+ * prior-state/channel/mode fields between the async worker thread's in-flight
+ * fake_wifi_send_deauth call and a concurrent DEAUTH_STOP's
+ * fake_wifi_restore_sta_mode call on another thread -- the exact same real
+ * hazard's P0-9 fix newly exposed in production too (mtek_wifi_hal_esp32.c's own
+ * s_prior_state now needs the analogous fix, see that file). Optional lock
+ * hooks, mirroring mtek_wifi_service_set_lock/mtk_core_set_lock's own
+ * established pattern -- a no-op default is safe for every other host test
+ * (single-threaded, never registers one); only a test with a real concurrent
+ * dispatch path (test_deauth_continuous.c) needs to. */
 typedef void (*mtk_fake_wifi_lock_fn)(void);
 static mtk_fake_wifi_lock_fn s_fake_wifi_lock_fn, s_fake_wifi_unlock_fn;
 static inline void mtk_fake_wifi_set_lock(mtk_fake_wifi_lock_fn lock, mtk_fake_wifi_lock_fn unlock) {
@@ -199,11 +200,11 @@ static inline void mtk_fake_wifi_set_lock(mtk_fake_wifi_lock_fn lock, mtk_fake_w
 }
 static inline void fake_wifi_lock(void) { if (s_fake_wifi_lock_fn) s_fake_wifi_lock_fn(); }
 static inline void fake_wifi_unlock(void) { if (s_fake_wifi_unlock_fn) s_fake_wifi_unlock_fn(); }
-/* A frame batch copied out of g_fake_wifi under the lock, so the callback
- * itself can run with the lock RELEASED: the callback re-enters production
- * code that can call straight back into this same fake HAL (set_channel,
- * promisc_stop, restore_sta_mode, ...), and these lock hooks are plain
- * non-recursive mutexes -- holding one across the callback would deadlock. */
+/* A frame batch copied out of g_fake_wifi under the lock, so the callback itself
+ * can run with the lock RELEASED: the callback re-enters production code that
+ * can call straight back into this same fake HAL (set_channel, promisc_stop,
+ * restore_sta_mode,...), and these lock hooks are plain non-recursive mutexes --
+ * holding one across the callback would deadlock. */
 typedef struct { mtk_fake_wifi_frame_t frames[MTK_FAKE_MAX_FRAMES]; unsigned count; } mtk_fake_wifi_frame_batch_t;
 
 /* Caller must hold the fake HAL lock. */
@@ -214,13 +215,12 @@ static inline void fake_wifi_snapshot_frames_locked(mtk_fake_wifi_frame_batch_t 
     for (unsigned i = 0; i < n; i++) out->frames[i] = g_fake_wifi.frames[i];
 }
 
-/* RC11 round 10 verification (TSan): every g_fake_wifi access here was
- * previously bare. A real full-suite ThreadSanitizer run caught both
- * halves of the resulting race against a concurrently-dispatched worker
- * thread's own fake_wifi_promisc_start: this function's `pending_cb` read
- * vs. that function's `pending_cb = cb` write, and a test's own staged
- * `pending_cb_user` write vs. its `pending_cb_user = user` write. The
- * registration and the frames are now snapshotted under the lock; the
+/* Every g_fake_wifi access here was previously bare. A real full-suite
+ * ThreadSanitizer run caught both halves of the resulting race against a
+ * concurrently-dispatched worker thread's own fake_wifi_promisc_start: this
+ * function's `pending_cb` read vs. that function's `pending_cb = cb` write, and
+ * a test's own staged `pending_cb_user` write vs. its `pending_cb_user = user`
+ * write. The registration and the frames are now snapshotted under the lock; the
  * callback runs outside it, for the deadlock reason above. */
 static inline void mtk_fake_wifi_deliver_frames(void) {
     fake_wifi_lock();
@@ -309,15 +309,13 @@ static void fake_wifi_sta_scan_cancel(void) {
     g_fake_wifi.sta_scan_cancel_count++;
     fake_wifi_unlock();
 }
-/* RC9 independent correction order P0 "station-target scan bypasses the
- * transactional radio lifecycle": mirrors mtek_wifi_hal_esp32.c's own
- * esp32_sta_scan -- capture_prior_state_once, a real (test-injectable)
- * transactional-entry failure, and a short-poll cancellable wait (5ms
- * real sleeps, so a genuine concurrent pthread STOP -- test_sta_scan_
- * *.c's own real worker -- can be observed taking effect) instead of one
- * uninterruptible block, with sta_scan_polls_done left behind so a test
- * can prove a STOP-triggered return consumed fewer polls than the full
- * configured duration would have. */
+/* Mirrors mtek_wifi_hal_esp32.c's own esp32_sta_scan --
+ * capture_prior_state_once, a real (test-injectable) transactional-entry
+ * failure, and a short-poll cancellable wait (5ms real sleeps, so a genuine
+ * concurrent pthread STOP -- test_sta_scan_ *.c's own real worker -- can be
+ * observed taking effect) instead of one uninterruptible block, with
+ * sta_scan_polls_done left behind so a test can prove a STOP-triggered return
+ * consumed fewer polls than the full configured duration would have. */
 static int fake_wifi_sta_scan(mtk_hal_mac6_t bssid, uint8_t channel, uint16_t duration_ms,
                                mtk_hal_station_record_t *out, unsigned max_out) {
     (void)duration_ms;
@@ -347,12 +345,10 @@ static int fake_wifi_sta_scan(mtk_hal_mac6_t bssid, uint8_t channel, uint16_t du
     g_fake_wifi.sta_scan_polls_done = done;
     unsigned n = g_fake_wifi.sta_count < max_out ? g_fake_wifi.sta_count : max_out;
     memcpy(out, g_fake_wifi.sta_results, n * sizeof(*out));
-    /* RC10 independent correction order P0 "transactional entry/teardown
-     * errors are still discarded": mirrors mtek_wifi_hal_esp32.c's own
-     * esp32_sta_scan teardown -- a real (test-injected) callback-
-     * unregister or promiscuous-disable failure here means the call
-     * itself must fail, even though `n` real results were already found
-     * and copied above. */
+    /* Mirrors mtek_wifi_hal_esp32.c's own esp32_sta_scan teardown -- a real
+     * (test-injected) callback- unregister or promiscuous-disable failure here
+     * means the call itself must fail, even though `n` real results were already
+     * found and copied above. */
     int promisc_off_rc = g_fake_wifi.sta_scan_teardown_promisc_off_rc;
     int cb_clear_rc = g_fake_wifi.sta_scan_teardown_cb_clear_rc;
     fake_wifi_unlock();
@@ -383,21 +379,20 @@ static int fake_wifi_promisc_start(uint8_t channel, mtk_hal_frame_cb_t cb, void 
     unsigned delay_ms = g_fake_wifi.promisc_start_delay_ms;
     fake_wifi_unlock();
     if (delay_ms) usleep(delay_ms * 1000);
-    /* RC8 independent audit P0-9: test-settable failure injection --
-     * proves a real transactional-failure path, not just the always-
-     * succeeds default every other promisc_start test relies on.
+    /* Test-settable failure injection -- proves a real transactional-failure
+     * path, not just the always- succeeds default every other promisc_start test
+     * relies on.
      *
-     * RC11 round 10 verification (TSan): promisc_start_rc, defer_frames,
-     * the pending_cb/pending_cb_user publication and the staged frames
-     * were all read/written here with no lock at all, while this very
-     * function runs on a dispatched worker thread and a test's own main
-     * thread reaches into the same fields -- the real, TSan-confirmed
-     * data race (see mtk_fake_wifi_deliver_frames above). All of it is
-     * now one locked section; promisc_registered_count is bumped inside
-     * it, immediately after the registration becomes visible, so a test
-     * can wait for publication rather than for mere entry. The callback
-     * is invoked with the lock RELEASED, for the deadlock reason
-     * documented on mtk_fake_wifi_frame_batch_t. */
+     * promisc_start_rc, defer_frames, the pending_cb/pending_cb_user publication
+     * and the staged frames were all read/written here with no lock at all,
+     * while this very function runs on a dispatched worker thread and a test's
+     * own main thread reaches into the same fields -- the real, TSan-confirmed
+     * data race (see mtk_fake_wifi_deliver_frames above). All of it is now one
+     * locked section; promisc_registered_count is bumped inside it, immediately
+     * after the registration becomes visible, so a test can wait for publication
+     * rather than for mere entry. The callback is invoked with the lock
+     * RELEASED, for the deadlock reason documented on
+     * mtk_fake_wifi_frame_batch_t. */
     fake_wifi_lock();
     int start_rc = g_fake_wifi.promisc_start_rc;
     if (start_rc != 0) { fake_wifi_unlock(); return start_rc; }
@@ -416,21 +411,19 @@ static int fake_wifi_promisc_start(uint8_t channel, mtk_hal_frame_cb_t cb, void 
     }
     return 0;
 }
-/* RC11 round 10 verification (TSan): counter bump locked for the same
- * reason as promisc_start's own -- this runs on dispatched worker threads
- * while a test's main thread reads the same counter. */
+/* Counter bump locked for the same reason as promisc_start's own -- this runs on
+ * dispatched worker threads while a test's main thread reads the same counter. */
 static void fake_wifi_promisc_stop(void) {
     fake_wifi_lock();
     g_fake_wifi.promisc_stop_count++;
     fake_wifi_unlock();
 }
-/* RC11 independent correction order P0 #1/#2: this fake HAL already
- * delivers every frame synchronously, inline, from inside promisc_start
- * itself (see its own doc comment) -- there is no real Wi-Fi driver task
- * here to be unsafe on in the first place, so there is nothing to
- * service/drain. A real target HAL's own esp32_promisc_service is what
- * mtek_wifi_service_tick actually calls; this no-op exists only so every
- * host test's own tick call has a valid, harmless function pointer. */
+/* #1/#2: this fake HAL already delivers every frame synchronously, inline, from
+ * inside promisc_start itself (see its own doc comment) -- there is no real
+ * Wi-Fi driver task here to be unsafe on in the first place, so there is nothing
+ * to service/drain. A real target HAL's own esp32_promisc_service is what
+ * mtek_wifi_service_tick actually calls; this no-op exists only so every host
+ * test's own tick call has a valid, harmless function pointer. */
 static void fake_wifi_promisc_service(void) {}
 static int fake_wifi_set_channel(uint8_t channel) {
     if (!fake_wifi_capture_prior_state_once()) return -1;
@@ -460,14 +453,12 @@ static int fake_wifi_raw_tx(const uint8_t *frame, uint16_t len) { (void)frame; (
  * reconnect is only attempted (tracked here via reconnect_attempted, for
  * test assertions) if the station was genuinely connected before the
  * List B operation borrowed the radio. */
-/* RC10 independent correction order P0 "restore is not actually failure-
- * atomic": mirrors mtek_wifi_hal_esp32.c's own esp32_restore_sta_mode --
- * returns 0 only if every step it actually attempted succeeded, -1
- * otherwise; the snapshot is preserved (not cleared) until this function
- * reaches its own defined safe terminal state at the end; a failing
- * "stop" short-circuits mode/start/channel/reconnect exactly like the
- * real HAL (their own real precondition, a stopped driver, could not be
- * confirmed). */
+/* Mirrors mtek_wifi_hal_esp32.c's own esp32_restore_sta_mode -- returns 0 only
+ * if every step it actually attempted succeeded, -1 otherwise; the snapshot is
+ * preserved (not cleared) until this function reaches its own defined safe
+ * terminal state at the end; a failing "stop" short-circuits
+ * mode/start/channel/reconnect exactly like the real HAL (their own real
+ * precondition, a stopped driver, could not be confirmed). */
 static int fake_wifi_restore_sta_mode(void) {
     fake_wifi_lock();
     g_fake_wifi.restore_count++;
@@ -502,18 +493,15 @@ static int fake_wifi_restore_sta_mode(void) {
         ok = 0; /* stop failed: mode/start/channel/reconnect all skipped as unverified, matching the real HAL */
     }
 
-    /* RC11 independent correction order P0 "retain the prior-state
-     * snapshot ... on a restore failure": this used to clear
-     * prior_state_valid/mode/channel/was_connected UNCONDITIONALLY here,
-     * contradicting this very function's own doc comment above ("the
-     * snapshot is preserved ... until this function reaches its own
+    /* This used to clear prior_state_valid/mode/channel/was_connected
+     * UNCONDITIONALLY here, contradicting this very function's own doc comment
+     * above ("the snapshot is preserved... until this function reaches its own
      * defined safe terminal state") and mekt_wifi_hal_esp32.c's own real
-     * esp32_restore_sta_mode, which clears it ONLY on success -- a real
-     * fidelity gap that would have made a host test's own "does a retry
-     * recover to the EXACT original prior state" assertion pass by
-     * accident (or not at all) regardless of whether production logic
-     * actually preserves it. Mirrors the real HAL exactly: forgotten only
-     * on success. */
+     * esp32_restore_sta_mode, which clears it ONLY on success -- a real fidelity
+     * gap that would have made a host test's own "does a retry recover to the
+     * EXACT original prior state" assertion pass by accident (or not at all)
+     * regardless of whether production logic actually preserves it. Mirrors the
+     * real HAL exactly: forgotten only on success. */
     if (ok) {
         g_fake_wifi.prior_state_valid = 0;
         g_fake_wifi.prior_mode = 0;
@@ -524,16 +512,114 @@ static int fake_wifi_restore_sta_mode(void) {
     return ok ? 0 : -1;
 }
 static void fake_wifi_pace_delay_ms(uint32_t ms) { (void)ms; g_fake_wifi.pace_delay_call_count++; /* no real sleep -- host tests stay fast and deterministic */ }
-/* RC10 independent correction order P0 "STOP restores/releases the radio
- * before the worker has stopped touching it": mirrors mtek_wifi_hal_
- * esp32.c's own esp32_quiescence_wait_ms -- deliberately a REAL short
- * sleep (unlike pace_delay_ms's intentional no-op), since this is the
- * only thing giving a genuinely concurrent worker thread real wall-clock
- * time to finish inside a host test's own bounded STOP-quiescence wait;
- * nothing else in this suite depends on this call staying instantaneous. */
+/* Mirrors mtek_wifi_hal_ esp32.c's own esp32_quiescence_wait_ms -- deliberately
+ * a REAL short sleep (unlike pace_delay_ms's intentional no-op), since this is
+ * the only thing giving a genuinely concurrent worker thread real wall-clock
+ * time to finish inside a host test's own bounded STOP-quiescence wait; nothing
+ * else in this suite depends on this call staying instantaneous. */
 static void fake_wifi_quiescence_wait_ms(uint32_t ms) {
     fake_wifi_lock(); g_fake_wifi.quiescence_wait_call_count++; fake_wifi_unlock();
     usleep(ms * 1000);
+}
+
+
+static int fake_wifi_softap_start(const uint8_t *ssid, uint8_t ssid_len,
+                                   const uint8_t *psk, uint8_t psk_len, uint8_t channel) {
+    fake_wifi_lock();
+    g_fake_wifi.softap_start_count++;
+    g_fake_wifi.softap_last_ssid_len = ssid_len;
+    memset(g_fake_wifi.softap_last_ssid, 0, sizeof(g_fake_wifi.softap_last_ssid));
+    if (ssid_len) memcpy(g_fake_wifi.softap_last_ssid, ssid, ssid_len);
+    g_fake_wifi.softap_last_psk_len = psk_len;
+    g_fake_wifi.softap_last_channel = channel;
+    (void)psk;
+    int rc = g_fake_wifi.softap_start_rc;
+    if (rc == 0) g_fake_wifi.softap_active = 1;
+    fake_wifi_unlock();
+    return rc;
+}
+
+static void fake_wifi_softap_stop(void) {
+    fake_wifi_lock();
+    g_fake_wifi.softap_stop_count++;
+    g_fake_wifi.softap_active = 0;
+    fake_wifi_unlock();
+}
+
+static int fake_wifi_softap_sta_count(uint8_t *count_out) {
+    fake_wifi_lock();
+    int rc = g_fake_wifi.softap_sta_count_rc;
+    *count_out = rc == 0 ? g_fake_wifi.softap_sta_count_value : 0;
+    fake_wifi_unlock();
+    return rc;
+}
+
+
+static int fake_wifi_portal_start(const uint8_t *title, uint8_t title_len,
+                                   mtk_hal_portal_cred_cb_t cb, void *user) {
+    fake_wifi_lock();
+    g_fake_wifi.portal_start_count++;
+    g_fake_wifi.portal_last_title_len = title_len;
+    memset(g_fake_wifi.portal_last_title, 0, sizeof(g_fake_wifi.portal_last_title));
+    if (title_len) memcpy(g_fake_wifi.portal_last_title, title, title_len);
+    int rc = g_fake_wifi.portal_start_rc;
+    if (rc == 0) { g_fake_wifi.portal_cb = cb; g_fake_wifi.portal_cb_user = user; }
+    fake_wifi_unlock();
+    return rc;
+}
+
+static void fake_wifi_portal_stop(void) {
+    fake_wifi_lock();
+    g_fake_wifi.portal_stop_count++;
+    g_fake_wifi.portal_cb = NULL; g_fake_wifi.portal_cb_user = NULL;
+    fake_wifi_unlock();
+}
+
+/* Drains staged submissions exactly as a deferring HAL would: the callback is
+ * invoked from this ordinary call, never from inside portal_start. */
+static void fake_wifi_portal_service(void) {
+    fake_wifi_lock();
+    g_fake_wifi.portal_service_count++;
+    mtk_hal_portal_cred_cb_t cb = g_fake_wifi.portal_cb;
+    void *user = g_fake_wifi.portal_cb_user;
+    unsigned n = g_fake_wifi.portal_pending_count;
+    g_fake_wifi.portal_pending_count = 0;
+    fake_wifi_unlock();
+    if (!cb) return;
+    for (unsigned i = 0; i < n; i++) {
+        cb(user, g_fake_wifi.portal_pending[i].user, g_fake_wifi.portal_pending[i].user_len,
+           g_fake_wifi.portal_pending[i].pass, g_fake_wifi.portal_pending[i].pass_len);
+    }
+}
+
+static int fake_wifi_portal_stats(uint32_t *dns_out, uint32_t *http_out,
+                                   uint8_t *last_post, uint8_t *last_post_len) {
+    fake_wifi_lock();
+    int rc = g_fake_wifi.portal_stats_rc;
+    if (rc == 0) {
+        *dns_out = g_fake_wifi.portal_dns_queries;
+        *http_out = g_fake_wifi.portal_http_hits;
+        *last_post_len = g_fake_wifi.portal_last_post_len;
+        if (g_fake_wifi.portal_last_post_len) memcpy(last_post, g_fake_wifi.portal_last_post, g_fake_wifi.portal_last_post_len);
+    }
+    fake_wifi_unlock();
+    return rc;
+}
+
+/* Stages one submission for the next portal_service() drain. */
+static inline void mtk_fake_portal_submit(const char *user, const char *pass) {
+    fake_wifi_lock();
+    if (g_fake_wifi.portal_pending_count < 8) {
+        unsigned i = g_fake_wifi.portal_pending_count++;
+        size_t ul = user ? strlen(user) : 0, pl = pass ? strlen(pass) : 0;
+        if (ul > 64) ul = 64; if (pl > 64) pl = 64;
+        memset(&g_fake_wifi.portal_pending[i], 0, sizeof(g_fake_wifi.portal_pending[i]));
+        if (ul) memcpy(g_fake_wifi.portal_pending[i].user, user, ul);
+        if (pl) memcpy(g_fake_wifi.portal_pending[i].pass, pass, pl);
+        g_fake_wifi.portal_pending[i].user_len = (uint8_t)ul;
+        g_fake_wifi.portal_pending[i].pass_len = (uint8_t)pl;
+    }
+    fake_wifi_unlock();
 }
 
 static const mtk_wifi_hal_t g_fake_wifi_hal = {
@@ -541,4 +627,6 @@ static const mtk_wifi_hal_t g_fake_wifi_hal = {
     fake_wifi_send_deauth, fake_wifi_promisc_start, fake_wifi_promisc_stop, fake_wifi_promisc_service, fake_wifi_set_channel,
     fake_wifi_get_mode, fake_wifi_set_mode, fake_wifi_get_mac, fake_wifi_raw_tx, fake_wifi_restore_sta_mode,
     fake_wifi_pace_delay_ms, fake_wifi_quiescence_wait_ms,
+    fake_wifi_softap_start, fake_wifi_softap_stop, fake_wifi_softap_sta_count,
+    fake_wifi_portal_start, fake_wifi_portal_stop, fake_wifi_portal_service, fake_wifi_portal_stats,
 };

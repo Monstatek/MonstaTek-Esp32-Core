@@ -4,10 +4,10 @@ from the accepted contract's schemas.json `adapter_map.compat_c3` field.
 
 This is documentation/lookup data only -- see docs/PROVENANCE.md for why
 the Mtek Compatibility/C3 SPI adapter does not yet dispatch on-wire: the facts-only
-contract package supplied for this task does not include the Mtek Compatibility/C3 SPI
+contract package supplied for does not include the Mtek Compatibility/C3 SPI
 frame header's byte layout (magic/msg_id/opcode offsets), only its opcode
 *values* and per-operation semantics (cited in prose from a source file
-this task's clean-room boundary forbids opening directly). This table
+'s clean-room boundary forbids opening directly). This table
 exists so the mapping is traceable to schemas.json and reusable the moment
 that missing fact is supplied.
 

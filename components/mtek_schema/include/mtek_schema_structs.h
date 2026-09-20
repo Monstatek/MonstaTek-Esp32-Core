@@ -623,8 +623,8 @@ typedef struct {
 
 typedef struct {
     uint32_t captured_at_epoch_s;
-    struct { uint16_t len; uint8_t data[255]; } username;
-    struct { uint16_t len; uint8_t data[255]; } password;
+    struct { uint16_t len; uint8_t data[64]; } username;
+    struct { uint16_t len; uint8_t data[64]; } password;
 } mtk_anon_mtk_captive_portal_get_credentials_resp_t_credentials_elem_3_t;
 
 typedef struct {
@@ -1159,3 +1159,46 @@ typedef struct {
     struct { uint32_t count; mtk_anon_mtk_gatt_discover_descs_resp_t_items_elem_7_t items[16]; } items;
     uint16_t next_index;
 } mtk_gatt_discover_descs_resp_t;
+
+typedef struct {
+    uint8_t channel;
+} mtk_espnow_start_req_t;
+
+typedef struct {
+    uint32_t operation_token;
+} mtk_espnow_start_resp_t;
+
+typedef struct {
+    uint32_t operation_token;
+    uint8_t status;
+    uint32_t sent_ok;
+    uint32_t received;
+} mtk_espnow_stopped_ev_t;
+
+typedef struct {
+    uint32_t operation_token;
+} mtk_espnow_stop_req_t;
+
+typedef struct {
+    uint8_t final_state;
+    uint8_t final_status;
+} mtk_espnow_stop_resp_t;
+
+typedef struct {
+    mtk_mac6_t peer;
+    uint8_t channel;
+    uint8_t encrypt;
+    struct { uint16_t len; uint8_t data[16]; } lmk;
+} mtk_espnow_add_peer_req_t;
+
+typedef struct {
+    mtk_mac6_t peer;
+    struct { uint16_t len; uint8_t data[250]; } data;
+} mtk_espnow_send_req_t;
+
+typedef struct {
+    uint32_t sent_ok;
+    uint32_t send_fail;
+    uint32_t received;
+    uint32_t dropped;
+} mtk_espnow_stats_resp_t;

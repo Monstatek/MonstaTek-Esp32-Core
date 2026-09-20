@@ -1,14 +1,12 @@
-/* Owner-approved RC11 correction: "AP scan has the same async STOP race
- * and false-success behavior" as station-target scan (RC9/RC10's own
- * already-accepted fixes to STA_SCAN_*, mirrored here for AP_SCAN_* now
- * that this specific List-A behavior change was explicitly approved).
- * Mirrors test_sta_scan_rc10.c's own structure closely (a real pthread
- * async runner for the concurrent-STOP section, matching that file's own
- * proven pattern) but AP scan has no separate promiscuous-mode teardown
- * step of its own to fail (esp32_ap_scan/fake_wifi_ap_scan never register
- * a promiscuous callback), so this covers: honest transactional-entry
- * failure reporting, restore-step failure honesty + quarantine (never
- * released), and a genuinely concurrent STOP racing natural completion. */
+/* Owner-approved RC11 correction: "AP scan has the same async STOP race and
+ * false-success behavior" as station-target scan. Mirrors test_sta_scan_rc10.c's
+ * own structure closely (a real pthread async runner for the concurrent-STOP
+ * section, matching that file's own proven pattern) but AP scan has no separate
+ * promiscuous-mode teardown step of its own to fail
+ * (esp32_ap_scan/fake_wifi_ap_scan never register a promiscuous callback), so
+ * this covers: honest transactional-entry failure reporting, restore-step
+ * failure honesty + quarantine (never released), and a genuinely concurrent STOP
+ * racing natural completion. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtek_schema_message_descs.h"
@@ -50,8 +48,8 @@ MTK_TEST_MAIN_BEGIN
     const mtk_opcode_entry_t *status_op = mtk_test_find_op("AP_SCAN_STATUS");
     MTK_CHECK(start_op && stop_op && status_op);
 
-    /* ---- Part 1: transactional-entry failure honesty -- previously
-     * silently rewritten to 0 results / MTK_STATUS_OK. ---- */
+    /* Part 1: transactional-entry failure honesty -- previously silently
+     * rewritten to 0 results / MTK_STATUS_OK. -- */
     {
         mtk_fake_sink_state_t sink; mtk_fake_sink_reset(&sink);
         mtk_request_ctx_t ctx = mtk_test_ctx(&sink, 1);
@@ -68,10 +66,10 @@ MTK_TEST_MAIN_BEGIN
         mtk_arbiter_reset();
     }
 
-    /* ---- Part 2: restore-step failure honesty -- a successful scan must
-     * still report IO_ERROR when its own post-scan restore fails, and the
-     * lease must stay quarantined (never released) rather than freed over
-     * unconfirmed radio state. ---- */
+    /* Part 2: restore-step failure honesty -- a successful scan must still
+     * report IO_ERROR when its own post-scan restore fails, and the lease must
+     * stay quarantined (never released) rather than freed over unconfirmed radio
+     * state. -- */
     {
         mtk_fake_sink_state_t sink; mtk_fake_sink_reset(&sink);
         mtk_request_ctx_t ctx = mtk_test_ctx(&sink, 1);
@@ -94,8 +92,8 @@ MTK_TEST_MAIN_BEGIN
         mtk_arbiter_reset(); /* test-harness cleanup only */
     }
 
-    /* ---- Part 3: a genuinely concurrent AP scan STOP racing natural
-     * completion (real pthread worker). ---- */
+    /* Part 3: a genuinely concurrent AP scan STOP racing natural completion
+     * (real pthread worker). -- */
     {
         mtk_router_set_async_runner(pthread_runner);
         mtk_fake_sink_state_t sink; mtk_fake_sink_reset(&sink);

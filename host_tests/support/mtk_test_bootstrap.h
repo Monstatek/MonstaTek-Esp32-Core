@@ -13,6 +13,7 @@
 #include "mtk_fake_sink.h"
 #include "mtk_fake_wifi_hal.h"
 #include "mtk_fake_ble_hal.h"
+#include "mtk_fake_espnow_hal.h"
 
 #define MTK_TEST_BOOT_EPOCH 0xABCD1234u
 
@@ -31,16 +32,20 @@ static inline void mtk_test_bootstrap(void) {
     mtek_wifi_service_init(mtk_test_now_ms);
     mtek_ble_service_init(mtk_test_now_ms);
     mtek_capture_service_init(mtk_test_now_ms);
+    mtek_espnow_service_init(mtk_test_now_ms);
 
     mtk_fake_wifi_reset();
+    mtk_fake_espnow_reset();
     mtk_fake_ble_reset();
     mtek_wifi_set_hal(&g_fake_wifi_hal);
     mtek_ble_set_hal(&g_fake_ble_hal);
+    mtek_espnow_set_hal(&g_fake_espnow_hal);
 
     if (mtek_system_service_register() != MTK_REGISTER_OK ||
         mtek_wifi_service_register() != MTK_REGISTER_OK ||
         mtek_ble_service_register() != MTK_REGISTER_OK ||
-        mtek_capture_service_register() != MTK_REGISTER_OK) abort();
+        mtek_capture_service_register() != MTK_REGISTER_OK ||
+        mtek_espnow_service_register() != MTK_REGISTER_OK) abort();
 }
 
 static inline mtk_request_ctx_t mtk_test_ctx(mtk_fake_sink_state_t *sink_state, uint32_t correlation) {

@@ -1,7 +1,6 @@
-/* Opcode registry integrity: exact 93-opcode count, every opcode
- * findable by (service_id, opcode), and the capability-state/wire-status
- * closure rule (002-service-registry.md Sec 3.0a) holds for every
- * declared capability_state in the generated table. */
+/* Opcode registry integrity: exact 93-opcode count, every opcode findable by
+ * (service_id, opcode), and the capability-state/wire-status closure rule holds
+ * for every declared capability_state in the generated table. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtek_opcode_registry.h"
@@ -9,9 +8,9 @@
 
 MTK_TEST_MAIN_BEGIN
 
-    MTK_CHECK_EQ(MTK_OPCODE_COUNT, 93); /* RC8 P0-6: +GATT_DISCOVER_CHARS, +GATT_DISCOVER_DESCS */
+    MTK_CHECK_EQ(MTK_OPCODE_COUNT, 99); /* 93 canonical + 6 ESP-NOW */
 
-    unsigned wifi_count = 0, ble_count = 0, gatt_count = 0, capture_count = 0, diag_count = 0, sys_count = 0;
+    unsigned wifi_count = 0, ble_count = 0, gatt_count = 0, capture_count = 0, diag_count = 0, sys_count = 0, espnow_count = 0;
     for (unsigned i = 0; i < MTK_OPCODE_COUNT; i++) {
         const mtk_opcode_entry_t *e = &mtk_opcode_table[i];
         MTK_CHECK(mtk_opcode_find(e->service_id, e->opcode) == e);
@@ -22,9 +21,11 @@ MTK_TEST_MAIN_BEGIN
             case 0x0003: gatt_count++; break;
             case 0x0004: capture_count++; break;
             case 0x0005: diag_count++; break;
+            case 0x0006: espnow_count++; break;
             default: MTK_CHECK(0);
         }
     }
+    MTK_CHECK_EQ(espnow_count, 6);
     MTK_CHECK_EQ(sys_count, 9);
     MTK_CHECK_EQ(wifi_count, 41);
     MTK_CHECK_EQ(ble_count, 23); /* 0x0001..0x0017, includes the 12 compatibility-family opcodes */
@@ -37,10 +38,9 @@ MTK_TEST_MAIN_BEGIN
     MTK_CHECK(mtk_opcode_find(0x0009, 0x0001) == NULL); /* out-of-range service never routed */
     MTK_CHECK(mtk_opcode_find(0x0000, 0x00FF) == NULL); /* out-of-range opcode */
 
-    /* DEAUTH_START/STOP/STATUS: List B, SUPPORTED by default for every
-     * profile except factory-UART's DEAUTH_STATUS (no status query
-     * command exists on the factory console), per 002-service-registry.md
-     * Sec 7 / contract review 10 item 1. */
+    /* DEAUTH_START/STOP/STATUS: List B, SUPPORTED by default for every profile
+     * except factory-UART's DEAUTH_STATUS (no status query command exists on the
+     * factory console),. */
     const mtk_opcode_entry_t *deauth_start = mtk_opcode_find(0x0001, 0x0010);
     MTK_CHECK_EQ(deauth_start->cap_native, MTK_CAP_SUPPORTED);
     MTK_CHECK_EQ(deauth_start->cap_factory_uart, MTK_CAP_SUPPORTED);
@@ -58,23 +58,19 @@ MTK_TEST_MAIN_BEGIN
     MTK_CHECK_EQ(sta_status->no_radio_lease, 1);
     MTK_CHECK_EQ(sta_status->resource_class, MTK_ARB_NONE);
 
-    /* RC8 independent audit P0-8 "Make capabilities truthful for the
-     * exact build": "a property test that walks every advertised opcode
-     * and proves registry/capability/dispatch agreement. The validator
-     * must test these behaviors, not merely state that inspection covers
-     * them." Real end-to-end proof, not a re-inspection of the same
-     * static table: calls the REAL GET_CAPABILITIES opcode (exactly what
-     * a real client would) to learn each opcode's own REPORTED state,
-     * then dispatches that SAME opcode for real and confirms agreement
-     * in both directions -- reported SUPPORTED must never dispatch to
-     * UNSUPPORTED (the exact class of bug this item fixed: the whole
-     * BEACON/SOFTAP/PROBE_FLOOD/PMKID_CAPTURE/KARMA/CAPTIVE_PORTAL
-     * opcode families were reported SUPPORTED by the registry's own
-     * static table while
+    /* "a property test that walks every advertised opcode and proves
+     * registry/capability/dispatch agreement. The validator must test these
+     * behaviors, not merely state that inspection covers them." Real end-to-end
+     * proof, not a re-inspection of the same static table: calls the REAL
+     * GET_CAPABILITIES opcode (exactly what a real client would) to learn each
+     * opcode's own REPORTED state, then dispatches that SAME opcode for real and
+     * confirms agreement in both directions -- reported SUPPORTED must never
+     * dispatch to UNSUPPORTED (the exact class of bug this item fixed: the whole
+     * BEACON/SOFTAP/PROBE_FLOOD/PMKID_CAPTURE/KARMA/CAPTIVE_PORTAL opcode
+     * families were reported SUPPORTED by the registry's own static table while
      * mtek_wifi_logic.c's own dispatch switch unconditionally answered
-     * UNSUPPORTED), and reported NOT-supported must never dispatch to
-     * anything other than UNSUPPORTED (002-service-registry.md Sec
-     * 3.0a's own closure rule, the reverse direction). */
+     * UNSUPPORTED), and reported NOT-supported must never dispatch to anything
+     * other than UNSUPPORTED. */
     {
         mtk_test_bootstrap();
         uint8_t state[MTK_OPCODE_COUNT];

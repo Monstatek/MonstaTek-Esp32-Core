@@ -1,94 +1,81 @@
-/* Release-tooling-round P0 correction, ROUND 5 (follow-up read-only audit,
- * "final P0 concurrency-closure round"), FURTHER CORRECTED (follow-up
- * read-only audit, "one P0 race remains" -- see mtk_op_begin_publish_guard's
- * own doc comment in mtek_core.h for the full account): round 4 closed
- * the arbiter-release-timing hazard for STA_CONNECT/BLE_SCAN/GATT_CONNECT's
- * own peer-reset path, but a further read-only re-audit found four
- * remaining gaps:
+/* ROUND 5 (follow-up read-only audit, "final P0 concurrency-closure round"),
+ * FURTHER CORRECTED (follow-up read-only audit, "one P0 race remains" -- see
+ * mtk_op_begin_publish_guard's own doc comment in mtek_core.h for the full
+ * account): round 4 closed the arbiter-release-timing hazard for
+ * STA_CONNECT/BLE_SCAN/GATT_CONNECT's own peer-reset path, but a further
+ * read-only re-audit found four remaining gaps:
  *
- *  1. Every "check ownership, then separately release" call site (not
- *     just GATT's) was still two independent arbiter-lock acquisitions,
- *     leaving a real window between them for a concurrent reassignment to
- *     be released out from under a newer operation -- including mtek_
- *     wifi_logic.c's own restore/release paths (deauth/handshake/AP-STA-
- *     scan/RAW_TX/capture), not only GATT. Fixed with a genuinely atomic
- *     mtk_arbiter_release_if_owner(class, token) (mtek_arbiter.c) used
- *     everywhere that pattern occurred, including inside mtek_wifi_
- *     restore_and_release's own now `owner_token`-taking signature.
- *  2. A worker could win mtk_op_claim_finalization/mtk_op_transition_by_
- *     token for its own token an instant BEFORE a concurrent peer-session
- *     reset bumps the session generation, then publish shared state or
- *     emit an event an instant AFTER -- neither the op-table win nor the
- *     arbiter-ownership check closes this, since both only check state
- *     at one moment. An EARLIER version of this fix (mtk_op_confirm_
- *     still_current_session) was a single point-in-time re-check taken
- *     right before publish -- but a further re-audit found this
- *     insufficient: a single check only proves the generation had not
- *     YET changed the instant it ran, not that it cannot change in the
- *     (necessarily nonzero) window between the check RETURNING and the
- *     caller's own subsequent publish statements actually executing. The
- *     real fix is mtk_op_begin_publish_guard/mtk_op_end_publish_guard
- *     (mtek_core.c): a genuine begin/end GUARD, held across the entire
- *     publish, backed by a lock ALSO acquired (briefly) by mtk_core_
- *     bump_session_generation itself -- so a bump cannot complete while
- *     a guard is open, and a guard cannot open while a bump is in
- *     progress, closing the window to zero width rather than merely
- *     narrowing it. This lock is deliberately separate from mtk_core_
- *     set_lock's own (mtk_op_set_publish_lock), mirroring mtek_capture_
- *     service.h's own established mtek_capture_set_lock precedent,
- *     since the guard is held across the caller's own sink emit_event
- *     call, which can itself reach mtk_core_set_lock's own lock (a
- *     queue-backed sink's async_queue lock is often the identical
- *     physical lock) -- reusing it here would self-deadlock. mtk_op_
- *     set_won_hook (test-only, always NULL/no-op in production) lets
- *     this file pause a worker WHILE it holds the guard, so a concurrent
- *     peer reset can be proven to genuinely BLOCK rather than merely
- *     hoping it lands in some narrow window.
- *  3. BLE_SCAN_STOP, WIFI_STOP_ALL, and STA_DISCONNECT -- ordinary user-
- *     invoked cleanup paths, not just the peer-reset canceller -- still
- *     released/restored/reused radio ownership immediately, even while
- *     an uncancellable blocking HAL call (scan()/connect()) was still
- *     genuinely running, permitting the exact same overlapping-HAL-call
- *     hazard round 4 closed for the peer-reset path alone. BLE_SCAN_STOP
- *     now only fences the token (mtek_ble_logic.c); WIFI_STOP_ALL now
- *     special-cases WMC/WS to do the same, sharing mtek_wifi_logic.c's
- *     own wifi_quiesce_and_fence_ws helper with the peer-reset canceller;
- *     STA_DISCONNECT no longer touches the arbiter at all (it never had
- *     a legitimate reason to -- MTK_ARB_WMC is only ever held for the
- *     duration of an in-progress connect attempt itself, always already
- *     free by the time a session is genuinely connected).
- *  4. (List A/wire format unchanged throughout -- verified by every
- *     existing host test in this suite continuing to pass unmodified.)
+ * 1. Every "check ownership, then separately release" call site (not just
+ * GATT's) was still two independent arbiter-lock acquisitions, leaving a real
+ * window between them for a concurrent reassignment to be released out from
+ * under a newer operation -- including mtek_ wifi_logic.c's own restore/release
+ * paths (deauth/handshake/AP-STA- scan/RAW_TX/capture), not only GATT. Fixed
+ * with a genuinely atomic mtk_arbiter_release_if_owner(class, token)
+ * (mtek_arbiter.c) used everywhere that pattern occurred, including inside
+ * mtek_wifi_ restore_and_release's own now `owner_token`-taking signature. 2. A
+ * worker could win mtk_op_claim_finalization/mtk_op_transition_by_ token for its
+ * own token an instant BEFORE a concurrent peer-session reset bumps the session
+ * generation, then publish shared state or emit an event an instant AFTER --
+ * neither the op-table win nor the arbiter-ownership check closes this, since
+ * both only check state at one moment. An EARLIER version of this fix
+ * (mtk_op_confirm_ still_current_session) was a single point-in-time re-check
+ * taken right before publish -- but a further re-audit found this insufficient:
+ * a single check only proves the generation had not YET changed the instant it
+ * ran, not that it cannot change in the (necessarily nonzero) window between the
+ * check RETURNING and the caller's own subsequent publish statements actually
+ * executing. The real fix is mtk_op_begin_publish_guard/mtk_op_end_publish_guard
+ * (mtek_core.c): a genuine begin/end GUARD, held across the entire publish,
+ * backed by a lock ALSO acquired (briefly) by mtk_core_ bump_session_generation
+ * itself -- so a bump cannot complete while a guard is open, and a guard cannot
+ * open while a bump is in progress, closing the window to zero width rather than
+ * merely narrowing it. This lock is deliberately separate from mtk_core_
+ * set_lock's own (mtk_op_set_publish_lock), mirroring mtek_capture_ service.h's
+ * own established mtek_capture_set_lock precedent, since the guard is held
+ * across the caller's own sink emit_event call, which can itself reach
+ * mtk_core_set_lock's own lock (a queue-backed sink's async_queue lock is often
+ * the identical physical lock) -- reusing it here would self-deadlock. mtk_op_
+ * set_won_hook (test-only, always NULL/no-op in production) lets this file pause
+ * a worker WHILE it holds the guard, so a concurrent peer reset can be proven to
+ * genuinely BLOCK rather than merely hoping it lands in some narrow window. 3.
+ * BLE_SCAN_STOP, WIFI_STOP_ALL, and STA_DISCONNECT -- ordinary user- invoked
+ * cleanup paths, not just the peer-reset canceller -- still
+ * released/restored/reused radio ownership immediately, even while an
+ * uncancellable blocking HAL call (scan/connect) was still genuinely running,
+ * permitting the exact same overlapping-HAL-call hazard round 4 closed for the
+ * peer-reset path alone. BLE_SCAN_STOP now only fences the token
+ * (mtek_ble_logic.c); WIFI_STOP_ALL now special-cases WMC/WS to do the same,
+ * sharing mtek_wifi_logic.c's own wifi_quiesce_and_fence_ws helper with the
+ * peer-reset canceller; STA_DISCONNECT no longer touches the arbiter at all (it
+ * never had a legitimate reason to -- MTK_ARB_WMC is only ever held for the
+ * duration of an in-progress connect attempt itself, always already free by the
+ * time a session is genuinely connected). 4. (List A/wire format unchanged
+ * throughout -- verified by every existing host test in this suite continuing to
+ * pass unmodified.)
  *
- * This file proves each of the four adversarial scenarios the re-audit
- * demanded, plus success/timeout/cancellation/restore-failure coverage:
- *   A. Direct atomic-arbiter proof: pause a worker after it would have
- *      passed an ownership check but before it actually releases; replace
- *      ownership with the same class and a NEW token; prove the paused
- *      release cannot touch the new lease.
- *   B. Worker-finalization/session-reset race: pause a REAL STA_CONNECT
- *      worker (via mtk_op_set_won_hook) while it holds the publish guard
- *      (mtk_op_begin_publish_guard already returned 1); attempt a real,
- *      changed-epoch HELLO concurrently, on its own thread; prove the
- *      HELLO genuinely BLOCKS (cannot bump the session generation) for as
- *      long as the worker holds the guard; resume the worker; prove its
- *      publish (s_sta_connected + STA_CONNECT_COMPLETE) completes first,
- *      strictly BEFORE the now-unblocked reset runs and correctly tears
- *      the resulting connection back down via its own pre-existing
- *      already-connected handling.
- *   C. BLE_SCAN_STOP during a blocked BLE scan: immediate replacement
- *      work is refused BUSY until the original HAL call genuinely exits.
- *   D/E. WIFI_STOP_ALL during blocked AP_SCAN/STA_SCAN: no premature
- *      restore/release, no overlapping HAL calls, no stale events.
- *   F. WIFI_STOP_ALL and STA_DISCONNECT during a blocked STA_CONNECT: no
- *      premature restore/release, no overlapping HAL calls, no stale
- *      events, no disconnection of a newer session.
- *   G. STA_DISCONNECT normal-path regression: a genuinely connected
- *      session still disconnects correctly (issue 4: no change to
- *      successful normal-path behavior).
- *   H. Restore-failure branch: a forced restore_sta_mode() failure still
- *      quarantines the lease (never releases it) through the new atomic
- *      wrapper, exactly as before. */
+ * This file proves each of the four adversarial scenarios the re-audit demanded,
+ * plus success/timeout/cancellation/restore-failure coverage: A. Direct
+ * atomic-arbiter proof: pause a worker after it would have passed an ownership
+ * check but before it actually releases; replace ownership with the same class
+ * and a NEW token; prove the paused release cannot touch the new lease. B.
+ * Worker-finalization/session-reset race: pause a REAL STA_CONNECT worker (via
+ * mtk_op_set_won_hook) while it holds the publish guard
+ * (mtk_op_begin_publish_guard already returned 1); attempt a real, changed-epoch
+ * HELLO concurrently, on its own thread; prove the HELLO genuinely BLOCKS
+ * (cannot bump the session generation) for as long as the worker holds the
+ * guard; resume the worker; prove its publish (s_sta_connected +
+ * STA_CONNECT_COMPLETE) completes first, strictly BEFORE the now-unblocked reset
+ * runs and correctly tears the resulting connection back down via its own
+ * pre-existing already-connected handling. C. BLE_SCAN_STOP during a blocked BLE
+ * scan: immediate replacement work is refused BUSY until the original HAL call
+ * genuinely exits. D/E. WIFI_STOP_ALL during blocked AP_SCAN/STA_SCAN: no
+ * premature restore/release, no overlapping HAL calls, no stale events. F.
+ * WIFI_STOP_ALL and STA_DISCONNECT during a blocked STA_CONNECT: no premature
+ * restore/release, no overlapping HAL calls, no stale events, no disconnection
+ * of a newer session. G. STA_DISCONNECT normal-path regression: a genuinely
+ * connected session still disconnects correctly (issue 4: no change to
+ * successful normal-path behavior). H. Restore-failure branch: a forced
+ * restore_sta_mode failure still quarantines the lease (never releases it)
+ * through the new atomic wrapper, exactly as before. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtek_spi_native_dispatch.h"
@@ -236,31 +223,28 @@ static void test_atomic_arbiter_release(void) {
 
 /* ==== B. Worker-finalization/session-reset race (issue 2). =============
  *
- * P0 correction (follow-up read-only audit, "one P0 race remains"): the
- * FIRST version of this test paused a worker inside mtk_op_confirm_
- * still_current_session (a single point-in-time re-check) and then sent
- * a real HELLO SYNCHRONOUSLY on the main thread while the worker sat
- * paused -- proving only that a reset landing in that exact window
- * failed to produce a stale publish, never that the window itself was
- * closed (a reset landing ONE INSTRUCTION LATER, after the check
- * returned but before the publish executed, was not exercised at all,
- * and could not be: no single re-check can close a window that exists
- * after it returns). The fix (mtk_op_begin_publish_guard/mtk_op_end_
- * publish_guard, mtek_core.c) makes "check" and "the generation actually
- * changing" mutually exclusive via a dedicated lock also held (briefly)
- * by mtk_core_bump_session_generation itself -- so with the worker now
- * paused INSIDE the guard (mtk_op_begin_publish_guard has already
- * returned 1 and is still holding that lock), a concurrent HELLO's own
- * reset processing cannot even START bumping the generation: it must
- * BLOCK on the same lock. Proving that block is now the real test: the
- * HELLO is sent on ITS OWN thread (sending it synchronously on the main
- * thread here would deadlock, since it would never return while this
- * same thread is the one that must resume the paused worker), and this
- * test verifies the HELLO thread has NOT completed and the session
- * generation has NOT yet changed while the worker remains paused --
- * only after the worker is resumed and releases the guard does the
- * HELLO thread unblock and the reset actually happen, strictly AFTER
- * the worker's own publish, never concurrently with it. */
+ * The FIRST version of this test paused a worker inside mtk_op_confirm_
+ * still_current_session (a single point-in-time re-check) and then sent a real
+ * HELLO SYNCHRONOUSLY on the main thread while the worker sat paused -- proving
+ * only that a reset landing in that exact window failed to produce a stale
+ * publish, never that the window itself was closed (a reset landing ONE
+ * INSTRUCTION LATER, after the check returned but before the publish executed,
+ * was not exercised at all, and could not be: no single re-check can close a
+ * window that exists after it returns). The fix
+ * (mtk_op_begin_publish_guard/mtk_op_end_ publish_guard, mtek_core.c) makes
+ * "check" and "the generation actually changing" mutually exclusive via a
+ * dedicated lock also held (briefly) by mtk_core_bump_session_generation itself
+ * -- so with the worker now paused INSIDE the guard (mtk_op_begin_publish_guard
+ * has already returned 1 and is still holding that lock), a concurrent HELLO's
+ * own reset processing cannot even START bumping the generation: it must BLOCK
+ * on the same lock. Proving that block is now the real test: the HELLO is sent
+ * on ITS OWN thread (sending it synchronously on the main thread here would
+ * deadlock, since it would never return while this same thread is the one that
+ * must resume the paused worker), and this test verifies the HELLO thread has
+ * NOT completed and the session generation has NOT yet changed while the worker
+ * remains paused -- only after the worker is resumed and releases the guard does
+ * the HELLO thread unblock and the reset actually happen, strictly AFTER the
+ * worker's own publish, never concurrently with it. */
 
 typedef struct {
     pthread_mutex_t m; pthread_cond_t cv;
@@ -368,7 +352,9 @@ static void test_won_session_reset_race(void) {
     mtk_op_set_won_hook(won_hook_pause);
     mtk_router_set_async_runner(pthread_runner);
 
-    g_fake_wifi.connect_delay_ms = 0; /* connect() itself returns fast -- the pause happens at the won-hook, not inside connect() */
+    g_fake_wifi.connect_delay_ms = 0; /* connect itself returns fast -- the pause
+                                       * happens at the won-hook, not inside
+                                       * connect */
     g_fake_wifi.connect_rc = 0;
     g_fake_wifi.connect_result.connected = 1;
 
@@ -379,18 +365,16 @@ static void test_won_session_reset_race(void) {
     mtk_spi_native_header_t hdr = base_req_hdr_b(sta_connect_op->service_id, sta_connect_op->opcode, 50, (uint16_t)blen, PEER_EPOCH_B1);
     mtek_spi_native_dispatch_feed_cell(&dctx, &hdr, buf, 2, &resp_hdr, resp_payload, &resp_len);
     /* Usually IDLE (the deferred worker has not started running yet), but
-     * mtek_spi_native_dispatch.c's own dispatch_complete_message
-     * deliberately delivers "whatever is now at the front of the queue"
-     * for this same transaction (its own doc comment: "this request's own
-     * response if it completed fast/synchronously ... either is
-     * protocol-legal") -- under real scheduling variance (pronounced
-     * under TSan's own heavy instrumentation slowdown) the newly created
-     * worker thread can occasionally reach its own ACCEPTED respond()
-     * call before this thread reaches that check, legitimately
-     * delivering it as an immediate RESPONSE instead of IDLE. Neither
-     * outcome matters to the rest of this test, which waits on the
-     * won-hook rendezvous below regardless of how/when the ACCEPTED
-     * response itself was delivered. */
+     * mtek_spi_native_dispatch.c's own dispatch_complete_message deliberately
+     * delivers "whatever is now at the front of the queue" for this same
+     * transaction (its own doc comment: "this request's own response if it
+     * completed fast/synchronously... either is protocol-legal") -- under real
+     * scheduling variance (pronounced under TSan's own heavy instrumentation
+     * slowdown) the newly created worker thread can occasionally reach its own
+     * ACCEPTED respond call before this thread reaches that check, legitimately
+     * delivering it as an immediate RESPONSE instead of IDLE. Neither outcome
+     * matters to the rest of this test, which waits on the won-hook rendezvous
+     * below regardless of how/when the ACCEPTED response itself was delivered. */
     MTK_CHECK(resp_hdr.msg_class == MTK_SPI_CLASS_IDLE || resp_hdr.msg_class == MTK_SPI_CLASS_RESPONSE);
 
     /* Wait for the worker to reach the won-hook -- it has already won
@@ -405,15 +389,14 @@ static void test_won_session_reset_race(void) {
 
     uint32_t generation_before = mtk_core_session_generation();
 
-    /* Attempt a real peer reset -- a genuine HELLO with a different
-     * epoch -- WHILE the worker is paused holding the publish-guard
-     * lock. Sent on ITS OWN thread: cancel_active_operations_for_peer_
-     * reset's own mtk_core_bump_session_generation() call needs the SAME
-     * lock the paused worker holds, so this call cannot complete (and,
-     * per the fix, must not even be ABLE to bump the generation) until
-     * the worker is resumed below -- sending it synchronously on this
-     * thread would deadlock (this thread is also the one that must
-     * signal the worker to resume). */
+    /* Attempt a real peer reset -- a genuine HELLO with a different epoch --
+     * WHILE the worker is paused holding the publish-guard lock. Sent on ITS OWN
+     * thread: cancel_active_operations_for_peer_ reset's own
+     * mtk_core_bump_session_generation call needs the SAME lock the paused
+     * worker holds, so this call cannot complete (and, per the fix, must not
+     * even be ABLE to bump the generation) until the worker is resumed below --
+     * sending it synchronously on this thread would deadlock (this thread is
+     * also the one that must signal the worker to resume). */
     hello_thread_arg_t hello_arg = { &dctx, PEER_EPOCH_B2, 0 };
     pthread_t hello_tid;
     MTK_CHECK(pthread_create(&hello_tid, NULL, hello_thread_fn, &hello_arg) == 0);
@@ -512,8 +495,8 @@ MTK_TEST_MAIN_BEGIN
         mtk_ble_scan_stop_req_t stopreq = {0}; stopreq.operation_token = tok;
         mtk_test_call(&stop_ctx, ble_scan_stop, &stopreq);
         MTK_CHECK_EQ(stop_sink.response.status, MTK_STATUS_OK);
-        /* The arbiter must stay held -- scan() has no cancel hook and is
-         * still genuinely blocked. */
+        /* The arbiter must stay held -- scan has no cancel hook and is still
+         * genuinely blocked. */
         MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_BS);
 
         /* Immediate replacement work must be refused. */
@@ -522,7 +505,7 @@ MTK_TEST_MAIN_BEGIN
         mtk_test_call(&busy_ctx, ble_scan_start, &req);
         MTK_CHECK_EQ(poll_for_response_status(&busy_sink), MTK_STATUS_BUSY);
 
-        usleep(400000); /* let the original scan() call genuinely exit */
+        usleep(400000); /* let the original scan call genuinely exit */
         MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_NONE); /* released by the real worker's own tail */
 
         /* A NEW BLE_SCAN_START now succeeds. */
@@ -673,8 +656,8 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK(tok != 0);
         MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_WMC);
 
-        /* WIFI_STOP_ALL must not touch restore/arbiter -- connect() has
-         * no cancel hook and is still genuinely blocked. */
+        /* WIFI_STOP_ALL must not touch restore/arbiter -- connect has no cancel
+         * hook and is still genuinely blocked. */
         mtk_fake_sink_state_t stop_sink; mtk_fake_sink_reset(&stop_sink);
         mtk_request_ctx_t stop_ctx = mtk_test_ctx(&stop_sink, 31);
         mtk_test_call(&stop_ctx, wifi_stop_all_op, NULL);
@@ -693,7 +676,8 @@ MTK_TEST_MAIN_BEGIN
         fake_wifi_lock();
         unsigned disc_calls_before = g_fake_wifi.disconnect_call_count;
         fake_wifi_unlock();
-        MTK_CHECK_EQ(disc_calls_before, 0u); /* nothing connected yet -- disconnect() never called */
+        MTK_CHECK_EQ(disc_calls_before, 0u); /* nothing connected yet -- disconnect
+                                              * never called */
 
         /* Immediate replacement STA_CONNECT must be refused -- the radio
          * is genuinely still busy. */
@@ -702,10 +686,10 @@ MTK_TEST_MAIN_BEGIN
         mtk_test_call(&busy_ctx, sta_connect_op2, &req);
         MTK_CHECK_EQ(poll_for_response_status(&busy_sink), MTK_STATUS_BUSY);
 
-        /* Let the stale connect() call finally return "connected" -- it
-         * lost the race already (fenced by WIFI_STOP_ALL above), so it
-         * must never publish s_sta_connected/emit STA_CONNECT_COMPLETE,
-         * and must tear its own real HAL-level association back down. */
+        /* Let the stale connect call finally return "connected" -- it lost the
+         * race already (fenced by WIFI_STOP_ALL above), so it must never publish
+         * s_sta_connected/emit STA_CONNECT_COMPLETE, and must tear its own real
+         * HAL-level association back down. */
         usleep(400000);
         MTK_CHECK(!mtek_wifi_is_sta_connected());
         fake_wifi_lock();
@@ -761,9 +745,9 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK(disc_calls >= 1); /* the real, established connection genuinely disconnected */
     }
 
-    /* ==== H. Restore-failure branch: a forced restore_sta_mode()
-     * failure still quarantines the lease through the new atomic
-     * wrapper, never releasing it. ========================================= */
+    /* ==== H. Restore-failure branch: a forced restore_sta_mode failure still
+     * quarantines the lease through the new atomic wrapper, never releasing it.
+     * ========================================= */
     {
         mtk_fake_wifi_reset();
         g_fake_wifi.ap_scan_poll_count_per_call = 1;

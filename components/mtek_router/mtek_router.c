@@ -3,9 +3,11 @@
 #include <stddef.h>
 #include <string.h>
 
-#define MTK_ROUTER_MAX_SERVICES 6
-/* Matches the core contract's 4-in-flight-request budget
- * (002-canonical-core-contract.md Sec 6). */
+/* system, wifi, ble, gatt, capture, diagnostics, espnow. Sized with one
+ * spare slot so adding a service is a table-capacity change made
+ * deliberately rather than a silent MTK_REGISTER_FULL at boot. */
+#define MTK_ROUTER_MAX_SERVICES 8
+/* Matches the core contract's 4-in-flight-request budget. */
 #define MTK_ROUTER_ASYNC_POOL_SIZE 4
 #define MTK_ROUTER_ASYNC_MAX_PAYLOAD 2048
 
@@ -34,9 +36,9 @@ static mtk_service_dispatch_fn find_service(uint16_t service_id) {
     return NULL;
 }
 
-/* 002-service-registry.md Sec 3.0a: DISABLED/UNAVAILABLE/UNSUPPORTED are
- * capability-discovery states only; a request against any of them returns
- * the legal wire status UNSUPPORTED with no side effect. */
+/* DISABLED/UNAVAILABLE/UNSUPPORTED are capability-discovery states only; a
+ * request against any of them returns the legal wire status UNSUPPORTED with no
+ * side effect. */
 static mtk_capability_state_t cap_for_profile(const mtk_opcode_entry_t *op, mtk_profile_t profile) {
     switch (profile) {
         case MTK_PROFILE_FACTORY_UART: return op->cap_factory_uart;
@@ -81,42 +83,35 @@ static void async_pool_release(mtk_router_async_slot_t *slot) {
 }
 
 /* Thread-local (not global): with up to 4 genuinely concurrent deferred
- * operations, a plain global flag would be wrong the instant more than
- * one worker is executing at once (thread A finishing and clearing it
- * while thread B's own handler is still legitimately running). Each
- * worker thread sets this only around its own slot->fn() call below, so
- * mtk_router_running_on_worker() always answers for "the thread calling
- * it right now", which is exactly what a handler like DEAUTH_START's
- * count=0 "run until stopped" loop needs to know before deciding it is
- * safe to block indefinitely (see mtek_wifi_logic.c). */
+ * operations, a plain global flag would be wrong the instant more than one
+ * worker is executing at once (thread A finishing and clearing it while thread
+ * B's own handler is still legitimately running). Each worker thread sets this
+ * only around its own slot->fn call below, so mtk_router_running_on_worker
+ * always answers for "the thread calling it right now", which is exactly what a
+ * handler like DEAUTH_START's count=0 "run until stopped" loop needs to know
+ * before deciding it is safe to block indefinitely (see mtek_wifi_logic.c). */
 static _Thread_local int t_running_on_worker;
 
 static void async_trampoline(void *arg) {
     mtk_router_async_slot_t *slot = (mtk_router_async_slot_t *)arg;
-    /* P0 correction (follow-up read-only audit, "genuine peer-session
-     * ownership" -- "Cancel or generation-fence queued and running
-     * old-session workers"): this slot was captured (mtk_router_dispatch,
-     * below) BEFORE this worker thread ever actually started running --
-     * a real async runner (e.g. a FreeRTOS task pool) may not schedule
-     * this trampoline until well after the calling thread returned, and a
-     * native-SPI peer reboot detected in that window must not let a
-     * request queued under the OLD peer session mint a brand-new
-     * operation that would be indistinguishable from one legitimately
-     * created by the NEW session. session_generation==0 (every non-
-     * native-SPI adapter) is never fenced.
+    /* This slot was captured (mtk_router_dispatch, below) BEFORE this worker
+     * thread ever actually started running -- a real async runner (e.g. a
+     * FreeRTOS task pool) may not schedule this trampoline until well after the
+     * calling thread returned, and a native-SPI peer reboot detected in that
+     * window must not let a request queued under the OLD peer session mint a
+     * brand-new operation that would be indistinguishable from one legitimately
+     * created by the NEW session. session_generation==0 (every non- native-SPI
+     * adapter) is never fenced.
      *
-     * P0 correction (follow-up read-only audit, "final focused
-     * concurrency-correction round", issue 1): a stale request must
-     * release its slot WITHOUT emitting any response/event into the
-     * shared native-SPI queue. The request's own request_id may already
-     * have been reused by a brand-new request minted under the new
-     * session by the time this stale worker finally runs; a response
-     * emitted here would be indistinguishable from a real answer to that
-     * new request and could corrupt it. The stale requester already
-     * lost its session on the peer side and cannot observe any answer,
-     * so slot->fn is simply never invoked and the slot is freed in
-     * silence -- no operation is minted, no arbiter class is ever
-     * acquired, and no frame is ever queued under this request_id. */
+     * A stale request must release its slot WITHOUT emitting any response/event
+     * into the shared native-SPI queue. The request's own request_id may already
+     * have been reused by a brand-new request minted under the new session by
+     * the time this stale worker finally runs; a response emitted here would be
+     * indistinguishable from a real answer to that new request and could corrupt
+     * it. The stale requester already lost its session on the peer side and
+     * cannot observe any answer, so slot->fn is simply never invoked and the
+     * slot is freed in silence -- no operation is minted, no arbiter class is
+     * ever acquired, and no frame is ever queued under this request_id. */
     if (slot->ctx.session_generation != 0 && slot->ctx.session_generation != mtk_core_session_generation()) {
         async_pool_release(slot);
         return;

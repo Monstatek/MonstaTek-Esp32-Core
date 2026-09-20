@@ -1,4 +1,4 @@
-/* Clean-room implementation from MonstaTek contract (002-resource-arbiter.md). */
+/* Clean-room implementation from MonstaTek contract. */
 #include "mtek_arbiter.h"
 #include <stddef.h>
 
@@ -117,15 +117,14 @@ mtk_arbiter_snapshot_t mtk_arbiter_snapshot(void) {
     return s;
 }
 
-/* M3 correction (independent review P1 "GET_WIFI_RECOVERY_STATE still
- * constructs a torn response"): a PURE class->owner mapping -- takes no
- * lock and reads no shared state at all, so a caller that already holds
- * one coherent mtk_arbiter_snapshot_t can derive radio_owner from that
- * SAME snapshot's own class, instead of a second, independently-locked
- * mtk_arbiter_active_owner() call that could observe a DIFFERENT
- * ownership moment than the rest of the response. mtk_arbiter_active_
- * owner() below is now expressed in terms of this same helper, so there
- * is exactly one class->owner mapping, not two that could drift apart. */
+/* M3 correction (independent review P1 "GET_WIFI_RECOVERY_STATE still constructs
+ * a torn response"): a PURE class->owner mapping -- takes no lock and reads no
+ * shared state at all, so a caller that already holds one coherent
+ * mtk_arbiter_snapshot_t can derive radio_owner from that SAME snapshot's own
+ * class, instead of a second, independently-locked mtk_arbiter_active_owner call
+ * that could observe a DIFFERENT ownership moment than the rest of the response.
+ * mtk_arbiter_active_ owner below is now expressed in terms of this same helper,
+ * so there is exactly one class->owner mapping, not two that could drift apart. */
 mtk_radio_owner_t mtk_arbiter_owner_for_class(mtk_arbiter_class_t cls) {
     if (cls == MTK_ARB_NONE) return MTK_RADIO_OWNER_NONE;
     return mtk_arbiter_owner[cls];

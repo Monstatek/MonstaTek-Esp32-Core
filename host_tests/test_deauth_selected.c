@@ -1,5 +1,5 @@
-/* Deauth: SELECTED target mode (one or more explicitly named stations
- * against one AP) -- 002-wifi-service.md Sec 2.4. */
+/* Deauth: SELECTED target mode (one or more explicitly named stations against
+ * one AP) -- */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtek_schema_message_descs.h"
@@ -36,10 +36,10 @@ MTK_TEST_MAIN_BEGIN
     MTK_CHECK_EQ(g_fake_wifi.restore_count, 1); /* STA mode restored on completion */
     MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_NONE);
 
-    /* Self-pair: a second DEAUTH_START while the D class is still active
-     * (before this one's synchronous run completes conceptually) is BUSY
-     * -- exercised directly against the arbiter, since this session's
-     * synchronous HAL model completes DEAUTH_START within one call. */
+    /* Self-pair: a second DEAUTH_START while the D class is still active (before
+     * this one's synchronous run completes conceptually) is BUSY -- exercised
+     * directly against the arbiter, since's synchronous HAL model completes
+     * DEAUTH_START within one call. */
     mtk_arbiter_reset();
     MTK_CHECK_EQ(mtk_arbiter_acquire(MTK_ARB_D, 555), MTK_ARB_GRANT_OK);
     MTK_CHECK_EQ(mtk_arbiter_acquire(MTK_ARB_D, 556), MTK_ARB_GRANT_BUSY);

@@ -1,54 +1,48 @@
-/* Clean-room implementation from MonstaTek contract. Mtek Compatibility/C3 REQUEST
- * frame dispatch: translates a parsed Mtek Compatibility wire request into a canonical
- * router call and formats the canonical response back into a Mtek Compatibility
- * RESP/NAK/FRAG frame sequence -- never calling a legacy handler and
- * reparsing its output (002-adapter-translation-matrix.md Sec 1.4).
+/* Clean-room implementation from MonstaTek contract. Mtek Compatibility/C3
+ * REQUEST frame dispatch: translates a parsed Mtek Compatibility wire request
+ * into a canonical router call and formats the canonical response back into a
+ * Mtek Compatibility RESP/NAK/FRAG frame sequence -- never calling a legacy
+ * handler and reparsing its output.
  *
- * Coverage: schemas.json's capability_state.compat_c3 marks exactly 44
- * canonical opcodes SUPPORTED for this profile (mtk_opcode_table,
- * queried programmatically -- not the 59 opcodes that merely carry an
- * adapter_map.compat_c3 wire-number reference, which also includes 15
- * opcodes the accepted contract itself marks DISABLED/UNSUPPORTED for
- * this profile: WIFI_MODE_GET/SET, GET_QUEUE_WATERMARKS, and the
- * 12-opcode BLE compatibility family). Every one of the 44 SUPPORTED
- * opcodes is dispatched for real through mtk_router_dispatch below --
- * none is ever answered with a hand-rolled UNSUPPORTED NAK at this
- * layer, since that would mischaracterize an opcode the accepted
- * contract itself says this profile supports. Where an opcode's exact
- * Mtek Compatibility-side response wire byte layout is not a confirmed fact, the real
- * canonical operation still executes (real side effects/state), and the
- * Mtek Compatibility RESP carries a bare status only (RESP=[] on success, NAK=[status]
- * on failure) -- this is not an improvisation:
- * 002-adapter-translation-matrix.md Sec 1.1 documents that most Mtek Compatibility
- * START handlers "return an ordinary RESP(OK) immediately ... real work
- * continuing as a background task", i.e. bare-status-only responses are
- * Mtek Compatibility's own native convention for exactly this situation, not a gap
- * being papered over. Opcodes with an exact confirmed response shape get
- * full translation instead: CAPTURE_START/POLL_READ, WIFI_MAC_GET,
- * SOFTAP_STA_LIST, CAPTIVE_PORTAL_GET_DIAGNOSTICS, PING (real byte-for-
- * byte echo, not a nonce round trip), GET_STATUS/GET_FW_VERSION (real
- * proto_ver/product_version/build_id; cap_bitmap left honestly zero --
- * its per-name bit INDEX assignment is not given anywhere in the
- * accepted contract package, only the name list and total width, so
- * populating it would mean guessing which bit is which capability),
- * AP_SCAN_START+RESULTS_PAGE and STA_SCAN_RESULTS_PAGE (real per-record
- * translation of actual scan results), and HANDSHAKE_STATUS/READ/STOP
- * and GATT_CONNECT (both closed out this review round from exact facts
- * supplied in 002-wifi-service.md Sec 2.5/5 and the confirmed
- * `ble_conn_connect(payload, payload[6], 8000)` call site -- see their
- * own handler doc comments). Semantic host tests
- * (test_compat_coverage.c) prove real request decode, real canonical side
- * effects, and exact Mtek Compatibility response bytes for each of these, not merely
- * that the router was reached.
+ * Coverage: schemas.json's capability_state.compat_c3 marks exactly 44 canonical
+ * opcodes SUPPORTED for this profile (mtk_opcode_table, queried programmatically
+ * -- not the 59 opcodes that merely carry an adapter_map.compat_c3 wire-number
+ * reference, which also includes 15 opcodes the accepted contract itself marks
+ * DISABLED/UNSUPPORTED for this profile: WIFI_MODE_GET/SET,
+ * GET_QUEUE_WATERMARKS, and the 12-opcode BLE compatibility family). Every one
+ * of the 44 SUPPORTED opcodes is dispatched for real through mtk_router_dispatch
+ * below -- none is ever answered with a hand-rolled UNSUPPORTED NAK at this
+ * layer, since that would mischaracterize an opcode the accepted contract itself
+ * says this profile supports. Where an opcode's exact Mtek Compatibility-side
+ * response wire byte layout is not a confirmed fact, the real canonical
+ * operation still executes (real side effects/state), and the Mtek Compatibility
+ * RESP carries a bare status only (RESP=[] on success, NAK=[status] on failure)
+ * -- this is not an improvisation: documents that most Mtek Compatibility START
+ * handlers "return an ordinary RESP(OK) immediately... real work continuing as a
+ * background task", i.e. bare-status-only responses are Mtek Compatibility's own
+ * native convention for exactly this situation, not a gap being papered over.
+ * Opcodes with an exact confirmed response shape get full translation instead:
+ * CAPTURE_START/POLL_READ, WIFI_MAC_GET, SOFTAP_STA_LIST,
+ * CAPTIVE_PORTAL_GET_DIAGNOSTICS, PING (real byte-for- byte echo, not a nonce
+ * round trip), GET_STATUS/GET_FW_VERSION (real
+ * proto_ver/product_version/build_id; cap_bitmap left honestly zero -- its
+ * per-name bit INDEX assignment is not given anywhere in the accepted contract
+ * package, only the name list and total width, so populating it would mean
+ * guessing which bit is which capability), AP_SCAN_START+RESULTS_PAGE and
+ * STA_SCAN_RESULTS_PAGE (real per-record translation of actual scan results),
+ * and HANDSHAKE_STATUS/READ/STOP and GATT_CONNECT (both closed out this review
+ * round from exact facts supplied in /5 and the confirmed
+ * `ble_conn_connect(payload, payload[6], 8000)` call site -- see their own
+ * handler doc comments). Semantic host tests (test_compat_coverage.c) prove real
+ * request decode, real canonical side effects, and exact Mtek Compatibility
+ * response bytes for each of these, not merely that the router was reached.
  *
- * The 15 non-SUPPORTED opcodes are routed through the SAME
- * mtk_router_dispatch call with an empty/inert request: the router's own
- * capability-state gate (already tested by every other adapter) rejects
- * them with the correct wire status before any payload is decoded, so no
- * Mtek Compatibility-side request-shape fact is needed for them at all -- this is not
- * a guess, it is the same capability gate every other adapter goes
- * through.
- */
+ * The 15 non-SUPPORTED opcodes are routed through the SAME mtk_router_dispatch
+ * call with an empty/inert request: the router's own capability-state gate
+ * (already tested by every other adapter) rejects them with the correct wire
+ * status before any payload is decoded, so no Mtek Compatibility-side
+ * request-shape fact is needed for them at all -- this is not a guess, it is the
+ * same capability gate every other adapter goes through. */
 #include "mtek_compat_dispatch.h"
 #include "mtek_compat_frame.h"
 #include "mtek_router.h"
@@ -58,7 +52,7 @@
 #include "mtek_codec_api.h"
 #include <string.h>
 
-/* RC12 blocker round, item 2: which deferred continuation is owed (see
+/* Which deferred continuation is owed (see
  * mtk_compat_dispatch_ctx_t.pending_continuation). */
 #define MTK_COMPAT_CONT_AP_SCAN  1  /* harvest AP result_generation, then build the network list */
 #define MTK_COMPAT_CONT_STA_SCAN 2  /* harvest STA result_generation into dctx, bare-status reply */
@@ -194,7 +188,8 @@ static void dispatch_start_track_token_async(mtk_compat_dispatch_ctx_t *dctx, ui
         dctx->pending_token_field = token_field;
         dctx->pending_service_id = service_id;
         dctx->pending_opcode = opcode;
-        dctx->pending_continuation = 0; /* RC12 item 2: this is the bare-status async path, not a terminal-event continuation */
+        dctx->pending_continuation = 0; /* This is the bare-status async path, not
+                                         * a terminal-event continuation */
         return;
     }
     cap->status = (uint8_t)f.seq_or_status;
@@ -251,11 +246,10 @@ static void dispatch_async_with_event(mtk_compat_dispatch_ctx_t *dctx, uint16_t 
     mtk_async_queue_reset(&dctx->event_queue);
     mtk_router_dispatch(&ctx, service_id, opcode, req, req_len);
 
-    /* Drain the whole batch once, recording BOTH halves independently --
-     * either, both, or neither may be present. extract() also fills cap's
-     * got_ flags and scan_generation/connection_token for the synchronous
-     * handler path (and, when we arm, for carrying the event into the
-     * continuation fields below). */
+    /* Drain the whole batch once, recording BOTH halves independently -- either,
+     * both, or neither may be present. extract also fills cap's got_ flags and
+     * scan_generation/connection_token for the synchronous handler path (and,
+     * when we arm, for carrying the event into the continuation fields below). */
     int have_response = 0, have_event = 0;
     uint8_t response_status = 0;
     mtk_async_frame_t f;
@@ -338,9 +332,9 @@ static void extract_sta_scan_generation(compat_capture_t *cap, const mtk_async_f
 static void extract_gatt_connection_token(compat_capture_t *cap, const mtk_async_frame_t *ev) {
     mtk_gatt_connect_complete_ev_t e; memset(&e, 0, sizeof(e));
     mtk_decode(&mtk_gatt_connect_complete_ev_t_desc, &e, ev->body, ev->body_len, NULL);
-    /* RC12 RC12 closure item 2: retain the real terminal status (OK on a
-     * live connection, TIMEOUT on a failed one) so the sync path can NAK a
-     * genuine failure; a connection_token is stored ONLY on success. */
+    /* RC12 retain the real terminal status (OK on a live connection, TIMEOUT on
+     * a failed one) so the sync path can NAK a genuine failure; a
+     * connection_token is stored ONLY on success. */
     cap->event_status = e.status;
     if (e.status == MTK_STATUS_OK) { cap->got_connection_token = 1; cap->connection_token = e.connection_token; }
 }
@@ -391,12 +385,12 @@ static void dispatch_bare(mtk_compat_dispatch_ctx_t *dctx, uint16_t service_id, 
     cap->body_len = 0; /* discard any structured response body -- bare status only */
 }
 
-/* Every STOP/STATUS opcode in this task's registry takes exactly
- * `{operation_token: u32}` as its sole request field (verified field-by-
- * field against components/mtek_schema/include/mtek_schema_structs.h for
- * every family used below). A local same-layout struct is safe to encode
- * against the generated descriptor: offsetof(<generated type>,
- * operation_token) is always 0 for these single-field structs. */
+/* Every STOP/STATUS opcode's registry takes exactly `{operation_token: u32}` as
+ * its sole request field (verified field-by- field against
+ * components/mtek_schema/include/mtek_schema_structs.h for every family used
+ * below). A local same-layout struct is safe to encode against the generated
+ * descriptor: offsetof(<generated type>, operation_token) is always 0 for these
+ * single-field structs. */
 typedef struct { uint32_t operation_token; } token_only_req_t;
 
 static void generic_token_op(mtk_compat_dispatch_ctx_t *dctx, uint32_t *token_field, uint8_t clear_on_call,
@@ -420,16 +414,14 @@ static void generic_token_op(mtk_compat_dispatch_ctx_t *dctx, uint32_t *token_fi
  * Only a subset needs custom shaping beyond the generic helpers above;
  * grouped roughly by canonical service. */
 
-/* PING, 0x0001: confirmed exact -- source-confirmed
- * `case M1_RPC_SYS_PING: send_resp(hdr->msg_id, payload, payload_len);`
- * (001-command-behavior-matrix.md/002-system-service.md Sec "Factory-
- * UART adapter mapping" table): Mtek Compatibility does not interpret the cookie at
- * all, it is a pure byte-for-byte echo of whatever length the requester
- * sent -- not fixed at 4 bytes despite the header's `u8[4]` shorthand.
- * The real canonical PING is still dispatched underneath (side-effect-
- * free, nonce=0) so this opcode is genuinely exercised through the
- * router, but the Mtek Compatibility RESP itself is the confirmed real behavior: the
- * raw echoed payload, not the canonical nonce round trip. */
+/* PING, 0x0001: confirmed exact -- source-confirmed `case M1_RPC_SYS_PING:
+ * send_resp(hdr->msg_id, payload, payload_len);`: Mtek Compatibility does not
+ * interpret the cookie at all, it is a pure byte-for-byte echo of whatever
+ * length the requester sent -- not fixed at 4 bytes despite the header's `u8[4]`
+ * shorthand. The real canonical PING is still dispatched underneath
+ * (side-effect- free, nonce=0) so this opcode is genuinely exercised through the
+ * router, but the Mtek Compatibility RESP itself is the confirmed real behavior:
+ * the raw echoed payload, not the canonical nonce round trip. */
 static void handle_ping(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, compat_capture_t *cap) {
     mtk_ping_req_t req = {0};
     const mtk_opcode_entry_t *op = mtk_opcode_find(0x0000, 0x0001);
@@ -445,24 +437,21 @@ static void handle_ping(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *payload,
 /* GET_STATUS, Mtek Compatibility 0x0002 (M1ESP_SYS_GET_STATUS, distinct from
  * GET_FW_VERSION 0x0003 below -- these are two separate Mtek Compatibility wire
  * opcodes, not one shared call): confirmed exact response shape
- * `m1esp_devstatus_t {proto_ver: u8, cap_bitmap: bytes[8], fw_name:
- * bytes[32] null-terminated}` (002-service-registry.md Sec 9,
- * 002-system-service.md Sec 5). `proto_ver`/`fw_name` are real,
- * translated from the real canonical GET_VERSION dispatch
- * (protocol_major, build_id). `cap_bitmap` is a real 23-bit capability
- * bitmap (M1ESP_CAP_WIFI_SCAN..M1ESP_CAP_802154_TX, bits 0-22) whose
- * exact per-name bit INDEX assignment is not given anywhere in the
- * accepted contract package (only the name list and "bits 0-22" total
- * width) -- populating it would mean guessing which bit is which
- * capability, which this task's own "implement no guess that changes
- * the public surface" rule forbids. Left as 8 zero bytes, honestly
- * disclosed (docs/PROVENANCE.md), not fabricated. GET_CAPABILITIES is
- * still dispatched for real underneath (side-effect-free) so it is
- * genuinely exercised, even though its data isn't the source of
- * cap_bitmap here. */
+ * `m1esp_devstatus_t {proto_ver: u8, cap_bitmap: bytes[8], fw_name: bytes[32]
+ * null-terminated}`. `proto_ver`/`fw_name` are real, translated from the real
+ * canonical GET_VERSION dispatch (protocol_major, build_id). `cap_bitmap` is a
+ * real 23-bit capability bitmap (M1ESP_CAP_WIFI_SCAN..M1ESP_CAP_802154_TX, bits
+ * 0-22) whose exact per-name bit INDEX assignment is not given anywhere in the
+ * accepted contract package (only the name list and "bits 0-22" total width) --
+ * populating it would mean guessing which bit is which capability, which the
+ * "implement no guess that changes the public surface" rule forbids. Left as 8
+ * zero bytes, honestly disclosed (docs/PROVENANCE.md), not fabricated.
+ * GET_CAPABILITIES is still dispatched for real underneath (side-effect-free) so
+ * it is genuinely exercised, even though its data isn't the source of cap_bitmap
+ * here. */
 static void handle_get_status(mtk_compat_dispatch_ctx_t *dctx, compat_capture_t *cap) {
-    /* RC8 independent audit P0-1: dctx->scratch_cap, not a stack-local --
-     * see mtk_compat_dispatch_ctx_t's own doc comment. */
+    /* dctx->scratch_cap, not a stack-local -- see mtk_compat_dispatch_ctx_t's
+     * own doc comment. */
     compat_capture_t *caps_cap = &dctx->scratch_cap; memset(caps_cap, 0, sizeof(*caps_cap));
     mtk_get_capabilities_req_t caps_req = {0}; caps_req.start_index = 0; caps_req.max_items = 32;
     const mtk_opcode_entry_t *caps_op = mtk_opcode_find(0x0000, 0x0004);
@@ -484,14 +473,14 @@ static void handle_get_status(mtk_compat_dispatch_ctx_t *dctx, compat_capture_t 
     cap->body_len = sizeof(out);
 }
 
-/* GET_FW_VERSION, Mtek Compatibility 0x0003 (M1ESP_SYS_GET_FW_VERSION): confirmed
- * exact response shape `m1esp_fw_version_t {major, minor, patch: u8,
+/* GET_FW_VERSION, Mtek Compatibility 0x0003 (M1ESP_SYS_GET_FW_VERSION):
+ * confirmed exact response shape `m1esp_fw_version_t {major, minor, patch: u8,
  * git_hash: bytes[16] null-terminated}` -- maps directly onto canonical
- * GET_VERSION's `product_version`/`build_id`. Together with GET_STATUS
- * above, these are the two separate Mtek Compatibility RPCs canonical GET_VERSION's
- * own note ("0x0002+0x0003 ... merged") describes: a Mtek Compatibility peer issues
- * each independently; this dispatch layer answers each with its own
- * real slice of one real canonical GET_VERSION call. */
+ * GET_VERSION's `product_version`/`build_id`. Together with GET_STATUS above,
+ * these are the two separate Mtek Compatibility RPCs canonical GET_VERSION's own
+ * note ("0x0002+0x0003... merged") describes: a Mtek Compatibility peer issues
+ * each independently; this dispatch layer answers each with its own real slice
+ * of one real canonical GET_VERSION call. */
 static void handle_get_fw_version(mtk_compat_dispatch_ctx_t *dctx, compat_capture_t *cap) {
     const mtk_opcode_entry_t *ver_op = mtk_opcode_find(0x0000, 0x0002);
     router_call(dctx, cap, 0x0000, 0x0002, NULL, 0);
@@ -537,35 +526,34 @@ static void handle_time_sync_start(mtk_compat_dispatch_ctx_t *dctx, compat_captu
     dispatch_start_track_token_async(dctx, 0x0000, 0x0008, buf, blen, NULL, cap);
 }
 
-/* AP_SCAN_START + AP_SCAN_RESULTS_PAGE, Mtek Compatibility 0x0103 (M1ESP_WIFI_SCAN,
- * one shared RPC per the confirmed facts): REQ `u8 band` (Mtek Compatibility's own
- * handle_wifi_scan does not read it -- confirmed header-vs-
- * implementation divergence -- always dispatched as band=ALL/hop) ->
- * RESP `u16 count` + per-AP `m1esp_scan_entry_t {bssid[6], rssi:i8,
- * channel:u8, authmode:u8, ssid_len:u8}` + ssid bytes (exact, confirmed,
- * 002-wifi-service.md Sec 5 adapter mapping table). Since Mtek Compatibility's one
- * RPC both triggers the scan AND returns the full result list
- * synchronously, this dispatches the real canonical AP_SCAN_START
- * (synchronous-complete in this session's dispatch model), captures the
- * real result_generation from the AP_SCAN_COMPLETE terminal event, then
- * dispatches a real canonical AP_SCAN_RESULTS_PAGE to fetch up to 50
- * records and translates them into Mtek Compatibility's confirmed wire shape. */
-/* RC12 blocker round, item 2: build the confirmed Community AP-scan list
- * response ([count:u16] + per-AP [bssid:6][rssi:i8][channel:u8][authmode:u8]
- * [ssid_len:u8][ssid:N]) into cap->body, by issuing the canonical
- * AP_SCAN_RESULTS_PAGE for `generation`. Shared by the synchronous path
- * (handle_ap_scan_start) and the deferred continuation (poll_outbound) so
- * the bytes are IDENTICAL whichever path produced them. On a page failure
- * (e.g. a stale/invalid generation) it emits an empty (count=0) list with
- * status OK, exactly as the pre-existing synchronous path did. */
+/* AP_SCAN_START + AP_SCAN_RESULTS_PAGE, Mtek Compatibility 0x0103
+ * (M1ESP_WIFI_SCAN, one shared RPC per the confirmed facts): REQ `u8 band` (Mtek
+ * Compatibility's own handle_wifi_scan does not read it -- confirmed header-vs-
+ * implementation divergence -- always dispatched as band=ALL/hop) -> RESP `u16
+ * count` + per-AP `m1esp_scan_entry_t {bssid[6], rssi:i8, channel:u8,
+ * authmode:u8, ssid_len:u8}` + ssid bytes (exact, confirmed, adapter mapping
+ * table). Since Mtek Compatibility's one RPC both triggers the scan AND returns
+ * the full result list synchronously, this dispatches the real canonical
+ * AP_SCAN_START (synchronous-complete in's dispatch model), captures the real
+ * result_generation from the AP_SCAN_COMPLETE terminal event, then dispatches a
+ * real canonical AP_SCAN_RESULTS_PAGE to fetch up to 50 records and translates
+ * them into Mtek Compatibility's confirmed wire shape. */
+/* Build the confirmed Community AP-scan list response ([count:u16] +
+ * per-AP [bssid:6][rssi:i8][channel:u8][authmode:u8] [ssid_len:u8][ssid:N]) into
+ * cap->body, by issuing the canonical AP_SCAN_RESULTS_PAGE for `generation`.
+ * Shared by the synchronous path (handle_ap_scan_start) and the deferred
+ * continuation (poll_outbound) so the bytes are IDENTICAL whichever path
+ * produced them. On a page failure (e.g. a stale/invalid generation) it emits an
+ * empty (count=0) list with status OK, exactly as the pre-existing synchronous
+ * path did. */
 static void build_ap_scan_list_response(mtk_compat_dispatch_ctx_t *dctx, uint32_t generation, compat_capture_t *cap) {
     const mtk_opcode_entry_t *page_op = mtk_opcode_find(0x0001, 0x0003);
     mtk_ap_scan_results_page_req_t page_req = {0};
     page_req.result_generation = generation; page_req.start_index = 0; page_req.max_items = 50;
     uint8_t page_buf[16]; size_t page_blen = 0;
     mtk_encode(page_op->req_desc, &page_req, page_buf, sizeof(page_buf), &page_blen);
-    /* RC8 independent audit P0-1: dctx->scratch_cap/dctx->ap_scan_page,
-     * not stack-locals -- see mtk_compat_dispatch_ctx_t's own doc comment. */
+    /* dctx->scratch_cap/dctx->ap_scan_page, not stack-locals -- see
+     * mtk_compat_dispatch_ctx_t's own doc comment. */
     compat_capture_t *page_cap = &dctx->scratch_cap; memset(page_cap, 0, sizeof(*page_cap));
     router_call(dctx, page_cap, 0x0001, 0x0003, page_buf, page_blen);
     if (page_cap->status != MTK_STATUS_OK) {
@@ -650,10 +638,10 @@ static void handle_sta_scan_results_page(mtk_compat_dispatch_ctx_t *dctx, compat
     if (cap->status != MTK_STATUS_OK) { cap->body_len = 0; return; }
     mtk_sta_scan_results_page_resp_t page = {0}; /* ~264 bytes -- small enough to stay a stack local, unlike its AP-scan counterpart */
     mtk_decode(op->resp_desc, &page, cap->body, cap->body_len, NULL);
-    /* RC8 independent audit P0-1: built directly into cap->body (already
-     * dctx-owned) instead of a separate ~4KB scratch buffer -- `page` was
-     * already fully decoded above from cap->body's raw bytes, so cap->body
-     * is free to be overwritten from scratch with no aliasing hazard. */
+    /* Built directly into cap->body (already dctx-owned) instead of a separate
+     * ~4KB scratch buffer -- `page` was already fully decoded above from
+     * cap->body's raw bytes, so cap->body is free to be overwritten from scratch
+     * with no aliasing hazard. */
     uint16_t off = 2;
     uint16_t count = 0;
     for (uint32_t i = 0; i < page.items.count && off + 7 <= COMPAT_CAP_BODY_MAX; i++) {
@@ -692,7 +680,7 @@ static void handle_sta_disconnect(mtk_compat_dispatch_ctx_t *dctx, compat_captur
 
 /* STA_STATUS, 0x0106: dispatched for real (empty request); the one
  * confirmed byte-level fact about the response (ip_addr copied raw,
- * canonical-core-contract.md's ipv4 type note) is not enough on its own
+ * the canonical contract's ipv4 type note) is not enough on its own
  * to safely translate the remaining field order/widths without
  * guessing -- bare status only. */
 static void handle_sta_status(mtk_compat_dispatch_ctx_t *dctx, compat_capture_t *cap) {
@@ -762,10 +750,9 @@ static void handle_hs_start(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *payl
 }
 
 /* HANDSHAKE_STATUS, 0x0311 (M1ESP_OFF_HS_STATUS): confirmed exact
- * field-for-field match with canonical (002-wifi-service.md Sec 5 "exact
- * field-for-field match", Sec 2.5's `{state, total_len}` response) --
- * Mtek Compatibility's own request carries no operation_token (single-outstanding-
- * session model); response is `[state:1][total_len:4 LE]`. */
+ * field-for-field match with canonical -- Mtek Compatibility's own request
+ * carries no operation_token (single-outstanding- session model); response is
+ * `[state:1][total_len:4 LE]`. */
 static void handle_hs_status(mtk_compat_dispatch_ctx_t *dctx, compat_capture_t *cap) {
     if (!dctx->handshake_token) {
         dctx->last_dispatched_service_id = 0x0001; dctx->last_dispatched_opcode = 0x0014;
@@ -784,15 +771,13 @@ static void handle_hs_status(mtk_compat_dispatch_ctx_t *dctx, compat_capture_t *
     cap->body_len = 5;
 }
 
-/* HANDSHAKE_READ, 0x0312 (M1ESP_OFF_HS_GET): confirmed exact
- * field-for-field match with canonical (002-wifi-service.md Sec 5):
- * request `{offset:u32, max_len:u16}` (Mtek Compatibility's single-outstanding-
- * session model needs no operation_token on the wire), response
- * `{data:bytes(max=512), total_len:u32}`, translated as
- * `[total_len:4][data_len:2][data:N]` matching this same dispatch
- * layer's own established Mtek Compatibility "read captured bytes" convention
- * (MONITOR_READ, confirmed exact) for a redundant-but-consistent
- * length-prefixed shape. */
+/* HANDSHAKE_READ, 0x0312 (M1ESP_OFF_HS_GET): confirmed exact field-for-field
+ * match with canonical: request `{offset:u32, max_len:u16}` (Mtek
+ * Compatibility's single-outstanding- session model needs no operation_token on
+ * the wire), response `{data:bytes(max=512), total_len:u32}`, translated as
+ * `[total_len:4][data_len:2][data:N]` matching this same dispatch layer's own
+ * established Mtek Compatibility "read captured bytes" convention (MONITOR_READ,
+ * confirmed exact) for a redundant-but-consistent length-prefixed shape. */
 static void handle_hs_read(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, compat_capture_t *cap) {
     if (!dctx->handshake_token) {
         dctx->last_dispatched_service_id = 0x0001; dctx->last_dispatched_opcode = 0x0015;
@@ -881,10 +866,9 @@ static void handle_softap_sta_list(mtk_compat_dispatch_ctx_t *dctx, compat_captu
     cap->body_len = 2;
 }
 
-/* PROBE_FLOOD_START, 0x0306: confirmed exact request wire shape
- * (002-wifi-service.md Sec 2.8.2, source-confirmed handle_probe_start):
- * `[channel:1][count:1]` then `count` x `[len:1][ssid]`; `count=0` is
- * Mtek Compatibility's own confirmed wildcard/broadcast-probes meaning. Bare response
+/* PROBE_FLOOD_START, 0x0306: confirmed exact request wire shape:
+ * `[channel:1][count:1]` then `count` x `[len:1][ssid]`; `count=0` is Mtek
+ * Compatibility's own confirmed wildcard/broadcast-probes meaning. Bare response
  * (class 2); token tracked. */
 static void handle_probe_flood_start(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, compat_capture_t *cap) {
     if (len < 2) { cap->status = MTK_STATUS_INVALID_ARGUMENT; cap->body_len = 0; return; }
@@ -935,13 +919,11 @@ static void handle_raw_tx(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *payloa
     dispatch_bare(dctx, 0x0001, 0x0021, buf, blen, cap);
 }
 
-/* CAPTIVE_PORTAL_START, 0x0316: confirmed exact request wire shape
- * (002-wifi-service.md Sec 2.8.6, source-confirmed
- * wifi_attack_captive_config_t/handle_captive_start): `[channel:1]
- * [ssid_len:1][ssid][title(rest, optional)]` -- note channel comes
- * FIRST, then ssid_len+ssid, then the title occupying whatever bytes
- * remain (no separate title-length prefix), truncated to the confirmed
- * 95-byte portal_title bound. Bare response (class 2); token tracked. */
+/* CAPTIVE_PORTAL_START, 0x0316: confirmed exact request wire shape: `[channel:1]
+ * [ssid_len:1][ssid][title(rest, optional)]` -- note channel comes FIRST, then
+ * ssid_len+ssid, then the title occupying whatever bytes remain (no separate
+ * title-length prefix), truncated to the confirmed 95-byte portal_title bound.
+ * Bare response (class 2); token tracked. */
 static void handle_captive_portal_start(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, compat_capture_t *cap) {
     if (len < 2) { cap->status = MTK_STATUS_INVALID_ARGUMENT; cap->body_len = 0; return; }
     uint8_t channel = payload[0];
@@ -1010,7 +992,7 @@ static void handle_wifi_mac_get(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *
     cap->body_len = 6;
 }
 
-/* ---- BLE (only the 4 SUPPORTED, non-compat-family opcodes) ----------- */
+/* BLE (only the 4 SUPPORTED, non-compat-family opcodes) ------- */
 
 /* BLE_SCAN_START/RESULTS_PAGE/ADV_START/STOP: no Mtek Compatibility BLE wire byte
  * layout at all is confirmed in the accepted contract package for these
@@ -1046,20 +1028,19 @@ static void handle_ble_adv_start(mtk_compat_dispatch_ctx_t *dctx, compat_capture
     dispatch_start_track_token_async(dctx, 0x0002, 0x0006, buf, blen, &dctx->ble_adv_token, cap);
 }
 
-/* ---- GATT (only the 2 SUPPORTED opcodes) ------------------------------ */
+/* GATT (only the 2 SUPPORTED opcodes) ---------------- */
 
-/* GATT_CONNECT, 0x0409 (M1ESP_BLE_CONNECT): confirmed exact request wire
- * shape -- source-confirmed `handle_ble_connect` passes
- * `ble_conn_connect(payload, payload[6], 8000)`: `payload[0..5]` is the
- * 6-byte address, `payload[6]` is the addr_type byte, matching
- * canonical `BleAddress {addr: mac6, addr_type: u8}` field-for-field
- * (002-ble-gatt-service.md Sec 1). Mtek Compatibility's BLE_CONNECT supplies only the
- * GAP connection lifecycle (confirmed: no follow-on discovery/read/
- * write/subscribe call anywhere in Mtek Compatibility's own dispatch table) -- this
- * dispatch layer matches that scope exactly: it mints a real canonical
- * GATT connection and tracks its connection_token for GATT_DISCONNECT,
- * nothing more. Bare response (class 2): no confirmed Mtek Compatibility RESP data
- * shape beyond the GAP-lifecycle scope itself. */
+/* GATT_CONNECT, 0x0409 (M1ESP_BLE_CONNECT): confirmed exact request wire shape
+ * -- source-confirmed `handle_ble_connect` passes `ble_conn_connect(payload,
+ * payload[6], 8000)`: `payload[0..5]` is the 6-byte address, `payload[6]` is the
+ * addr_type byte, matching canonical `BleAddress {addr: mac6, addr_type: u8}`
+ * field-for-field. Mtek Compatibility's BLE_CONNECT supplies only the GAP
+ * connection lifecycle (confirmed: no follow-on discovery/read/ write/subscribe
+ * call anywhere in Mtek Compatibility's own dispatch table) -- this dispatch
+ * layer matches that scope exactly: it mints a real canonical GATT connection
+ * and tracks its connection_token for GATT_DISCONNECT, nothing more. Bare
+ * response (class 2): no confirmed Mtek Compatibility RESP data shape beyond the
+ * GAP-lifecycle scope itself. */
 static void handle_gatt_connect(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *payload, uint16_t len, compat_capture_t *cap) {
     if (len < 7) { cap->status = MTK_STATUS_INVALID_ARGUMENT; cap->body_len = 0; return; }
     mtk_gatt_connect_req_t req; memset(&req, 0, sizeof(req));
@@ -1072,19 +1053,16 @@ static void handle_gatt_connect(mtk_compat_dispatch_ctx_t *dctx, const uint8_t *
     /* Deferred: the continuation harvests the connection_token (for a later
      * GATT_DISCONNECT) and delivers the bare-status reply. */
     if (cap->deferred) return;
-    /* RC12 RC12 closure item 2: honest terminal-failure semantics, kept
-     * equivalent to the deferred continuation below. Three outcomes:
-     *   - real connection (terminal event OK, token captured): store the
-     *     token, bare RESP OK;
-     *   - accepted but the terminal connect FAILED (event captured, no
-     *     token, cap->status still the ACCEPTED/OK acceptance): report the
-     *     terminal event's status -> mapped NAK, no token;
-     *   - acceptance itself was rejected (BUSY/NO_MEMORY: dispatch_async_
-     *     with_event already set that NAK status and captured NO event):
-     *     leave it untouched -- never overwrite it with event_status (which
-     *     is 0 when no terminal event was ever seen).
-     * So a later GATT_DISCONNECT finds no connection to act on in every
-     * non-success case. */
+    /* RC12 honest terminal-failure semantics, kept equivalent to the deferred
+     * continuation below. Three outcomes: - real connection (terminal event OK,
+     * token captured): store the token, bare RESP OK; - accepted but the
+     * terminal connect FAILED (event captured, no token, cap->status still the
+     * ACCEPTED/OK acceptance): report the terminal event's status -> mapped NAK,
+     * no token; - acceptance itself was rejected (BUSY/NO_MEMORY:
+     * dispatch_async_ with_event already set that NAK status and captured NO
+     * event): leave it untouched -- never overwrite it with event_status (which
+     * is 0 when no terminal event was ever seen). So a later GATT_DISCONNECT
+     * finds no connection to act on in every non-success case. */
     if (cap->got_connection_token) {
         dctx->gatt_conn_token = cap->connection_token;
         cap->status = MTK_STATUS_OK;
@@ -1139,8 +1117,8 @@ static void stage_and_emit(mtk_compat_dispatch_ctx_t *dctx, uint16_t msg_id, com
     mtek_compat_dispatch_poll_outbound(dctx, resp_hdr, resp_payload, resp_payload_len);
 }
 
-/* RC12 blocker round, item 2: emit a well-formed IDLE cell (the peer keeps
- * polling; the owed deferred reply is not ready yet). */
+/* Emit a well-formed IDLE cell (the peer keeps polling; the owed
+ * deferred reply is not ready yet). */
 static void emit_idle(mtk_compat_header_t *resp_hdr, uint8_t *resp_payload, uint16_t *resp_payload_len) {
     (void)resp_payload;
     resp_hdr->magic = MTK_COMPAT_MAGIC;
@@ -1153,14 +1131,14 @@ static void emit_idle(mtk_compat_header_t *resp_hdr, uint8_t *resp_payload, uint
 
 void mtek_compat_dispatch_poll_outbound(mtk_compat_dispatch_ctx_t *dctx,
                                         mtk_compat_header_t *resp_hdr, uint8_t *resp_payload, uint16_t *resp_payload_len) {
-    /* RC12 blocker round, item 2 "real deferred Community execution": for a
-     * deferred AP_SCAN/STA_SCAN/GATT_CONNECT, consume the ACCEPTED response
-     * AND its terminal event internally across polls, harvest the needed
-     * field (result_generation / connection_token), and only then produce
-     * the confirmed Community response (AP: the network list via
-     * AP_SCAN_RESULTS_PAGE; STA/GATT: bare status, field stored in dctx for
-     * a later query). Until BOTH have arrived (or the accept itself failed)
-     * the peer receives IDLE. No new Mtek Compatibility wire event or opcode. */
+    /* For a deferred
+     * AP_SCAN/STA_SCAN/GATT_CONNECT, consume the ACCEPTED response AND its
+     * terminal event internally across polls, harvest the needed field
+     * (result_generation / connection_token), and only then produce the
+     * confirmed Community response (AP: the network list via
+     * AP_SCAN_RESULTS_PAGE; STA/GATT: bare status, field stored in dctx for a
+     * later query). Until BOTH have arrived (or the accept itself failed) the
+     * peer receives IDLE. No new Mtek Compatibility wire event or opcode. */
     if (dctx->pending_start_msg_id != 0 && dctx->pending_continuation != 0) {
         mtk_async_frame_t f;
         while (mtk_async_queue_pop(&dctx->event_queue, &f)) {
@@ -1182,7 +1160,8 @@ void mtek_compat_dispatch_poll_outbound(mtk_compat_dispatch_ctx_t *dctx,
                     mtk_gatt_connect_complete_ev_t e; memset(&e, 0, sizeof(e));
                     mtk_decode(&mtk_gatt_connect_complete_ev_t_desc, &e, f.body, f.body_len, NULL);
                     dctx->pending_event_ok = (e.status == MTK_STATUS_OK);
-                    dctx->pending_event_status = (uint8_t)e.status; /* RC12 RC12 closure item 2: retain for a failure NAK */
+                    dctx->pending_event_status = (uint8_t)e.status; /* RC12 retain for a failure NAK
+                                                                     * RC12 retain for a failure NAK */
                     dctx->pending_event_conn_token = e.connection_token;
                 }
             }
@@ -1218,11 +1197,11 @@ void mtek_compat_dispatch_poll_outbound(mtk_compat_dispatch_ctx_t *dctx,
             if (dctx->pending_event_ok) { dctx->sta_scan_generation = dctx->pending_event_generation; dctx->sta_scan_has_generation = 1; }
             cap->status = MTK_STATUS_OK; cap->body_len = 0;
         } else { /* MTK_COMPAT_CONT_GATT */
-            /* RC12 RC12 closure item 2: honest terminal-failure semantics,
-             * equivalent to handle_gatt_connect's synchronous tail. A real
-             * connection -> store the token and a bare RESP OK; a terminal
-             * failure (TIMEOUT) -> the mapped NAK and NO stored token, so a
-             * later GATT_DISCONNECT finds no connection to act on. */
+            /* RC12 honest terminal-failure semantics, equivalent to
+             * handle_gatt_connect's synchronous tail. A real connection -> store
+             * the token and a bare RESP OK; a terminal failure (TIMEOUT) -> the
+             * mapped NAK and NO stored token, so a later GATT_DISCONNECT finds
+             * no connection to act on. */
             if (dctx->pending_event_ok) {
                 dctx->gatt_conn_token = dctx->pending_event_conn_token;
                 cap->status = MTK_STATUS_OK; cap->body_len = 0;
@@ -1244,17 +1223,16 @@ void mtek_compat_dispatch_poll_outbound(mtk_compat_dispatch_ctx_t *dctx,
         if (pop_response_frame(&dctx->event_queue, &f)) {
             uint16_t msg_id = dctx->pending_start_msg_id;
             dctx->pending_start_msg_id = 0;
-            /* RC8 independent audit P0-1: dctx->async_complete_cap, not a
-             * stack-local -- see mtk_compat_dispatch_ctx_t's own doc
-             * comment. Distinct storage from dctx->cap (used by
-             * mtek_compat_dispatch_request's own switch): this function and
-             * that one are never both mid-use of their own capture at
-             * once (this branch only ever runs on a poll reached either
-             * as its own top-level call, with dispatch_request not on the
+            /* dctx->async_complete_cap, not a stack-local -- see
+             * mtk_compat_dispatch_ctx_t's own doc comment. Distinct storage from
+             * dctx->cap (used by mtek_compat_dispatch_request's own switch):
+             * this function and that one are never both mid-use of their own
+             * capture at once (this branch only ever runs on a poll reached
+             * either as its own top-level call, with dispatch_request not on the
              * stack at all, or via stage_and_emit at the tail of a
-             * dispatch_request call that took the FRAG-continuation path
-             * instead of this one -- pending_start_msg_id is still 0 in
-             * that case, so this branch is never even entered then). */
+             * dispatch_request call that took the FRAG-continuation path instead
+             * of this one -- pending_start_msg_id is still 0 in that case, so
+             * this branch is never even entered then). */
             compat_capture_t *cap = &dctx->async_complete_cap; memset(cap, 0, sizeof(*cap));
             cap->status = (uint8_t)f.seq_or_status;
             if (dctx->pending_token_field && cap->status == MTK_STATUS_ACCEPTED) {
@@ -1307,15 +1285,14 @@ void mtek_compat_dispatch_init(mtk_compat_dispatch_ctx_t *dctx, uint32_t boot_ep
 
 void mtek_compat_dispatch_request(mtk_compat_dispatch_ctx_t *dctx, const mtk_compat_header_t *hdr, const uint8_t *payload,
                                   mtk_compat_header_t *resp_hdr, uint8_t *resp_payload, uint16_t *resp_payload_len) {
-    /* RC8 independent audit P0-1 "Eliminate target stack overflow paths":
-     * dctx->cap, not a stack-local -- see mtk_compat_dispatch_ctx_t's own
-     * doc comment for the full before/after accounting. The whole switch
-     * below (every case, and every handler/generic_token_op/dispatch_empty
-     * call it makes) still reads as plain cap/&cap throughout, unchanged
-     * from before this fix -- this macro is the mechanical rename, scoped
-     * tightly to this one function's body (see the matching #undef at its
-     * closing brace) so it cannot leak into any other function's own,
-     * textually-unrelated cap parameter name. */
+    /* Dctx->cap, not a stack-local -- see mtk_compat_dispatch_ctx_t's own doc
+     * comment for the full before/after accounting. The whole switch below
+     * (every case, and every handler/generic_token_op/dispatch_empty call it
+     * makes) still reads as plain cap/&cap throughout, unchanged from before
+     * this fix -- this macro is the mechanical rename, scoped tightly to this
+     * one function's body (see the matching #undef at its closing brace) so it
+     * cannot leak into any other function's own, textually-unrelated cap
+     * parameter name. */
 #define cap (dctx->cap)
     memset(&cap, 0, sizeof(cap));
     cap.status = MTK_STATUS_UNSUPPORTED;
@@ -1324,8 +1301,8 @@ void mtek_compat_dispatch_request(mtk_compat_dispatch_ctx_t *dctx, const mtk_com
     dctx->last_dispatched_opcode = 0xFFFF;
 
     switch (hdr->msg_id) {
-        /* ---- 44 compat_c3-SUPPORTED canonical opcodes: every one reaches
-         * the router for real (see file header for the class-1/2 split) */
+        /* 44 compat_c3-SUPPORTED canonical opcodes: every one reaches the router
+         * for real (see file header for the class-1/2 split) */
         case 0x0001: handle_ping(dctx, payload, len, &cap); break;                /* PING */
         case 0x0002: handle_get_status(dctx, &cap); break;                        /* GET_STATUS */
         case 0x0003: handle_get_fw_version(dctx, &cap); break;                    /* GET_FW_VERSION (both merge into canonical GET_VERSION) */
@@ -1417,11 +1394,10 @@ void mtek_compat_dispatch_request(mtk_compat_dispatch_ctx_t *dctx, const mtk_com
             uint16_t dlen = rd_u16(cap.body + data_len_off);
             uint16_t max_frame = (uint16_t)(sizeof(cap.body) - 4);
             if (dlen > max_frame) dlen = max_frame;
-            /* RC8 independent audit P0-1: this is a genuine in-place
-             * transform (source and destination both inside cap.body,
-             * potentially overlapping since data_len_off+2 can be as low
-             * as 4 past the start) -- memmove (not memcpy) handles that
-             * correctly, eliminating the ~4KB scratch buffer this used to
+            /* This is a genuine in-place transform (source and destination both
+             * inside cap.body, potentially overlapping since data_len_off+2 can
+             * be as low as 4 past the start) -- memmove (not memcpy) handles
+             * that correctly, eliminating the ~4KB scratch buffer this used to
              * need entirely instead of merely relocating it. */
             uint8_t hdr4[4] = { channel, (uint8_t)rssi, (uint8_t)dlen, (uint8_t)(dlen >> 8) };
             memmove(cap.body + 4, cap.body + data_len_off + 2, dlen);
@@ -1431,9 +1407,9 @@ void mtek_compat_dispatch_request(mtk_compat_dispatch_ctx_t *dctx, const mtk_com
             break;
         }
 
-        /* ---- 15 non-SUPPORTED opcodes for compat_c3: routed through the
-         * router's own capability gate, which rejects with UNSUPPORTED
-         * before any payload decode -- no request-shape fact needed */
+        /* 15 non-SUPPORTED opcodes for compat_c3: routed through the router's
+         * own capability gate, which rejects with UNSUPPORTED before any payload
+         * decode -- no request-shape fact needed */
         case 0x0100: dispatch_empty(dctx, 0x0001, 0x0027, &cap); break; /* WIFI_MODE_GET (DISABLED) */
         case 0x0101: dispatch_empty(dctx, 0x0001, 0x0028, &cap); break; /* WIFI_MODE_SET (DISABLED) */
         case 0x0004: dispatch_empty(dctx, 0x0005, 0x0003, &cap); break; /* GET_QUEUE_WATERMARKS (compat_c3=UNSUPPORTED per schema despite Mtek Compatibility's own GET_HEAP wire opcode) */

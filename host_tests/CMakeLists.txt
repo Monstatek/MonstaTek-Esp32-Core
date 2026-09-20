@@ -1,4 +1,4 @@
-# Deterministic host tests (task 003): transport framing, schema encoding,
+# Deterministic host tests: transport framing, schema encoding,
 # lifecycle/state transitions, resource conflicts, adapter translation,
 # factory response strings, and malformed inputs -- built and run on the
 # development machine, entirely independent of the ESP-IDF toolchain/build.
@@ -57,6 +57,7 @@ add_library(mtek_host_lib STATIC
     ${ROOT}/components/mtek_ble_service/mtk_ble_op_lifecycle.c
     ${ROOT}/components/mtek_capture_service/mtek_capture_logic.c
     ${ROOT}/components/mtek_system_service/mtek_system_logic.c
+    ${ROOT}/components/mtek_espnow_service/mtek_espnow_logic.c
 )
 target_include_directories(mtek_host_lib PUBLIC
     ${ROOT}/components/mtek_schema/include
@@ -72,14 +73,25 @@ target_include_directories(mtek_host_lib PUBLIC
     ${ROOT}/components/mtek_ble_service/include
     ${ROOT}/components/mtek_capture_service/include
     ${ROOT}/components/mtek_system_service/include
+    ${ROOT}/components/mtek_espnow_service/include
     ${ROOT}/host_tests/support
 )
 
-# RC12 blocker round, item 1: compile the test-only opcode routing (the
+# Compile the test-only opcode routing (the
 # 0x00F0 async-fixture START and 0x00F1 generic STOP in mtek_system_dispatch)
 # ONLY into the host-test build. The ESP32 target never defines this, so
 # those opcodes are genuinely absent from the shipped firmware.
 target_compile_definitions(mtek_host_lib PUBLIC MTK_ENABLE_TEST_OPCODES)
+
+# Compile the optional capability modules the shipped universal build also
+# enables (main/Kconfig.projbuild defaults them all to y), so host tests
+# exercise the same dispatch configuration the target actually ships rather
+# than a reduced one in which module opcodes are unreachable.
+target_compile_definitions(mtek_host_lib PUBLIC
+    CONFIG_MTEK_MODULE_CAPTIVE_PORTAL=1
+    CONFIG_MTEK_MODULE_KARMA=1
+    CONFIG_MTEK_MODULE_PROBE_FLOOD=1
+    CONFIG_MTEK_MODULE_BEACON_VARIANTS=1)
 
 enable_testing()
 
@@ -90,6 +102,7 @@ function(mtk_add_test name)
 endfunction()
 
 mtk_add_test(test_schema_codec)
+mtk_add_test(test_codec_bounds)
 mtk_add_test(test_architecture_contracts)
 mtk_add_test(test_spi_runtime_reliability)
 target_include_directories(test_spi_runtime_reliability BEFORE PRIVATE
@@ -122,6 +135,9 @@ mtk_add_test(test_deauth_selected_set)
 mtk_add_test(test_deauth_all_scanned)
 mtk_add_test(test_deauth_broadcast)
 mtk_add_test(test_raw_tx_channel)
+mtk_add_test(test_softap_lifecycle)
+mtk_add_test(test_captive_portal)
+mtk_add_test(test_espnow_lifecycle)
 mtk_add_test(test_handshake_capture)
 mtk_add_test(test_monstashark_capture)
 mtk_add_test(test_wifi_scan_connect)
@@ -129,8 +145,8 @@ mtk_add_test(test_ble_scan_adv)
 mtk_add_test(test_gatt_rw_sub)
 mtk_add_test(test_signal_meter)
 mtk_add_test(test_release_artifact)
-# RC9 independent correction order P1 "release validation can pass without
-# validating the actual release pair": bakes the real, absolute project root
+# Release validation must validate the actual release pair: bake the real,
+# absolute project root
 # (CMake always knows this precisely, regardless of where the build
 # directory itself lives -- in-tree or fully out-of-tree) into the test
 # binary, so it can resolve release/ correctly instead of a hard-coded
@@ -247,7 +263,7 @@ add_test(NAME test_transport_claim COMMAND test_transport_claim)
 
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_FOUND)
-    # RC9 independent correction order P1: passes the real, absolute project
+    # Passes the real, absolute project
     # root (CMake's own robust resolution, correct regardless of build
     # directory location) so this script can ALSO cross-check the real
     # release/MtkCore.bin + MtkCore.md5 pair with a second, independent MD5

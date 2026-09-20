@@ -1,7 +1,6 @@
-/* Factory UART adapter: verbatim response strings from
- * 001-command-behavior-matrix.md for the wired command subset (see
- * docs/PROVENANCE.md for scope), driven end-to-end through the router
- * against the fake Wi-Fi HAL. */
+/* Factory UART adapter: verbatim response strings from for the wired command
+ * subset (see docs/PROVENANCE.md for scope), driven end-to-end through the
+ * router against the fake Wi-Fi HAL. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtek_uart_adapter.h"
@@ -50,8 +49,8 @@ MTK_TEST_MAIN_BEGIN
     mtek_uart_process_line(&st, "deauth bogus", out, sizeof(out));
     MTK_CHECK(strcmp(out, "[!] Usage: deauth [set <id,id,...>|all|broadcast]\n") == 0);
 
-    /* ---- Real feature test: select -> scan -s -> select -> deauth
-     * actually reaches the Wi-Fi HAL (not merely a precondition check). */
+    /* Real feature test: select -> scan -s -> select -> deauth actually reaches
+     * the Wi-Fi HAL (not merely a precondition check). */
     mtek_uart_process_line(&st, "select -a 0", out, sizeof(out));
     MTK_CHECK(strstr(out, "HomeNet") != NULL);
     MTK_CHECK_EQ(st.ap_selected, 0);
@@ -83,12 +82,12 @@ MTK_TEST_MAIN_BEGIN
     MTK_CHECK_EQ(g_fake_wifi.deauth_sent_count, 1); /* the real HAL was reached */
     MTK_CHECK(memcmp(g_fake_wifi.last_deauth_ap.b, (uint8_t[]){0xAA,0xBB,0xCC,0xDD,0xEE,0xFF}, 6) == 0);
     MTK_CHECK(memcmp(g_fake_wifi.last_deauth_station.b, (uint8_t[]){0x02,0x02,0x02,0x02,0x02,0x02}, 6) == 0);
-    /* In this session's synchronous-dispatch model (see docs/PROVENANCE.md),
-     * DEAUTH_START's whole round-robin already ran and reached its own
-     * terminal COMPLETED state -- including restoring STA mode -- by the
-     * time this call returns; `st.deauth_running` therefore already
-     * reflects "no longer active" and STOP is correctly a no-op/idempotent
-     * call against an already-terminal operation. */
+    /* In's synchronous-dispatch model (see docs/PROVENANCE.md), DEAUTH_START's
+     * whole round-robin already ran and reached its own terminal COMPLETED state
+     * -- including restoring STA mode -- by the time this call returns;
+     * `st.deauth_running` therefore already reflects "no longer active" and STOP
+     * is correctly a no-op/idempotent call against an already-terminal
+     * operation. */
     MTK_CHECK(g_fake_wifi.restore_count > restore_before); /* STA mode restored (by deauth's own completion) */
 
     mtek_uart_process_line(&st, "stop", out, sizeof(out));
@@ -125,11 +124,9 @@ MTK_TEST_MAIN_BEGIN
     mtek_uart_process_line(&st, "frobnicate", out, sizeof(out));
     MTK_CHECK(strcmp(out, "[!] BLE mode supports 'scan', 'list <id>|all', 'advertise', and 'stop' commands. Type 'help' for available commands.\n") == 0);
 
-    /* RC5 independent audit P1 "Factory UART parity is incomplete":
-     * `reboot` sets a flag the target REPL task (app_main.c) uses to
-     * perform a real delayed esp_restart() -- this portable component
-     * only sets the flag (host-testable), never calls esp_restart()
-     * itself. */
+    /* `reboot` sets a flag the target REPL task (app_main.c) uses to perform a
+     * real delayed esp_restart -- this portable component only sets the flag
+     * (host-testable), never calls esp_restart itself. */
     mtek_uart_process_line(&st, "mode -w", out, sizeof(out));
     MTK_CHECK_EQ(st.reboot_requested, 0);
     mtek_uart_process_line(&st, "reboot", out, sizeof(out));
@@ -150,13 +147,11 @@ MTK_TEST_MAIN_BEGIN
     mtek_uart_process_line(&st, "", out, sizeof(out)); /* bare Enter */
     MTK_CHECK_EQ(st.deauth_running, 0); /* stopped, same as typing 'stop' */
 
-    /* RC8 independent audit P0-7 "Claim AUTO transport only after valid
-     * grammar recognition": mtek_uart_adapter_line_is_recognized is the
-     * side-effect-free pre-check app_main.c's own REPL loop must gate
-     * mtk_transport_claim_try on -- noise/partial/unknown input must
-     * never recognize as a real command (which would otherwise
-     * permanently lock out a genuine SPI peer for this boot session),
-     * while every real command from either mode's own table does. */
+    /* mtek_uart_adapter_line_is_recognized is the side-effect-free pre-check
+     * app_main.c's own REPL loop must gate mtk_transport_claim_try on --
+     * noise/partial/unknown input must never recognize as a real command (which
+     * would otherwise permanently lock out a genuine SPI peer for this boot
+     * session), while every real command from either mode's own table does. */
     {
         mtk_uart_adapter_state_t rst; mtek_uart_adapter_init(&rst, MTK_TEST_BOOT_EPOCH);
         MTK_CHECK_EQ(mtek_uart_adapter_line_is_recognized(&rst, ""), 0); /* empty line: never itself a claim signal */

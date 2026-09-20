@@ -16,7 +16,7 @@ static mtk_spi_native_header_t base_hdr(uint32_t request_id) {
 
 MTK_TEST_MAIN_BEGIN
 
-    /* ---- Basic multi-fragment reassembly, in order ---------------------- */
+    /* Basic multi-fragment reassembly, in order ------------ */
     {
         mtk_spi_native_reassembly_t ctx; mtk_spi_native_reassembly_reset(&ctx);
         uint8_t part1[900], part2[900], part3[200];
@@ -45,7 +45,7 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(ctx.service, 1); MTK_CHECK_EQ(ctx.opcode, 1);
     }
 
-    /* ---- Gap: a fragment_offset ahead of received_len is rejected -------- */
+    /* Gap: a fragment_offset ahead of received_len is rejected ---- */
     {
         mtk_spi_native_reassembly_t ctx; mtk_spi_native_reassembly_reset(&ctx);
         uint8_t buf[100]; memset(buf, 0xAA, sizeof(buf));
@@ -59,7 +59,7 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(ctx.active, 0); /* abandoned, not left in a corrupt in-progress state */
     }
 
-    /* ---- Duplicate: a fragment_offset behind received_len is rejected ---- */
+    /* Duplicate: a fragment_offset behind received_len is rejected -- */
     {
         mtk_spi_native_reassembly_t ctx; mtk_spi_native_reassembly_reset(&ctx);
         uint8_t buf[100]; memset(buf, 0xAA, sizeof(buf));
@@ -73,7 +73,7 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(ctx.active, 0);
     }
 
-    /* ---- Orphan fragment: a continuation with no matching start ---------- */
+    /* Orphan fragment: a continuation with no matching start ------ */
     {
         mtk_spi_native_reassembly_t ctx; mtk_spi_native_reassembly_reset(&ctx);
         uint8_t buf[10]; memset(buf, 0, sizeof(buf));
@@ -94,16 +94,13 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(ctx.request_id, 1);
     }
 
-    /* ---- RC6 independent audit P0 "Native reassembly and duplicate
-     * safety are materially incomplete": a FIRST fragment for a
-     * genuinely DIFFERENT, concurrent request_id must NOT silently
-     * supersede/overwrite an actively in-progress reassembly -- that was
-     * the original defect (two concurrent fragmented requests corrupting
-     * each other with no signal to either peer). Regression test
-     * reproducing the exact original failure mode: without this fix,
-     * feeding request_id=2's FIRST fragment here would silently reset
-     * ctx to request_id=2, permanently losing request_id=1's already-
-     * received first fragment. */
+    /* a FIRST fragment for a genuinely DIFFERENT, concurrent request_id must NOT
+     * silently supersede/overwrite an actively in-progress reassembly -- that
+     * was the original defect (two concurrent fragmented requests corrupting
+     * each other with no signal to either peer). Regression test reproducing the
+     * exact original failure mode: without this fix, feeding request_id=2's
+     * FIRST fragment here would silently reset ctx to request_id=2, permanently
+     * losing request_id=1's already- received first fragment. */
     {
         mtk_spi_native_reassembly_t ctx; mtk_spi_native_reassembly_reset(&ctx);
         uint8_t buf1[10]; memset(buf1, 0x11, sizeof(buf1));
@@ -144,9 +141,9 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(ctx.request_id, 2);
     }
 
-    /* ---- A repeated FIRST fragment for the SAME request_id already in
-     * progress (a legitimate resend/retry) still restarts that context --
-     * only a DIFFERENT concurrent request_id is rejected BUSY. --------- */
+    /* A repeated FIRST fragment for the SAME request_id already in progress (a
+     * legitimate resend/retry) still restarts that context -- only a DIFFERENT
+     * concurrent request_id is rejected BUSY. ----- */
     {
         mtk_spi_native_reassembly_t ctx; mtk_spi_native_reassembly_reset(&ctx);
         uint8_t buf[10]; memset(buf, 0x44, sizeof(buf));
@@ -161,7 +158,7 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(ctx.received_len, 10);
     }
 
-    /* ---- Overflow: message_len beyond the reassembly ceiling ------------- */
+    /* Overflow: message_len beyond the reassembly ceiling ------- */
     {
         mtk_spi_native_reassembly_t ctx; mtk_spi_native_reassembly_reset(&ctx);
         uint8_t buf[10]; memset(buf, 0, sizeof(buf));
@@ -171,7 +168,7 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(ctx.active, 0);
     }
 
-    /* ---- Timeout: an abandoned in-flight reassembly is detectable -------- */
+    /* Timeout: an abandoned in-flight reassembly is detectable ---- */
     {
         mtk_spi_native_reassembly_t ctx; mtk_spi_native_reassembly_reset(&ctx);
         uint8_t buf[10]; memset(buf, 0, sizeof(buf));
@@ -184,7 +181,7 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(mtk_spi_native_reassembly_timed_out(&ctx, 999999, 100), 0); /* inactive context is never "timed out" */
     }
 
-    /* ---- Cancellation/reset mid-flight is safe and reusable --------------- */
+    /* Cancellation/reset mid-flight is safe and reusable --------- */
     {
         mtk_spi_native_reassembly_t ctx; mtk_spi_native_reassembly_reset(&ctx);
         uint8_t buf[10]; memset(buf, 0, sizeof(buf));
@@ -200,7 +197,7 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(mtk_spi_native_reassembly_feed(&ctx, &h2, buf, 5), MTK_SPI_REASM_COMPLETE);
     }
 
-    /* ---- Outbound fragmentation: exact cell-count boundaries ------------- */
+    /* Outbound fragmentation: exact cell-count boundaries ------- */
     {
         static uint8_t pattern[3000];
         for (unsigned i = 0; i < sizeof(pattern); i++) pattern[i] = (uint8_t)(i * 3 + 1);

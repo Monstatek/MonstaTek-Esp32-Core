@@ -4,7 +4,7 @@ MonstaTek Core is ESP32-C6 firmware for the MonstaTek M1. It provides a shared s
 
 The implementation separates portable service and lifecycle logic from transport translation and ESP-IDF hardware interfaces. Host tests cover portable behavior; hardware validation establishes behavior on a complete M1.
 
-RC12 has passed a focused engineering review and a clean-source build check for proceeding to packaging and hardware validation. This is not a claim that all hardware features have passed regression testing. [RC12 status](docs/RC12_STATUS.md) records that review's own evidence for the specific commit it examined, plus a summary of later correction rounds; it does not restate the current repository tip's own identity -- read the generated `PACKAGING_MANIFEST.md` inside a given package for that.
+Host verification covers portable service, lifecycle, and protocol behavior under AddressSanitizer/UndefinedBehaviorSanitizer and ThreadSanitizer, alongside generator idempotence and static resource and stack gates. That establishes source-level correctness and build reproducibility for a given commit; it does not establish hardware behavior, which is recorded separately. Identify any specific build from the generated `PACKAGING_MANIFEST.md` inside its package rather than from a version string -- see [build identity](docs/BUILD_IDENTITY.md).
 
 Development prerequisites, verified build commands, testing distinctions, and known tooling constraints are described in [Development](docs/DEVELOPMENT.md). The exact files intentionally included and excluded are listed in [Source scope](docs/SOURCE_SCOPE.md).
 
@@ -14,7 +14,7 @@ Repository structure:
 - `main/`: ESP-IDF application integration and configuration.
 - `host_tests/`: host tests and their support code.
 - `tools/`: schema generation and engineering checks.
-- `docs/`: current architecture, development, and candidate status.
+- `docs/`: current architecture, development, build identity, and compatibility records.
 - `partitions.csv`: established partition layout.
 - `sdkconfig.defaults`: reviewed build defaults.
 

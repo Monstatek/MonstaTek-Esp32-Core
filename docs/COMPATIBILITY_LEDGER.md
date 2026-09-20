@@ -2,16 +2,16 @@
 
 This ledger records the community/C3 compatibility boundary. The canonical
 wire interface remains native M1 SPI v1. Source citations retain their file
-basenames and technical findings; `references/compat/...` is a normalized
-reference-root label, not a claim that the external source was renamed.
+basenames and technical findings; the external reference tree itself is not
+part of this repository.
 See `docs/THIRD_PARTY_NOTICES.md` for the original project's identity.
 
 ## What this module is
 
 An independently clean-room-implemented (`docs/PROVENANCE.md`) optional
 translation layer: a community/legacy SPI wire protocol (community/C3-lineage
-`m1_link`, confirmed via `001-profile-bootstrap-feasibility.md` and
-`002-adapter-translation-matrix.md` in the accepted facts-only contract
+`m1_link`, confirmed via the canonical contract and
+the canonical contract in the accepted facts-only contract
 package) on one side, and the canonical `mtk_router_dispatch` API on the
 other. It exists so a legacy/community host that only speaks that wire
 protocol can still reach this firmware's real canonical services --

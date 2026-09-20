@@ -67,10 +67,18 @@ boundary and must never define or bloat the canonical core.
   `UNAVAILABLE` on factory UART, `CAPTURE_START` is available there too),
   through the same `mtk_router_dispatch` path every other canonical
   opcode uses -- no parallel or transport-embedded implementation exists.
-  **SoftAP remains scaffolding-only** -- its opcodes fall through to the
-  default `UNSUPPORTED` case in `mtek_wifi_dispatch`
-  (`mtek_wifi_service/mtek_wifi_logic.c`); its full request/response
-  logic is not yet implemented (`docs/PROVENANCE.md`).
+  **Correction (capability completion, 2026-09-20):** SoftAP is now
+  implemented as well (`SOFTAP_START/STOP/STA_LIST`, class `SAP`), and the
+  captive portal is layered on that same interface and lease rather than
+  bringing up a second one (`CAPTIVE_PORTAL_START/STOP/GET_CREDENTIALS/
+  GET_DIAGNOSTICS`, also class `SAP`, gated by
+  `CONFIG_MTEK_MODULE_CAPTIVE_PORTAL`). ESP-NOW is implemented as its own
+  canonical service (`mtek_espnow_service`, service `0x0006`, class
+  `ESPNOW`); because it transmits through the Wi-Fi MAC it serializes
+  against every Wi-Fi class rather than running alongside them.
+  **IEEE 802.15.4 remains unimplemented** -- its arbiter class (`RESV_154`)
+  is still reserved and it has no opcodes; see `docs/CAPABILITY_MANIFEST.md`
+  for the specific blockers.
 
 ### Transport adapters (three, boot-exclusive, `SPI_PROTOCOL_V1.md`
 "Runtime transport selection")
@@ -100,12 +108,10 @@ captive portal, Wi-Fi beacon flood. Disabling a module's Kconfig option
 means the canonical service layer answers `UNSUPPORTED` for its opcodes
 regardless of what any adapter's own capability-state table says --
 capability is decided once, centrally, by whether the module is compiled
-in, not per-adapter. None of these four modules' actual radio-behavior
-logic is implemented yet this session (`docs/PROVENANCE.md`); the
-Kconfig gates and explicit `#if`-guarded case labels in
-`mtek_wifi_logic.c` establish the compile-time boundary now, so whichever
-module gets implemented first does not have to also invent this
-structure.
+in, not per-adapter. Of these four, the captive portal is implemented; the
+Karma auto-responder, probe-request flood and beacon flood are not, and
+their `#if`-guarded case labels still answer `UNSUPPORTED`
+(`docs/PROVENANCE.md`).
 
 The release/factory build (`sdkconfig.defaults`) enables all optional
 modules by default -- this is a build-variant choice, not a canonical-API
@@ -126,7 +132,7 @@ each named build variant -- this file must be updated whenever a module's
 default changes or a new module is added, and `release/RELEASE_NOTES.md`
 must cite it for every release candidate.
 
-## What this session did NOT do (see `docs/PROVENANCE.md` for full detail)
+## Deliberate scope limits (see `docs/PROVENANCE.md` for full detail)
 
 - No new community-feature radio behavior (Karma/probe-flood/captive-
   portal/beacon RF logic) was implemented -- explicitly out of scope for

@@ -1,6 +1,5 @@
-/* Deauth: BROADCAST target mode -- transmits to FF:FF:FF:FF:FF:FF for the
- * named AP, distinct from ALL_SCANNED even though both may affect every
- * client (002-wifi-service.md Sec 2.4). */
+/* Deauth: BROADCAST target mode -- transmits to FF:FF:FF:FF:FF:FF for the named
+ * AP, distinct from ALL_SCANNED even though both may affect every client. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtek_schema_message_descs.h"

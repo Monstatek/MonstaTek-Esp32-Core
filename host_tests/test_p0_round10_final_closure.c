@@ -1,79 +1,71 @@
-/* Release-tooling-round P0 correction, ROUND 10 (narrowly bounded closure
- * pass on four items past round 9's own final concurrency/resource-
- * failure closure):
+/* ROUND 10 (narrowly bounded closure pass on four items past round 9's own final
+ * concurrency/resource- failure closure):
  *
- *  1. mtek_capture_channel_hop_tick re-validated identity, released
- *     cap_lock, and only THEN called hal->set_channel() -- a real window
- *     in which a concurrent STOP followed by a brand-new CAPTURE_START
- *     could reinitialize s_cap for a replacement session before the OLD
- *     tick's own (already-validated-stale) HAL call actually ran. Round
- *     9's own post-HAL re-validation caught this before committing state
- *     or emitting an event, but could not prevent the physical HAL call
- *     itself from landing against a replacement session's own radio
- *     config. Fixed: a NEW, dedicated lease (mtek_capture_set_action_lock)
- *     is now held from the tick's own final identity re-validation,
- *     across the real hal->set_channel() call, through its own post-HAL
- *     commit -- and handle_capture_start's own reinit now blocks on the
- *     SAME lease before touching s_cap at all, so a replacement session's
- *     reinit cannot happen anywhere inside that window. capture_teardown
- *     (STOP) now also explicitly clears s_cap.hop_active under its own
- *     existing field-level lock (no new lease needed there -- teardown
- *     never touches the radio channel), closing the "the tick still
- *     thinks it's hopping" gap for a plain stop with no replacement too.
- *  2. Every GATT handler that issues a blocking HAL call (discover/
- *     discover_chars/discover_descs/read/write/subscribe/unsubscribe)
- *     snapshotted identity, ran the HAL call unlocked, then re-validated
- *     -- protecting LOCAL state (svc_ranges[]/subs[] merges, response
- *     content) from a disconnect-then-reconnect that reuses the same
- *     vendor_handle, but never protecting the PHYSICAL HAL call itself
- *     from landing against a replacement connection's own live peer.
- *     Fixed: a NEW, dedicated GATT-operation lease (mtek_ble_service_set_
- *     gatt_op_lease_lock) is now acquired BEFORE each handler's own final
- *     identity snapshot and held across the HAL call and post-HAL
- *     revalidation/commit; handle_gatt_connect's own successful-connect
- *     reinit acquires the SAME lease before touching s_gatt, so a
- *     replacement connection's reinit cannot happen while a prior
- *     operation for the connection it would replace is still mid-flight.
- *     Deliberately never acquired by handle_gatt_disconnect (a local
- *     disconnect) or by mtek_ble_gatt_tick's own remote-disconnect/
- *     notify-poll paths, so neither can ever block on (or deadlock
- *     against) an in-flight operation.
- *  3. main/app_main.c logged, but did not act on, a failed factory UART
- *     task creation, and never even recorded a failed SPI runtime task
- *     creation as a factor in its own startup-readiness decision --
- *     always reaching the normal "firmware up" announcement regardless.
- *     Fixed: explicit uart_task_ok/spi_task_ok accounting; a compiled-in
- *     UART task failure now enters the same deterministic safe-failure
- *     state a mandatory-mutex allocation failure does (factory UART is
- *     the required shipped-M1 transport in this universal build); if NO
- *     compiled-in adapter's own task ever became usable, startup also
- *     fails safely. Not host-testable (main/app_main.c is ESP-IDF-only)
- *     -- verified by inspection, the same posture round 8's own item 4
- *     and round 9's own item 4 took for the identical class of gap.
- *  4. mtek_ble_hal_esp32.c's five "discover all ..." wrappers (services,
- *     characteristics, descriptors, plus the two narrower internal CCCD-
- *     bound-characteristic/CCCD-descriptor searches) discarded the NimBLE
- *     "start" call's own return code and the semaphore wait's own
- *     timeout signal, and never checked whether the completion
- *     callback's own FINAL status was the expected "done" sentinel
- *     (BLE_HS_EDONE) versus a real, callback-reported error -- silently
- *     reporting a fabricated empty (or partial) success for an immediate
- *     start failure, a bounded timeout, or a genuine mid-procedure
- *     failure. Fixed: a new, shared, portable classification function
- *     (mtek_ble_disc_failed, mtek_ble_disc_status.h) is now the single
- *     source of truth all five call sites use, distinguishing all four
- *     failure modes from a genuine (possibly empty) success.
+ * 1. mtek_capture_channel_hop_tick re-validated identity, released cap_lock, and
+ * only THEN called hal->set_channel -- a real window in which a concurrent STOP
+ * followed by a brand-new CAPTURE_START could reinitialize s_cap for a
+ * replacement session before the OLD tick's own (already-validated-stale) HAL
+ * call actually ran. Round 9's own post-HAL re-validation caught this before
+ * committing state or emitting an event, but could not prevent the physical HAL
+ * call itself from landing against a replacement session's own radio config.
+ * Fixed: a NEW, dedicated lease (mtek_capture_set_action_lock) is now held from
+ * the tick's own final identity re-validation, across the real hal->set_channel
+ * call, through its own post-HAL commit -- and handle_capture_start's own reinit
+ * now blocks on the SAME lease before touching s_cap at all, so a replacement
+ * session's reinit cannot happen anywhere inside that window. capture_teardown
+ * (STOP) now also explicitly clears s_cap.hop_active under its own existing
+ * field-level lock (no new lease needed there -- teardown never touches the
+ * radio channel), closing the "the tick still thinks it's hopping" gap for a
+ * plain stop with no replacement too. 2. Every GATT handler that issues a
+ * blocking HAL call (discover/
+ * discover_chars/discover_descs/read/write/subscribe/unsubscribe) snapshotted
+ * identity, ran the HAL call unlocked, then re-validated -- protecting LOCAL
+ * state (svc_ranges[]/subs[] merges, response content) from a
+ * disconnect-then-reconnect that reuses the same vendor_handle, but never
+ * protecting the PHYSICAL HAL call itself from landing against a replacement
+ * connection's own live peer. Fixed: a NEW, dedicated GATT-operation lease
+ * (mtek_ble_service_set_ gatt_op_lease_lock) is now acquired BEFORE each
+ * handler's own final identity snapshot and held across the HAL call and
+ * post-HAL revalidation/commit; handle_gatt_connect's own successful-connect
+ * reinit acquires the SAME lease before touching s_gatt, so a replacement
+ * connection's reinit cannot happen while a prior operation for the connection
+ * it would replace is still mid-flight. Deliberately never acquired by
+ * handle_gatt_disconnect (a local disconnect) or by mtek_ble_gatt_tick's own
+ * remote-disconnect/ notify-poll paths, so neither can ever block on (or
+ * deadlock against) an in-flight operation. 3. main/app_main.c logged, but did
+ * not act on, a failed factory UART task creation, and never even recorded a
+ * failed SPI runtime task creation as a factor in its own startup-readiness
+ * decision -- always reaching the normal "firmware up" announcement regardless.
+ * Fixed: explicit uart_task_ok/spi_task_ok accounting; a compiled-in UART task
+ * failure now enters the same deterministic safe-failure state a mandatory-mutex
+ * allocation failure does (factory UART is the required shipped-M1 transport in
+ * this universal build); if NO compiled-in adapter's own task ever became
+ * usable, startup also fails safely. Not host-testable (main/app_main.c is
+ * ESP-IDF-only) -- verified by inspection, the same posture round 8's own item 4
+ * and round 9's own item 4 took for the identical class of gap. 4.
+ * mtek_ble_hal_esp32.c's five "discover all..." wrappers (services,
+ * characteristics, descriptors, plus the two narrower internal CCCD-
+ * bound-characteristic/CCCD-descriptor searches) discarded the NimBLE "start"
+ * call's own return code and the semaphore wait's own timeout signal, and never
+ * checked whether the completion callback's own FINAL status was the expected
+ * "done" sentinel (BLE_HS_EDONE) versus a real, callback-reported error --
+ * silently reporting a fabricated empty (or partial) success for an immediate
+ * start failure, a bounded timeout, or a genuine mid-procedure failure. Fixed: a
+ * new, shared, portable classification function (mtek_ble_disc_failed,
+ * mtek_ble_disc_status.h) is now the single source of truth all five call sites
+ * use, distinguishing all four failure modes from a genuine (possibly empty)
+ * success.
  *
- * This file proves items 1 and 2's own two remaining P0 race windows are
- * closed -- not merely their post-HAL state-commit halves (already proven
- * in round 9's own test file), but the PRE-HAL windows themselves: a
- * concurrent replacement session/connection's own reinit is proven to
- * genuinely BLOCK (not merely be detected-after-the-fact) while an old
- * tick/operation's own action is in flight, using real fake-HAL call-count/
- * parameter assertions, not only post-call local state. Item 3 is
- * documented as not host-testable (see its own doc comment above). Item 4's
- * own portable classification logic is proven separately, in test_ble_
- * disc_status.c (its real NimBLE integration is ESP-IDF-only). */
+ * This file proves items 1 and 2's own two remaining P0 race windows are closed
+ * -- not merely their post-HAL state-commit halves (already proven in round 9's
+ * own test file), but the PRE-HAL windows themselves: a concurrent replacement
+ * session/connection's own reinit is proven to genuinely BLOCK (not merely be
+ * detected-after-the-fact) while an old tick/operation's own action is in
+ * flight, using real fake-HAL call-count/ parameter assertions, not only
+ * post-call local state. Item 3 is documented as not host-testable (see its own
+ * doc comment above). Item 4's own portable classification logic is proven
+ * separately, in test_ble_ disc_status.c (its real NimBLE integration is
+ * ESP-IDF-only). */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtek_spi_native_dispatch.h"
@@ -84,9 +76,9 @@
 #include <stdlib.h>
 #include <time.h>
 
-/* ---- Lock domains, mirroring test_p0_round9_final_closure.c's own
- * established pattern -- PLUS the two new leases this round introduces,
- * each genuinely distinct from every other lock. ---- */
+/* Lock domains, mirroring test_p0_round9_final_closure.c's own established
+ * pattern -- PLUS the two new leases introduces, each genuinely distinct from
+ * every other lock. -- */
 static pthread_mutex_t s_router_mutex = PTHREAD_MUTEX_INITIALIZER;
 static void router_lock(void) { pthread_mutex_lock(&s_router_mutex); }
 static void router_unlock(void) { pthread_mutex_unlock(&s_router_mutex); }
@@ -115,19 +107,18 @@ static void abstime_after_ms(struct timespec *ts, long timeout_ms) {
     if (ts->tv_nsec >= 1000000000L) { ts->tv_nsec -= 1000000000L; ts->tv_sec += 1; }
 }
 
-/* P0 correction (RC11 round 10, item 1): the capture channel-hop action
- * lease -- genuinely distinct from s_cap_mutex above.
+/* The capture channel-hop action lease -- genuinely distinct from s_cap_mutex
+ * above.
  *
  * M3 correction (diagnosis "strengthen test_capture_channel_hop_pre_hal_
  * race_closed... replace the usleep(100000) scheduling guess with a
- * mutex/condition or another real happens-before mechanism"): this
- * file's own registered cap_action_lock implementation -- NOT production
- * code -- now signals every attempt to acquire it, BEFORE actually
- * blocking on the real mutex, exactly mirroring test_p0_session_
- * publication_closure_round7.c's own pub_lock_fn instrumentation. Lets a
- * test bounded-wait for genuine proof that a specific worker (the
- * replacement CAPTURE_START below) has actually reached the point of
- * attempting this exact lease, instead of a scheduling usleep(). */
+ * mutex/condition or another real happens-before mechanism"): this file's own
+ * registered cap_action_lock implementation -- NOT production code -- now
+ * signals every attempt to acquire it, BEFORE actually blocking on the real
+ * mutex, exactly mirroring test_p0_session_ publication_closure_round7.c's own
+ * pub_lock_fn instrumentation. Lets a test bounded-wait for genuine proof that a
+ * specific worker (the replacement CAPTURE_START below) has actually reached the
+ * point of attempting this exact lease, instead of a scheduling usleep. */
 static pthread_mutex_t s_cap_action_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t s_cap_action_attempts_m = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t s_cap_action_attempts_cv = PTHREAD_COND_INITIALIZER;
@@ -187,8 +178,7 @@ static int done_flag_wait(done_flag_t *d, long timeout_ms) {
     return done;
 }
 
-/* P0 correction (RC11 round 10, item 2): the GATT operation lease --
- * genuinely distinct from s_ble_mutex above. */
+/* The GATT operation lease -- genuinely distinct from s_ble_mutex above. */
 static pthread_mutex_t s_gatt_op_lease_mutex = PTHREAD_MUTEX_INITIALIZER;
 static void gatt_op_lease_lock_fn(void) { pthread_mutex_lock(&s_gatt_op_lease_mutex); }
 static void gatt_op_lease_unlock_fn(void) { pthread_mutex_unlock(&s_gatt_op_lease_mutex); }
@@ -241,15 +231,15 @@ static int wait_for_workers_idle(void) {
     return idle;
 }
 
-/* ---- generic pause rendezvous -- identical mechanism to
+/* generic pause rendezvous -- identical mechanism to
  * test_p0_round9_final_closure.c's own.
  *
  * M3 correction (independent review P1 "synchronization objects are
  * reinitialized"): statically initialized exactly once
- * (PTHREAD_MUTEX_INITIALIZER/PTHREAD_COND_INITIALIZER); pause_reset()
- * only clears the predicate fields, under the lock -- never
- * pthread_mutex_init/pthread_cond_init on a possibly-already-initialized
- * object again, which is undefined by POSIX. ---- */
+ * (PTHREAD_MUTEX_INITIALIZER/PTHREAD_COND_INITIALIZER); pause_reset only clears
+ * the predicate fields, under the lock -- never
+ * pthread_mutex_init/pthread_cond_init on a possibly-already-initialized object
+ * again, which is undefined by POSIX. -- */
 typedef struct {
     pthread_mutex_t m; pthread_cond_t cv;
     int arrived; int release;
@@ -295,8 +285,8 @@ static pthread_t spawn_trigger(void (*trigger)(void)) {
     return t;
 }
 
-/* ---- Real native SPI v1 cell plumbing -- identical to
- * test_p0_round9_final_closure.c's own. ---- */
+/* Real native SPI v1 cell plumbing -- identical to
+ * test_p0_round9_final_closure.c's own. -- */
 static mtk_spi_native_header_t base_req_hdr(uint16_t service, uint16_t opcode, uint32_t request_id,
                                              uint16_t payload_len, uint32_t peer_epoch) {
     mtk_spi_native_header_t h; memset(&h, 0, sizeof(h));
@@ -357,9 +347,9 @@ static int wait_for_promisc_start(void) {
     return 0;
 }
 
-/* ---- Direct (mtk_test_call-based) GATT helpers -- identical rationale to
- * test_p0_round8/9_final_closure.c's own (native SPI dispatch is not
- * thread-safe against concurrent callers; mtk_router_dispatch is). ---- */
+/* Direct (mtk_test_call-based) GATT helpers -- identical rationale to
+ * test_p0_round8/9_final_closure.c's own (native SPI dispatch is not thread-safe
+ * against concurrent callers; mtk_router_dispatch is). -- */
 static uint32_t poll_for_op_token(mtk_fake_sink_state_t *sink) {
     uint32_t token = 0;
     for (int i = 0; i < 20000 && token == 0; i++) {
@@ -564,8 +554,8 @@ static void test_capture_channel_hop_pre_hal_race_closed(void) {
     pthread_t trig_tid = spawn_trigger(trigger_hop_tick);
     /* This invocation has passed its own final identity re-validation
      * (token/hop_active, under cap_lock) and is now paused HOLDING
-     * mtek_capture_set_action_lock's own lease -- exactly the point
-     * immediately before the real hal->set_channel() call. */
+     * mtek_capture_set_action_lock's own lease -- exactly the point immediately
+     * before the real hal->set_channel call. */
     pause_wait_arrived();
 
     fake_wifi_lock();
@@ -646,7 +636,10 @@ static void test_capture_channel_hop_pre_hal_race_closed(void) {
         MTK_CHECK_EQ(old_snap_during.final_status, old_snap_before.final_status);
     }
 
-    pause_release(); /* the old tick resumes: calls hal->set_channel() for A (harmless -- A has no replacement yet), then its own post-HAL re-check sees hop_active==0 (cleared by STOP) and bails without commit/emit */
+    pause_release(); /* the old tick resumes: calls hal->set_channel for A
+                      * (harmless -- A has no replacement yet), then its own
+                      * post-HAL re-check sees hop_active==0 (cleared by STOP)
+                      * and bails without commit/emit */
     /* M3 correction (diagnosis "bound every wait so a lock-order
      * regression fails instead of hanging the entire suite"): a bounded
      * completion signal, not an unbounded join with no prior proof -- a
@@ -738,18 +731,17 @@ static void trigger_discover_race(void) {
 static uint32_t finish_gatt_pre_hal_race(pthread_t op_tid, uint32_t old_conn_tok) {
     usleep(100000); /* let the delayed op thread genuinely enter the blocked HAL call, and the reconnect thread genuinely reach (and block on) gatt_op_lease */
 
-    /* GATT_CONNECT is ACCEPTED_ASYNC: handle_gatt_connect sends its own
-     * ACCEPTED response (carrying the new operation_token) BEFORE its own
-     * blocking gatt_connect() HAL call even runs, let alone before the
-     * reinit that follows a successful one -- so response.set becoming
-     * true is not itself proof of anything about the reinit's own
-     * progress. The token is therefore already known (and safe to poll
-     * for immediately -- the router dispatched this whole handler onto a
-     * background worker, but that worker starts running right away). What
-     * proves this reconnect is genuinely still blocked (on gatt_op_lease,
-     * held by the still in-flight delayed operation) is that s_gatt has
-     * not yet been reinitialized for it: GATT_STATUS for this already-
-     * known token must not yet report connected. */
+    /* GATT_CONNECT is ACCEPTED_ASYNC: handle_gatt_connect sends its own ACCEPTED
+     * response (carrying the new operation_token) BEFORE its own blocking
+     * gatt_connect HAL call even runs, let alone before the reinit that follows
+     * a successful one -- so response.set becoming true is not itself proof of
+     * anything about the reinit's own progress. The token is therefore already
+     * known (and safe to poll for immediately -- the router dispatched this
+     * whole handler onto a background worker, but that worker starts running
+     * right away). What proves this reconnect is genuinely still blocked (on
+     * gatt_op_lease, held by the still in-flight delayed operation) is that
+     * s_gatt has not yet been reinitialized for it: GATT_STATUS for this
+     * already- known token must not yet report connected. */
     uint32_t new_conn_tok = poll_for_op_token(&s_gatt_conn_bg_sink);
     MTK_CHECK(new_conn_tok != 0);
     MTK_CHECK(new_conn_tok != old_conn_tok); /* tokens are never reused -- only the vendor_handle is */
@@ -781,10 +773,10 @@ static void test_gatt_subscribe_pre_hal_race_closed(void) {
     discover_gatt_direct(old_conn_tok);
     g_fake_ble.gatt_subscribe_rc = 0;
 
-    /* Delay the real gatt_subscribe() HAL call -- the trigger thread will
-     * be genuinely blocked INSIDE it, still holding gatt_op_lease (which
-     * handle_gatt_subscribe now acquires BEFORE its own final identity
-     * snapshot, per this round's own item 2 fix). */
+    /* Delay the real gatt_subscribe HAL call -- the trigger thread will be
+     * genuinely blocked INSIDE it, still holding gatt_op_lease (which
+     * handle_gatt_subscribe now acquires BEFORE its own final identity snapshot,
+     * per the item 2 fix). */
     fake_ble_lock();
     g_fake_ble.gatt_op_delay_ms = 400;
     fake_ble_unlock();
@@ -800,7 +792,8 @@ static void test_gatt_subscribe_pre_hal_race_closed(void) {
      * vendor_handle, on its own background thread since it will
      * genuinely block on gatt_op_lease. */
     fake_ble_lock();
-    g_fake_ble.gatt_op_delay_ms = 0; /* the reconnect's own gatt_connect() call must not itself be delayed */
+    g_fake_ble.gatt_op_delay_ms = 0; /* the reconnect's own gatt_connect call
+                                      * must not itself be delayed */
     fake_ble_unlock();
     s_gatt_conn_bg_addr = addr;
     pthread_t reconnect_tid = spawn_trigger(trigger_connect_gatt_bg);
@@ -832,7 +825,7 @@ static void test_gatt_unsubscribe_pre_hal_race_closed(void) {
     g_fake_ble.gatt_subscribe_rc = 0;
     MTK_CHECK_EQ(subscribe_gatt_direct(old_conn_tok, 105, 0), MTK_STATUS_OK);
 
-    /* Delay the real gatt_unsubscribe() HAL call. */
+    /* Delay the real gatt_unsubscribe HAL call. */
     fake_ble_lock();
     g_fake_ble.gatt_op_delay_ms = 400;
     fake_ble_unlock();
@@ -873,7 +866,7 @@ static void test_gatt_discover_pre_hal_race_closed(void) {
     mtk_mac6_t addr; memset(addr.b, 63, 6);
     uint32_t old_conn_tok = connect_gatt_direct(addr);
 
-    /* Delay the real gatt_discover() HAL call. */
+    /* Delay the real gatt_discover HAL call. */
     fake_ble_lock();
     g_fake_ble.gatt_op_delay_ms = 400;
     fake_ble_unlock();

@@ -16,10 +16,10 @@ mtk_transport_lock_t mtk_transport_try_recognize_discovery(const uint8_t *buf, s
 
     mtk_compat_header_t bhdr;
     const uint8_t *bpayload;
-    /* "A valid Mtek Compatibility/C3 frame locks that profile" -- any well-formed
-     * frame (the pinned reference always sends a well-formed IDLE frame
-     * even when idle, per 001-profile-bootstrap-feasibility.md Sec 1.2,
-     * so IDLE itself is a legitimate, expected lock trigger). */
+    /* "A valid Mtek Compatibility/C3 frame locks that profile" -- any
+     * well-formed frame (the pinned reference always sends a well-formed IDLE
+     * frame even when idle, per, so IDLE itself is a legitimate, expected lock
+     * trigger). */
     if (mtk_compat_parse_bounded(buf, len, &bhdr, &bpayload) == MTK_COMPAT_PARSE_OK) {
         return MTK_TRANSPORT_COMPAT_C3_SPI;
     }

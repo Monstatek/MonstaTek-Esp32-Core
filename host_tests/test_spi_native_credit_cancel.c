@@ -1,15 +1,14 @@
-/* RC7 independent audit P0 "Native CREDIT and CANCEL are not
- * implemented": mtek_spi_native_dispatch_feed_cell used to map every
- * CREDIT/CANCEL cell straight to IDLE, so a native MonstaShark PUSH
- * session could never receive protocol credit and nothing could abort an
- * in-progress reassembly or a still-pending deferred operation from the
- * link layer. Proves real CREDIT delivery (mtek_capture_grant_credit is
- * genuinely called, with an honest applied/not-applied wire status),
- * real CANCEL of both transport-level resources it can target (an
- * in-progress inbound reassembly, and a still-pending[] deferred
- * operation), boot-epoch rejection for both classes, and that the five
- * outbound-only classes are rejected (LINK_ERROR/PROTOCOL_ERROR) rather
- * than silently accepted as IDLE when a peer sends one inbound. */
+/* mtek_spi_native_dispatch_feed_cell used to map every CREDIT/CANCEL cell
+ * straight to IDLE, so a native MonstaShark PUSH session could never receive
+ * protocol credit and nothing could abort an in-progress reassembly or a
+ * still-pending deferred operation from the link layer. Proves real CREDIT
+ * delivery (mtek_capture_grant_credit is genuinely called, with an honest
+ * applied/not-applied wire status), real CANCEL of both transport-level
+ * resources it can target (an in-progress inbound reassembly, and a
+ * still-pending[] deferred operation), boot-epoch rejection for both classes,
+ * and that the five outbound-only classes are rejected
+ * (LINK_ERROR/PROTOCOL_ERROR) rather than silently accepted as IDLE when a peer
+ * sends one inbound. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtk_test_async_fixture.h"
@@ -87,9 +86,9 @@ MTK_TEST_MAIN_BEGIN
 
     mtk_spi_native_header_t resp_hdr; uint8_t resp_payload[MTK_SPI_NATIVE_MAX_PAYLOAD]; uint16_t resp_len = 0;
 
-    /* ---- CREDIT: start a real PUSH-mode capture session, grant it
-     * credit via a CREDIT cell, prove it was genuinely applied by
-     * successfully delivering a frame that needed it. -------------------- */
+    /* CREDIT: start a real PUSH-mode capture session, grant it credit via a
+     * CREDIT cell, prove it was genuinely applied by successfully delivering a
+     * frame that needed it. ---------- */
     uint32_t cap_token;
     {
         g_fake_wifi.defer_frames = 1; /* promisc_start below must not immediately replay any (still-empty) canned frame */
@@ -175,7 +174,7 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(resp_hdr.msg_class, MTK_SPI_CLASS_EVENT);
     }
 
-    /* ---- CANCEL: abort an in-progress inbound reassembly ---------------- */
+    /* CANCEL: abort an in-progress inbound reassembly -------- */
     {
         uint8_t part1[4] = {1,2,3,4};
         mtk_spi_native_header_t f1 = base_hdr(0, 1, MTK_SPI_CLASS_REQUEST, 100, 0x1234);
@@ -219,10 +218,11 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK_EQ(resp_hdr.status, MTK_STATUS_PROTOCOL_ERROR);
     }
 
-    /* ---- CANCEL: abort a still-pending[] deferred dispatched operation -- */
+    /* CANCEL: abort a still-pending[] deferred dispatched operation -- */
     {
         mtk_router_set_async_runner(pthread_runner); /* only this section needs genuine deferral */
-        const mtk_opcode_entry_t *ts_op = mtk_test_async_fixture_install() /* RC12 item 5: test-only overlay async op, was TIME_SYNC_START */;
+        const mtk_opcode_entry_t *ts_op = mtk_test_async_fixture_install() /* Test-only overlay async op, was
+                                                                            * TIME_SYNC_START */;
         mtk_time_sync_start_req_t treq = {0}; treq.server.len = 0; treq.timeout_ms = 5000;
         uint8_t tbuf[264]; size_t tblen = 0;
         mtk_encode(ts_op->req_desc, &treq, tbuf, sizeof(tbuf), &tblen);
@@ -263,8 +263,8 @@ MTK_TEST_MAIN_BEGIN
         MTK_CHECK(resp_hdr.msg_class != MTK_SPI_CLASS_RESPONSE);
     }
 
-    /* ---- Direction validation: the five outbound-only classes are
-     * rejected (LINK_ERROR/PROTOCOL_ERROR), never silently IDLE. -------- */
+    /* Direction validation: the five outbound-only classes are rejected
+     * (LINK_ERROR/PROTOCOL_ERROR), never silently IDLE. ---- */
     {
         uint8_t bad_classes[] = { MTK_SPI_CLASS_RESPONSE, MTK_SPI_CLASS_HELLO_ACK, MTK_SPI_CLASS_EVENT,
                                    MTK_SPI_CLASS_STREAM, MTK_SPI_CLASS_LINK_ERROR };

@@ -1,7 +1,6 @@
-/* Wi-Fi AP scan and STA connect/status/disconnect (List A parity surface,
- * 002-wifi-service.md Sec 2.1/2.6): scan result paging, connect
- * accept/timeout/failure outcomes, idempotent status, and factory-UART's
- * UNAVAILABLE gate on STA_CONNECT. */
+/* Wi-Fi AP scan and STA connect/status/disconnect (List A parity surface, /2.6):
+ * scan result paging, connect accept/timeout/failure outcomes, idempotent
+ * status, and factory-UART's UNAVAILABLE gate on STA_CONNECT. */
 #include "mtk_test.h"
 #include "mtk_test_bootstrap.h"
 #include "mtek_schema_message_descs.h"
