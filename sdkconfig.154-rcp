@@ -15,3 +15,21 @@
 # discovers what it got through GET_CAPABILITIES, never by variant name.
 CONFIG_OPENTHREAD_ENABLED=y
 CONFIG_OPENTHREAD_RADIO=y
+
+# Spinel travels over the M1's existing STM32<->ESP32 SPI wires. The board
+# routes one SPI link and no second UART between the two parts, and the
+# ESP32-C6 has a single general-purpose SPI peripheral, so the RCP transport
+# must be SPI -- ESP-IDF's default here is UART, which the M1 cannot carry.
+# This choice is compiled in, not merely requested at runtime: the port layer
+# is #if-gated on it, so the pin/host fields in
+# components/mtek_ieee802154_service/mtek_154_rcp_esp32.c only take effect
+# with this set. main/mtek_spi_runtime.c stands the Core SPI transport down in
+# this image so the two do not contend for the peripheral.
+CONFIG_OPENTHREAD_RCP_SPI=y
+
+# A radio co-processor has no console of its own: the SPI link carries Spinel
+# and nothing else, and Core's factory UART0 REPL is separate from -- and
+# unaffected by -- OpenThread's console. Leaving the SDK's OpenThread console
+# enabled would also pull in its UART host path, which is not compiled when
+# the RCP transport is SPI.
+CONFIG_OPENTHREAD_CONSOLE_ENABLE=n

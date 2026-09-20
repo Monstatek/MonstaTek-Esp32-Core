@@ -82,7 +82,9 @@ boundary and must never define or bloat the canonical core.
   serialized against every Wi-Fi class and `ESPNOW`, and cross-subsystem-busy
   against the BLE classes. The service is protocol-neutral: it moves PHY
   payloads and radio metadata and never parses or synthesises 802.15.4 MAC
-  headers, so Thread (host-driven over an OpenThread RCP), a host-side Zigbee
+  headers, so Thread (host-driven over an OpenThread RCP, which carries Spinel on the
+M1's existing SPI wires and therefore takes that link over from the Core
+transport in that image -- see `docs/BUILD_VARIANTS.md`), a host-side Zigbee
   stack, a sniffer or a bespoke protocol all sit above the same primitives.
   802.15.4 does not fit in the universal image and ships in dedicated
   variants -- see `docs/BUILD_VARIANTS.md` for the measured memory constraint

@@ -29,26 +29,34 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
-#include "driver/uart.h"
+#include "driver/spi_slave.h"
+#include "driver/gpio.h"
 #include <string.h>
 
 static const char *TAG = "mtk_154_rcp";
 
-/* Spinel link to the host. UART0 carries Core's own factory REPL, so the RCP
- * link is a separate port; the pins are build-time configuration because they
- * are a board-level fact, not a runtime choice. */
-#ifndef MTK_RCP_UART_PORT
-#define MTK_RCP_UART_PORT   UART_NUM_1
-#endif
-#ifndef MTK_RCP_UART_TX_PIN
-#define MTK_RCP_UART_TX_PIN 4
-#endif
-#ifndef MTK_RCP_UART_RX_PIN
-#define MTK_RCP_UART_RX_PIN 5
-#endif
-#ifndef MTK_RCP_UART_BAUD
-#define MTK_RCP_UART_BAUD   460800
-#endif
+/* Spinel link to the host: the M1's existing STM32<->ESP32 SPI wires.
+ *
+ * The production M1 routes exactly six signals between the STM32 and the
+ * ESP32-C6 -- SPI MOSI/MISO/CLK/CS plus HANDSHAKE and DATA_READY (the board's
+ * own ESP32 configuration; RESET is not wired). No second UART exists between
+ * the two parts, so Spinel has to travel over those same wires.
+ *
+ * The ESP32-C6 has one general-purpose SPI peripheral (SPI2; SPI0/SPI1 serve
+ * flash), and both Core's canonical transport and OpenThread's RCP host
+ * connection drive an SPI slave on it. They therefore cannot both run in one
+ * image: in this variant OpenThread owns the link and the STM32 speaks Spinel
+ * directly, which is exactly how a dedicated radio co-processor behaves.
+ * main/mtek_spi_runtime.c leaves the peripheral alone when this variant is
+ * built. */
+#define MTK_RCP_SPI_HOST      SPI2_HOST
+#define MTK_RCP_SPI_PIN_MOSI  12
+#define MTK_RCP_SPI_PIN_MISO  13
+#define MTK_RCP_SPI_PIN_SCLK  7
+#define MTK_RCP_SPI_PIN_CS    15
+/* Spinel's own flow-control signal, carried on the same line the Core
+ * transport uses for DATA_READY so no additional routing is required. */
+#define MTK_RCP_SPI_PIN_INTR  6
 
 static TaskHandle_t s_rcp_task;
 static SemaphoreHandle_t s_rcp_exited;   /* signalled when the mainloop task returns */
@@ -84,17 +92,20 @@ int mtek_154_rcp_start(void) {
     /* The C6's own radio: this image IS the co-processor, it does not talk to
      * a separate one. */
     cfg.radio_config.radio_mode = RADIO_MODE_NATIVE;
-    /* Spinel to the host over the dedicated UART. */
-    cfg.host_config.host_connection_mode = HOST_CONNECTION_MODE_RCP_UART;
-    cfg.host_config.host_uart_config.port = MTK_RCP_UART_PORT;
-    cfg.host_config.host_uart_config.rx_pin = MTK_RCP_UART_RX_PIN;
-    cfg.host_config.host_uart_config.tx_pin = MTK_RCP_UART_TX_PIN;
-    cfg.host_config.host_uart_config.uart_config.baud_rate = MTK_RCP_UART_BAUD;
-    cfg.host_config.host_uart_config.uart_config.data_bits = UART_DATA_8_BITS;
-    cfg.host_config.host_uart_config.uart_config.parity = UART_PARITY_DISABLE;
-    cfg.host_config.host_uart_config.uart_config.stop_bits = UART_STOP_BITS_1;
-    cfg.host_config.host_uart_config.uart_config.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
-    cfg.host_config.host_uart_config.uart_config.source_clk = UART_SCLK_DEFAULT;
+    /* Spinel to the STM32 over the board's existing SPI wires. */
+    cfg.host_config.host_connection_mode = HOST_CONNECTION_MODE_RCP_SPI;
+    cfg.host_config.spi_slave_config.host_device = MTK_RCP_SPI_HOST;
+    cfg.host_config.spi_slave_config.bus_config.mosi_io_num = MTK_RCP_SPI_PIN_MOSI;
+    cfg.host_config.spi_slave_config.bus_config.miso_io_num = MTK_RCP_SPI_PIN_MISO;
+    cfg.host_config.spi_slave_config.bus_config.sclk_io_num = MTK_RCP_SPI_PIN_SCLK;
+    cfg.host_config.spi_slave_config.bus_config.quadwp_io_num = -1;
+    cfg.host_config.spi_slave_config.bus_config.quadhd_io_num = -1;
+    cfg.host_config.spi_slave_config.slave_config.spics_io_num = MTK_RCP_SPI_PIN_CS;
+    cfg.host_config.spi_slave_config.slave_config.queue_size = 5;
+    /* CPOL=0, CPHA=1, matching the mode the M1's Core transport already uses
+     * on these wires. */
+    cfg.host_config.spi_slave_config.slave_config.mode = 1;
+    cfg.host_config.spi_slave_config.intr_pin = MTK_RCP_SPI_PIN_INTR;
     /* An RCP keeps no Thread dataset of its own: network state belongs to the
      * host, so no storage partition is claimed here. */
     cfg.port_config.storage_partition_name = NULL;
@@ -139,9 +150,8 @@ void mtek_154_rcp_stop(void) {
         }
     }
     s_rcp_init_done = 0;
-    /* The Spinel UART is released so a later session -- or the raw radio
-     * service -- starts from a known state. */
-    if (uart_is_driver_installed(MTK_RCP_UART_PORT)) uart_driver_delete(MTK_RCP_UART_PORT);
+    /* esp_openthread_deinit releases the SPI slave it installed, so the
+     * peripheral is free again for a later RCP session. */
 }
 
 int mtek_154_rcp_is_running(void) { return s_rcp_running ? 1 : 0; }

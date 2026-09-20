@@ -1,6 +1,7 @@
 # Build trees and compiled outputs
 build/
 build_*/
+build.*/
 cmake-build*/
 CMakeFiles/
 CMakeCache.txt

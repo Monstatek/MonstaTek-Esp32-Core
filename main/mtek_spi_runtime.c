@@ -450,6 +450,21 @@ retry_transaction: ;
 }
 
 int mtek_spi_runtime_start(SemaphoreHandle_t shared_mutex) {
+#if CONFIG_OPENTHREAD_RADIO
+    /* Radio-co-processor image: OpenThread's host connection drives an SPI
+     * slave on the very same peripheral and the very same M1 wires this
+     * runtime uses (the board routes one SPI link between the STM32 and the
+     * ESP32-C6, and the ESP32-C6 has one general-purpose SPI peripheral --
+     * SPI0/SPI1 serve flash). Two slaves cannot own it, so in this image the
+     * link belongs to Spinel and the host talks to a Thread radio over it
+     * rather than to the canonical Core protocol. The factory UART adapter is
+     * unaffected and still reaches the canonical router.
+     * See components/mtek_ieee802154_service/mtek_154_rcp_esp32.c and
+     * docs/BUILD_VARIANTS.md. */
+    (void)shared_mutex;
+    ESP_LOGI(TAG, "SPI transport yielded to the OpenThread radio co-processor host link");
+    return 0;
+#else
     /* compat_dctx/native_dctx (the dominant contributors, ~139KB+12KB) are now
      * static, not stack-local (see their own doc comments above), so this
      * configured stack no longer needs to hold them. What remains is txbuf/rxbuf
@@ -493,4 +508,5 @@ int mtek_spi_runtime_start(SemaphoreHandle_t shared_mutex) {
         return -1;
     }
     return s_spi_startup.result;
+#endif
 }
