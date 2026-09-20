@@ -56,3 +56,21 @@ saturates under real traffic.
 The arbiter serializes Wi-Fi, SoftAP/portal and ESP-NOW by construction, and
 that serialization is host-tested. Whether the radio itself behaves correctly
 across real mode transitions under sustained traffic is a hardware property.
+
+## RCP Spinel transport (mtkcore-154-rcp)
+
+None of the following has been exercised against real M1 hardware. Each is a
+software-verified configuration awaiting a target.
+
+| Item | Verified in software | Pending on hardware |
+|---|---|---|
+| Spinel over the STM32<->ESP32 SPI link | `CONFIG_OPENTHREAD_RCP_SPI=y`; `esp_openthread_spi_slave.c.obj` linked and `esp_openthread_host_rcp_spi_init` present in the ELF; UART host path absent | A real STM32 Spinel host completing frame exchange |
+| GPIO 6 polarity inversion | Both drivers read; polarities confirmed opposite from source | Scope/logic-analyser confirmation, and an STM32 build that inverts its reading in RCP mode |
+| SPI mode 1 (CPOL=0, CPHA=1) | Set to match the mode Core already uses on these wires | Confirmed against the STM32 master's actual configuration |
+| Core SPI transport absent in RCP image | `spi_runtime_task` absent from the RCP ELF, present in the other two (`tools/build_variants.py`) | Confirmation that the host tolerates the canonical protocol being unavailable on that link |
+| Clock rate | Not configurable in slave mode | The master's asserted rate against Spinel framing |
+
+The GPIO 6 item is the one most likely to bite. The two images assert the
+same wire with opposite polarity, and a host that does not invert its
+interpretation will read "no data available" exactly when the RCP has a frame
+ready. No firmware-side change can detect this.

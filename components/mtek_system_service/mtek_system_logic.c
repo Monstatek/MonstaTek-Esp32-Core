@@ -110,8 +110,7 @@ extern const mtk_opcode_entry_t mtk_opcode_table[MTK_OPCODE_COUNT];
  * unconditionally answers every one of them with MTK_STATUS_UNSUPPORTED
  * -- true today regardless of each family's own Kconfig module gate
  * (CONFIG_MTEK_MODULE_*), since not one of them has real radio-behavior
- * logic implemented yet this session (see that switch's own doc comment,
- * mtek_wifi_logic.c). GET_CAPABILITIES must never promise behavior the
+ * logic (see that switch's own doc comment, mtek_wifi_logic.c). GET_CAPABILITIES must never promise behavior the
  * image actually rejects -- this overlay corrects exactly (and only)
  * those opcodes to MTK_CAP_UNSUPPORTED, leaving the registry's own
  * static table (still the source of truth for every opcode this

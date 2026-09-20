@@ -89,29 +89,56 @@ dataset storage on the device. The host owns all Thread behaviour.
 
 ### Spinel transport
 
-Spinel travels over the M1's **existing STM32↔ESP32 SPI wires**: MOSI 12,
-MISO 13, SCLK 7, CS 15, with GPIO 6 — the line the Core transport uses for
-DATA_READY — carrying Spinel's flow-control interrupt. No new routing is
-required, and no separate UART is used, because the production M1 routes only
-that one SPI link plus HANDSHAKE and DATA_READY between the two parts; there
-is no second UART to speak Spinel over.
+Spinel travels over the M1's **existing STM32<->ESP32 SPI wires**: MOSI 12,
+MISO 13, SCLK 7, CS 15, with GPIO 6 carrying Spinel's flow-control interrupt.
+No new routing is required. The production M1 routes exactly six signals
+between the two parts -- those four SPI lines plus HANDSHAKE (14) and
+DATA_READY (6) -- and no second UART, so there is nothing else for Spinel to
+travel over.
 
-This has a consequence that must not be glossed over. The ESP32-C6 has one
-general-purpose SPI peripheral (SPI0/SPI1 serve flash), and both Core's own
-`spi_slave` transport and OpenThread's RCP host connection drive a slave on
-it. **They cannot both run in one image.** In `mtkcore-154-rcp` the link
-therefore belongs to Spinel: `main/mtek_spi_runtime.c` stands the Core SPI
-transport down under `CONFIG_OPENTHREAD_RADIO`, and the host on those wires
-talks to a Thread radio co-processor, not to the canonical Core protocol. The
-factory UART0 adapter is unaffected and still reaches the canonical router, so
-the image is not left without a control path.
-
-The transport is a compile-time choice, not a runtime request:
+The transport is a compile-time choice, not a runtime request.
 `CONFIG_OPENTHREAD_RCP_SPI=y` is set in `sdkconfig.154-rcp` because ESP-IDF
-`#if`-gates the port layer on it and defaults to UART. Setting only the
-runtime `host_connection_mode` field links the UART host path and silently
-ignores the SPI pins — verified by inspecting which host object the map file
-pulls in.
+`#if`-gates its port layer on that symbol and defaults to UART. Setting only
+the runtime `host_connection_mode` field builds and links cleanly while
+pulling in the UART host path and ignoring the SPI pins entirely;
+`tools/build_variants.py` asserts on the real image that
+`esp_openthread_spi_slave.c.obj` is linked and `esp_openthread_uart.c.obj` is
+not.
+
+#### One SPI slave, one owner
+
+The ESP32-C6 has a single general-purpose SPI peripheral (SPI0/SPI1 serve
+flash). Core's own `spi_slave` transport and OpenThread's RCP host connection
+both drive a slave on it, so **they cannot both run in one image**. In
+`mtkcore-154-rcp` the link belongs to Spinel: `main/mtek_spi_runtime.c` is
+compiled out under `CONFIG_OPENTHREAD_RADIO`. The factory UART0 adapter is
+unaffected and still reaches the canonical router, so the image keeps a
+control path.
+
+#### GPIO 6 means different things in different images
+
+This is a host-visible difference, not an implementation detail, and the
+STM32 side must account for it.
+
+| Image | GPIO 6 role | Asserted state | Driven by |
+|---|---|---|---|
+| universal, mtkcore-154 | Core DATA_READY | **HIGH** = outbound data available | `mtek_spi_runtime.c` |
+| mtkcore-154-rcp | Spinel host interrupt | **LOW** = RCP has a frame to transfer | ESP-IDF `esp_openthread_spi_slave.c` |
+
+The polarities are opposite. Core drives DATA_READY high exactly when the
+armed MISO cell is useful or outbound data is queued, and initializes it low.
+OpenThread's SPI slave drives the line low from `handle_spi_setup_done` when
+it wants the host to clock a transaction, and high again from
+`handle_spi_transaction_done`.
+
+Within a single image there is no contention -- each image has exactly one
+owner of the pin, enforced at compile time. The requirement lands on the
+host: **the STM32 must invert its interpretation of GPIO 6 according to which
+image is flashed**, and must not treat a low line in RCP mode as "no data".
+Nothing in the firmware can detect or correct a host that gets this wrong,
+which is why it is stated here rather than left to be discovered on a scope.
+This has not been exercised against real M1 hardware; see
+`docs/HARDWARE_DEBT.md`.
 
 ## Zigbee
 

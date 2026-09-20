@@ -2301,14 +2301,13 @@ static void mtek_wifi_dispatch(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t 
         case 0x0024: handle_captive_portal_get_credentials(ctx, op, req_bytes, req_len); return;
         case 0x0025: handle_captive_portal_get_diagnostics(ctx); return;
 #endif
-        /* SOFTAP (0x0019-0x001B) and PMKID_CAPTURE (0x001E/0x0026):
-         * SoftAP is a general reusable platform capability candidate for
-         * canonical core (not a module -- docs/ARCHITECTURE.md), and
-         * PMKID_CAPTURE has no Legacy SPI Compatibility/M1-Compatibility mapping at all per
-         * the accepted contract; neither is module-gated. Both, plus
-         * anything else reaching this point, are not implemented this
-         * session -- see docs/PROVENANCE.md. Returns the same wire
-         * status a DISABLED capability would (no side effect). */
+        /* PMKID_CAPTURE (0x001E/0x0026) has no Legacy SPI Compatibility
+         * mapping at all per the accepted contract and is not module-gated.
+         * It, and anything else reaching this point, is not implemented --
+         * see docs/PROVENANCE.md. Returns the same wire status a DISABLED
+         * capability would (no side effect). SoftAP (0x0019-0x001B) is
+         * handled above: it is implemented as a general reusable platform
+         * capability in canonical core, not a module (docs/ARCHITECTURE.md). */
         default: respond_empty(ctx, MTK_STATUS_UNSUPPORTED); return;
     }
 }

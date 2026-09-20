@@ -74,3 +74,37 @@ after its `sdkconfig` overlay file. Do not remove a row for a component that
 still exists in the source tree even if a variant disables it -- report it as
 "Compiled out", never omit it, so this document always answers "what does this
 image actually contain?" for every component.
+
+## Per-image capability matrix
+
+Three images ship. They share one schema, one opcode numbering and one
+capability-negotiation mechanism; they differ only in what is dispatchable.
+`GET_CAPABILITIES` reports the truth for whichever image is running, and a
+host must negotiate on that rather than on a variant name.
+
+| Capability | universal | mtkcore-154 | mtkcore-154-rcp |
+|---|---|---|---|
+| Wi-Fi station/scan/deauth/handshake | SUPPORTED | SUPPORTED | SUPPORTED |
+| SoftAP (`0x0019`-`0x001B`) | SUPPORTED | SUPPORTED | SUPPORTED |
+| Captive portal (`0x0022`-`0x0025`) | SUPPORTED | Compiled out | Compiled out |
+| Raw TX / monitor mode / capture | SUPPORTED | SUPPORTED | SUPPORTED |
+| ESP-NOW (`0x0006`) | SUPPORTED | SUPPORTED | SUPPORTED |
+| BLE / GATT (`0x0002`, `0x0003`) | SUPPORTED | Compiled out | Compiled out |
+| 802.15.4 raw radio (`0x0007`/`0x0001`-`0x0007`) | UNAVAILABLE | SUPPORTED | UNAVAILABLE |
+| 802.15.4 Core capture (`0x0007`/`0x000B`-`0x000D`) | UNAVAILABLE | SUPPORTED | UNAVAILABLE |
+| OpenThread RCP control (`0x0007`/`0x0008`-`0x000A`) | UNAVAILABLE | UNAVAILABLE | SUPPORTED |
+| Canonical Core protocol over SPI | yes | yes | **no** (Spinel owns the link) |
+| Factory UART0 REPL | yes | yes | yes |
+| UART PCAP streaming | yes | yes | yes |
+
+The 802.15.4 rows are exact complements by construction: capability reporting
+(`opcode_is_absent_in_this_image`, `mtek_system_logic.c`) and dispatch
+(`opcode_served_in_this_mode`, the 802.15.4 service) are driven by the same
+build-time condition, and the opcode-registry property test fails if they
+ever disagree.
+
+BLE and the captive portal are compiled out of the 802.15.4 variants to fund
+the radio within the free-DIRAM floor -- see `docs/BUILD_VARIANTS.md` for the
+measured figures. The RCP image additionally has no Core SPI transport, which
+is a transport fact rather than a memory one: see that document's "One SPI
+slave, one owner".
