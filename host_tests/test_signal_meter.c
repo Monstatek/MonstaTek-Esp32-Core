@@ -79,7 +79,7 @@ MTK_TEST_MAIN_BEGIN
     mtk_signal_meter_update_ev_t u1 = {0};
     mtk_decode(&mtk_signal_meter_update_ev_t_desc, &u1, upd1->body, upd1->body_len, NULL);
     MTK_CHECK_EQ(u1.raw_rssi, -55);
-    MTK_CHECK_EQ(u1.category, 1); /* STRONG: -60 <= rssi < -50 */
+    MTK_CHECK_EQ(u1.category, 0); /* STRONG: -60 <= rssi < -50 */
 
     /* The real sampling cadence is now self-throttled to ~5s (matching the
      * audit's own stated shipping figure) regardless of how often the caller's
@@ -97,18 +97,25 @@ MTK_TEST_MAIN_BEGIN
     for (unsigned i = 0; i < sink.event_count; i++) if (strcmp(sink.events[i].name, "SIGNAL_METER_UPDATE") == 0) updates++;
     MTK_CHECK_EQ(updates, 2);
 
-    /* RC6's own 3-consecutive- miss tolerance is reverted -- with a real ~5s
-     * sampling interval, the FIRST missed sample (itself already ~5 seconds
-     * after the last successful one) now declares LOST directly, matching the
-     * confirmed shipped figure instead of a multiple of it. */
+    /* One missed observation is recoverable. Ten 500ms polls notify once,
+     * keep ownership and target, then resume automatically without a new START. */
     g_fake_ble.signal_rc = 1;
-    s_mtk_test_now_ms += 5001;
-    mtek_ble_signal_meter_tick(); /* the one and only miss -> LOST */
-    const mtk_fake_event_t *lost = mtk_fake_find_event(&sink, "SIGNAL_METER_LOST");
-    MTK_CHECK(lost != NULL);
-    MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_NONE);
-
+    s_mtk_test_now_ms += 501; mtek_ble_signal_meter_tick();
+    MTK_CHECK(mtk_fake_find_event(&sink, "SIGNAL_METER_LOST") == NULL);
+    for (int i = 1; i < 10; ++i) { s_mtk_test_now_ms += 501; mtek_ble_signal_meter_tick(); }
+    MTK_CHECK(mtk_fake_find_event(&sink, "SIGNAL_METER_LOST") != NULL);
+    MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_SM);
+    unsigned before = sink.event_count;
+    s_mtk_test_now_ms += 501; mtek_ble_signal_meter_tick();
+    MTK_CHECK_EQ(sink.event_count, before);
+    g_fake_ble.signal_rc = 0; g_fake_ble.signal_rssi = -61;
+    s_mtk_test_now_ms += 501; mtek_ble_signal_meter_tick();
+    MTK_CHECK_EQ(sink.event_count, before + 1);
+    MTK_CHECK(strcmp(sink.events[before].name, "SIGNAL_METER_UPDATE") == 0);
     const mtk_opcode_entry_t *stop_op = mtk_test_find_op("SIGNAL_METER_STOP");
+    mtk_signal_meter_stop_req_t recovery_stop = { .operation_token = started.operation_token };
+    mtk_test_call(&ctx, stop_op, &recovery_stop);
+    MTK_CHECK_EQ(mtk_arbiter_active_class(), MTK_ARB_NONE);
 
     /* A fresh session that samples successfully every interval, with no
      * miss at all, never goes LOST -- stopped before this block's own
@@ -151,7 +158,7 @@ MTK_TEST_MAIN_BEGIN
     MTK_CHECK_EQ(stsink.response.status, MTK_STATUS_OK);
     mtk_signal_meter_stop_resp_t sr = {0};
     mtk_decode(stop_op->resp_desc, &sr, stsink.response.body, stsink.response.body_len, NULL);
-    MTK_CHECK_EQ(sr.final_state, MTK_OPS_FAILED); /* already terminal from the LOST path */
+    MTK_CHECK_EQ(sr.final_state, MTK_OPS_STOPPED); /* already terminal from the LOST path */
 
     mtk_ble_hal_t cancelling_hal = g_fake_ble_hal;
     cancelling_hal.signal_sample = cancel_during_sample;

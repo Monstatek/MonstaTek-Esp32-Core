@@ -1,9 +1,11 @@
-/* Clean-room implementation from MonstaTek contract, built against
+/* Current Core HAL, with historical MonstaTek station filtering and raw-TX
+ * hook reconciled from m1-esp32c6-fw 78e6543 (see docs/CUMULATIVE_CORE.md). Built against
  * official ESP-IDF v6.0.1 APIs (esp_wifi.h, esp_netif.h, esp_event.h).
  * Real radio-facing HAL for the ESP32-C6 target build -- see
  * docs/PROVENANCE.md: host-tested only; hardware behavior is not
  * validated here. */
 #include "mtek_wifi_hal_esp32.h"
+#include "mtek_wifi_station.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_netif.h"
@@ -419,7 +421,6 @@ static void sta_scan_promisc_cb(void *buf, wifi_promiscuous_pkt_type_t type) {
     const wifi_promiscuous_pkt_t *pkt = (const wifi_promiscuous_pkt_t *)buf;
     if (pkt->rx_ctrl.sig_len < 24) return;
     const uint8_t *p = pkt->payload;
-    const uint8_t *addr1 = p + 4, *addr2 = p + 10, *addr3 = p + 16;
     /* Brief, bounded wait (never portMAX_DELAY from a callback this file
      * cannot fully control the scheduling latency of) -- if the owning
      * task happens to hold the lock for longer than this, the frame is
@@ -428,14 +429,14 @@ static void sta_scan_promisc_cb(void *buf, wifi_promiscuous_pkt_type_t type) {
      * (e.g. the GATT notify queue's own bounded-drop behavior). */
     if (xSemaphoreTake(s_sta_scan_mutex, pdMS_TO_TICKS(20)) != pdTRUE) return;
     if (!s_sta_scan_session.active) { xSemaphoreGive(s_sta_scan_mutex); return; }
-    const uint8_t *station = NULL;
-    if (memcmp(addr1, s_sta_scan_session.target.b, 6) == 0) station = addr2;
-    else if (memcmp(addr2, s_sta_scan_session.target.b, 6) == 0) station = addr1;
-    else if (memcmp(addr3, s_sta_scan_session.target.b, 6) == 0) station = addr2;
+    const uint8_t *station = mtk_wifi_station_from_frame(p, pkt->rx_ctrl.sig_len, s_sta_scan_session.target.b);
     if (station) {
         uint8_t dup = 0;
         for (unsigned i = 0; i < s_sta_scan_session.count; i++) {
-            if (memcmp(s_sta_scan_session.results[i].mac.b, station, 6) == 0) { dup = 1; break; }
+            if (memcmp(s_sta_scan_session.results[i].mac.b, station, 6) == 0) {
+                s_sta_scan_session.results[i].rssi = pkt->rx_ctrl.rssi;
+                dup = 1; break;
+            }
         }
         if (!dup && s_sta_scan_session.count < s_sta_scan_session.max_out) {
             memcpy(s_sta_scan_session.results[s_sta_scan_session.count].mac.b, station, 6);
@@ -668,30 +669,17 @@ static void esp32_get_status(mtk_hal_sta_status_t *out) {
     }
 }
 
-/* 802.11 deauthentication frame: fixed 26-byte management frame
- * (fc, duration, addr1=dest, addr2=src, addr3=bssid, seq, reason=2).
- *
- * CONFIRMED HARDWARE-TEST BLOCKER (not a claim of working deauth): the
- * installed ESP-IDF v6.0.1 esp_wifi.h's own doc comment for
- * esp_wifi_80211_tx states "Currently only support for sending
- * beacon/probe request/probe response/action and non-QoS data frame" --
- * a deauthentication frame (management, subtype 0xC0) is not in that
- * documented set. Whether the underlying ESP32-C6 driver actually
- * transmits it anyway (common, undocumented behavior on other ESP32
- * variants in generic raw-TX tooling) is NOT confirmed for this chip/
- * IDF version without hardware evidence -- see docs/PROVENANCE.md. The
- * canonical service/protocol logic above this HAL call (target
- * selection, arbiter, lifecycle, STOP/status, radio restoration) is
- * implemented and host-tested regardless of this specific RF-transmit
- * uncertainty; only the final over-the-air step is blocked pending
- * hardware. `en_sys_seq=true` is used unconditionally (never false):
- * per the same doc comment, `false` is only valid *before* a Wi-Fi
- * station connection exists and returns ESP_ERR_INVALID_ARG once
- * connected -- `true` is always valid, so it is the only safe choice for
- * a call site that cannot assume connection state. Every failure is
- * logged (not silently discarded): the caller (mtek_wifi_logic.c) also
- * counts and can report send failures independent of the attempted
- * count already carried on the wire (DEAUTH_STOPPED.total_sent). */
+/* The validated m1-esp32c6-fw (78e6543) supplies this driver hook.
+ * ESP-IDF 6.0.1's default rejects Deauth before it reaches the radio.
+ * The matching linker option is required because the driver also defines it.
+ * Keep target selection, pacing, exclusion and error reporting in current Core.
+ * This private ABI is verified against the linked ELF; hardware acceptance is
+ * still required whenever the Wi-Fi binary driver/toolchain changes. */
+int ieee80211_raw_frame_sanity_check(int32_t arg, int32_t arg2, int32_t arg3) {
+    (void)arg; (void)arg2; (void)arg3;
+    return 0;
+}
+
 static int esp32_send_deauth(mtk_hal_mac6_t ap_bssid, mtk_hal_mac6_t station, uint8_t channel) {
     if (!capture_prior_state_once()) return -1; /* a required snapshot read failed -- never transmit over unknown prior state */
     /* "Deauth logs a channel-set failure and may still transmit on the wrong
@@ -713,7 +701,7 @@ static int esp32_send_deauth(mtk_hal_mac6_t ap_bssid, mtk_hal_mac6_t station, ui
     frame[24] = 2; frame[25] = 0; /* reason code 2: PREV_AUTH_NOT_VALID */
     esp_err_t err = esp_wifi_80211_tx(WIFI_IF_STA, frame, sizeof(frame), true);
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "esp_wifi_80211_tx(deauth) failed: %s (frame type unconfirmed-supported on this chip/IDF, see docs/PROVENANCE.md)",
+        ESP_LOGW(TAG, "esp_wifi_80211_tx(deauth) failed: %s",
                  esp_err_to_name(err));
         return -1;
     }

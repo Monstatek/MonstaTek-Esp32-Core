@@ -36,10 +36,13 @@ typedef struct mtk_uart_adapter_state {
     int sta_selected;
 
     uint8_t deauth_running; uint32_t deauth_token;
+    uint32_t deauth_pending;
+    uint8_t deauth_stop_pending;
     uint8_t handshake_running; uint32_t handshake_token;
     uint8_t beacon_running; uint32_t beacon_token;
 
     /* BLE: cached scan table, advertising/signal-meter/GATT session state. */
+    uint8_t ble_live;
     uint8_t ble_scan_valid;
     uint16_t ble_count;
     /* Needed to dispatch BLE_DEVICE_DETAILS for `list <id>`/`list -d` (the same

@@ -43,6 +43,8 @@ static uint64_t now_ms(void) { return s_now; }
 static pthread_mutex_t s_mutex = PTHREAD_MUTEX_INITIALIZER;
 static void router_lock(void) { pthread_mutex_lock(&s_mutex); }
 static void router_unlock(void) { pthread_mutex_unlock(&s_mutex); }
+static void queue_lock(void *p) { (void)p; router_lock(); }
+static void queue_unlock(void *p) { (void)p; router_unlock(); }
 
 typedef struct { void (*fn)(void *); void *arg; } trampoline_arg_t;
 static void *pthread_trampoline(void *arg) {
@@ -104,6 +106,7 @@ MTK_TEST_MAIN_BEGIN
 
     mtk_uart_adapter_state_t st;
     mtek_uart_adapter_init(&st, 0xA5A5);
+    mtk_async_queue_set_lock(&st.session_queue, queue_lock, queue_unlock, NULL);
 
     g_fake_wifi.ap_count = 1;
     memcpy(g_fake_wifi.ap_results[0].bssid.b, (uint8_t[]){0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}, 6);
@@ -129,9 +132,8 @@ MTK_TEST_MAIN_BEGIN
      * never gets set to ACCEPTED synchronously. */
     MTK_CHECK(strstr(out, "[!] Scan failed.") == NULL);
 
-    /* A second UART-originated ACCEPTED_ASYNC command (DEAUTH_START via
-     * `deauth`) after a real select, same proof: synchronous, real HAL
-     * side effect visible immediately, no deferral. */
+    /* Deauth deliberately uses a persistent sink and a worker: it must
+     * continue until STOP without blocking UART. Scans above remain inline. */
     mtek_uart_process_line(&st, "select -a 0", out, sizeof(out));
     g_fake_wifi.sta_count = 1;
     memcpy(g_fake_wifi.sta_results[0].mac.b, (uint8_t[]){0x02, 0x02, 0x02, 0x02, 0x02, 0x02}, 6);
@@ -139,8 +141,11 @@ MTK_TEST_MAIN_BEGIN
     mtek_uart_process_line(&st, "scan -s", out, sizeof(out));
     mtek_uart_process_line(&st, "select -s 0", out, sizeof(out));
     mtek_uart_process_line(&st, "deauth", out, sizeof(out));
+    for (unsigned i=0; i<1000 && st.deauth_pending; i++) {
+        usleep(1000); mtek_uart_adapter_poll_background(&st,out,sizeof(out));
+    }
     MTK_CHECK(strcmp(out, "[*] Deauth started.\n") == 0);
-    MTK_CHECK_EQ(g_fake_wifi.deauth_sent_count, 1); /* real HAL already reached synchronously */
+    MTK_CHECK(st.deauth_running);
     mtek_uart_process_line(&st, "stop", out, sizeof(out));
 
     /* Let every detached worker thread this test spawned actually run to

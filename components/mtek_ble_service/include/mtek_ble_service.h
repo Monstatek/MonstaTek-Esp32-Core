@@ -22,7 +22,9 @@ mtk_register_result_t mtek_ble_service_register(void); /* registers service_id 0
  * established pattern exactly: bracket every mutation and cross-task read of
  * s_sig/s_gatt below, and are always released before any external HAL/sink call
  * (this tree's own established "never hold a lock across an external call"
- * rule). */
+ * rule). Live discovery is the bounded exception: start/stop/snapshot hold
+ * this mutex while invoking only nonblocking HAL operations whose callbacks
+ * take the separate lifecycle mutex and never this service mutex. */
 typedef void (*mtk_ble_lock_fn)(void);
 void mtek_ble_service_set_lock(mtk_ble_lock_fn lock, mtk_ble_lock_fn unlock);
 
@@ -108,6 +110,13 @@ uint8_t mtek_ble_gatt_take_remote_disconnect_notice(uint8_t *reason_out);
  * via mtk_op_evict -- {0,0} if nothing was cancelled or the resource released
  * (GATT) carries no live operation token of its own to evict. */
 mtk_op_id_t mtek_ble_cancel_active_for_peer_reset(void);
+
+/* Factory UART live discovery; caller serializes start/snapshot/stop. */
+int mtek_ble_live_start(mtk_request_ctx_t *ctx);
+void mtek_ble_live_stop(void);
+unsigned mtek_ble_live_snapshot(uint32_t *generation);
+const mtk_hal_ble_adv_t *mtek_ble_live_item(unsigned index);
+uint32_t mtek_ble_observation_age(const mtk_hal_ble_adv_t *item);
 
 #ifdef __cplusplus
 }

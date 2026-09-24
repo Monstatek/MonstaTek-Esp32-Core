@@ -18,7 +18,8 @@ typedef struct {
     int8_t rssi;
     uint8_t adv_type;
     uint8_t name[32];
-    uint8_t name_len;
+    uint8_t name_len : 6; /* 0..32; pack internal name quality into the spare bits */
+    uint8_t name_complete : 1;
     uint8_t flags;
     uint8_t tx_power; /* 127 = unset, matching the canonical i8|127 encoding */
     uint8_t mfg_data[31];
@@ -34,6 +35,7 @@ typedef struct {
      * regardless of whether a real scan response was seen. */
     uint8_t raw_scan_rsp[31];
     uint8_t raw_scan_rsp_len;
+    uint32_t last_seen_ms;
 } mtk_hal_ble_adv_t;
 
 typedef struct {
@@ -126,6 +128,11 @@ typedef struct mtk_ble_hal {
      * may omit it -- mtek_ble_logic.c treats a NULL function pointer the same as
      * "always reports 0"). */
     uint32_t (*gatt_notify_dropped_count)(void);
+    /* Optional continuous discovery / signal teardown; UART live mode only. */
+    int (*live_start)(const mtk_hal_ble_adv_t *previous, unsigned count);
+    int (*live_snapshot)(mtk_hal_ble_adv_t *out, unsigned max);
+    void (*live_stop)(void);
+    void (*signal_stop)(void);
 } mtk_ble_hal_t;
 
 void mtek_ble_set_hal(const mtk_ble_hal_t *hal);

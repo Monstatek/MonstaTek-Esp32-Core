@@ -145,7 +145,7 @@ void mtk_router_dispatch(mtk_request_ctx_t *ctx, uint16_t service_id, uint16_t o
 
     /* Only an explicitly persistent sink may be deferred. Adapters choose
      * execution eligibility independently of their wire/capability profile;
-     * factory UART continues to select inline dispatch. */
+     * factory UART selects inline dispatch except its persistent Deauth session. */
     if (s_async_runner && op->lifecycle == MTK_LC_ACCEPTED_ASYNC &&
         ctx->dispatch_mode == MTK_DISPATCH_DEFER_ALLOWED) {
         if (req_len > MTK_ROUTER_ASYNC_MAX_PAYLOAD) {

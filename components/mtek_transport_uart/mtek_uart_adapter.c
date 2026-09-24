@@ -509,18 +509,18 @@ static size_t handle_deauth(mtk_uart_adapter_state_t *st, const char *rest, char
         return emit(out, out_cap, 0, "[!] Usage: deauth [set <id,id,...>|all|broadcast]\n");
     }
 
-    memset(&cap, 0, sizeof(cap));
-    mtk_request_ctx_t ctx = make_ctx(st, &cap);
+    if (st->deauth_pending || st->deauth_running) return emit(out, out_cap, 0, "[!] Deauth already active.\n");
+    mtk_request_ctx_t ctx = make_session_ctx(st);
+    ctx.dispatch_mode = MTK_DISPATCH_DEFER_ALLOWED;
+    st->deauth_pending = ctx.correlation;
+    st->deauth_stop_pending = 0;
     const mtk_opcode_entry_t *op = mtk_opcode_find(0x0001, 0x0010);
     uint8_t buf[256]; size_t blen = 0;
     mtk_encode(op->req_desc, &req, buf, sizeof(buf), &blen);
     mtk_router_dispatch(&ctx, 0x0001, 0x0010, buf, blen);
-    if (cap.status != MTK_STATUS_ACCEPTED) return emit(out, out_cap, 0, "[!] Invalid deauth target selection. Scan/select targets first.\n");
-    st->deauth_running = 1;
-    mtk_deauth_start_resp_t started = {0};
-    mtk_decode(op->resp_desc, &started, cap.body, cap.body_len, NULL);
-    st->deauth_token = started.operation_token;
-    return emit(out, out_cap, 0, "[*] Deauth started.\n");
+    /* ACK is delivered by poll_background after the worker actually starts.
+     * No caller-owned response buffer is retained by the worker. */
+    return mtek_uart_adapter_poll_background(st, out, out_cap);
 }
 
 static size_t handle_beacon(mtk_uart_adapter_state_t *st, const char *rest, char *out, size_t out_cap) {
@@ -541,11 +541,12 @@ static size_t handle_beacon(mtk_uart_adapter_state_t *st, const char *rest, char
     }
     if (req.ssids.count == 0) return emit(out, out_cap, 0, "[!] Usage: beacon \"ssid1\" \"ssid2\" ...\n");
     memset(&cap, 0, sizeof(cap));
-    mtk_request_ctx_t ctx = make_ctx(st, &cap);
+    mtk_request_ctx_t ctx = make_session_ctx(st);
     const mtk_opcode_entry_t *op = mtk_opcode_find(0x0001, 0x000D);
     uint8_t buf[1200]; size_t blen = 0;
     mtk_encode(op->req_desc, &req, buf, sizeof(buf), &blen);
     mtk_router_dispatch(&ctx, 0x0001, 0x000D, buf, blen);
+    drain_session_response(st, &cap, NULL, NULL);
     if (cap.status != MTK_STATUS_ACCEPTED) return emit(out, out_cap, 0, "[!] Beacon start failed.\n");
     st->beacon_running = 1;
     mtk_beacon_start_resp_t started = {0};
@@ -559,7 +560,7 @@ static size_t handle_handshake(mtk_uart_adapter_state_t *st, char *out, size_t o
     mtk_handshake_start_req_t req = {0};
     req.target_bssid = st->ap_table[st->ap_selected].bssid;
     req.channel = st->ap_table[st->ap_selected].channel;
-    req.deauth_count = 0;
+    req.deauth_count = 150; /* historical 3-second burst, paced at 20ms */
     /* Persistent, queue-backed sink : the real target's promiscuous-mode
      * callback delivers HANDSHAKE_EVENT frames from the Wi-Fi driver's own task,
      * well after this dispatch returns -- mtek_wifi_logic.c's
@@ -589,6 +590,7 @@ static size_t handle_handshake(mtk_uart_adapter_state_t *st, char *out, size_t o
 
 static size_t handle_stop(mtk_uart_adapter_state_t *st, char *out, size_t out_cap) {
     size_t used = emit(out, out_cap, 0, "[!] Stopping...\n");
+    if (st->deauth_pending) st->deauth_stop_pending = 1;
     if (st->deauth_running) {
         mtk_deauth_stop_req_t req = {0}; req.operation_token = st->deauth_token;
         memset(&cap, 0, sizeof(cap));
@@ -710,13 +712,38 @@ static size_t handle_ble_scan(mtk_uart_adapter_state_t *st, uint8_t passive, con
     return emit(out, out_cap, used, "[+] BLE scan complete. %u device(s) found.\n", (unsigned)st->ble_count);
 }
 
+static size_t handle_ble_live(mtk_uart_adapter_state_t *st, char *out, size_t out_cap) {
+    mtk_request_ctx_t ctx = make_session_ctx(st);
+    if (mtek_ble_live_start(&ctx) != 0) return emit(out, out_cap, 0, "[!] Radio busy or BLE not ready\n");
+    st->ble_live = 1;
+    return emit(out, out_cap, 0, "[BLE:SCAN:LIVE]\n");
+}
+static void pause_ble_live(mtk_uart_adapter_state_t *st) {
+    if (st->ble_live) { mtek_ble_live_stop(); st->ble_live = 0; }
+}
+
 static size_t handle_ble_list(mtk_uart_adapter_state_t *st, char *out, size_t out_cap) {
+    if (st->ble_live) {
+        st->ble_count = mtek_ble_live_snapshot(&st->ble_generation);
+        st->ble_scan_valid = 1;
+        for (unsigned i = 0; i < st->ble_count; ++i) {
+            const mtk_hal_ble_adv_t *a = mtek_ble_live_item(i);
+            memcpy(st->ble_addr[i].b, a->addr.b, 6); st->ble_addr_type[i] = a->addr_type;
+            st->ble_rssi[i] = a->rssi; st->ble_name_len[i] = a->name_len;
+            memcpy(st->ble_name[i], a->name, a->name_len);
+        }
+    }
     if (!st->ble_scan_valid) return emit(out, out_cap, 0, "[!] No BLE scan results. Run 'scan' first.\n");
     size_t used = 0;
     for (uint16_t i = 0; i < st->ble_count; i++) {
         char mac[18]; mac_to_str(st->ble_addr[i].b, mac);
         char name[33]; memcpy(name, st->ble_name[i], st->ble_name_len[i]); name[st->ble_name_len[i]] = 0;
-        used = emit(out, out_cap, used, "[%02u] %s RSSI=%d NAME=%s\n", i, mac, st->ble_rssi[i], name);
+        if (st->ble_live) {
+            const mtk_hal_ble_adv_t *a = mtek_ble_live_item(i);
+            unsigned company = a->mfg_len >= 2 ? (unsigned)a->mfg_data[0] | ((unsigned)a->mfg_data[1] << 8) : 65535;
+            used = emit(out, out_cap, used, "[%02u] %s RSSI=%d AGE=%lu MFG=%u NAME=%s\n", i, mac, st->ble_rssi[i],
+                        (unsigned long)mtek_ble_observation_age(a), company, name);
+        } else used = emit(out, out_cap, used, "[%02u] %s RSSI=%d NAME=%s\n", i, mac, st->ble_rssi[i], name);
     }
     return used;
 }
@@ -902,8 +929,39 @@ static size_t handle_ble_advertise(mtk_uart_adapter_state_t *st, const char *nam
 }
 
 static size_t handle_ble_signal(mtk_uart_adapter_state_t *st, const char *arg, char *out, size_t out_cap) {
-    int id = -1; sscanf(arg, "%d", &id);
-    if (!st->ble_scan_valid || id < 0 || (unsigned)id >= st->ble_count) return emit(out, out_cap, 0, "[!] Invalid BLE ID: %s\n", arg);
+    if (strcmp(arg, "stop") == 0) {
+        if (st->ble_signal_running) {
+            mtk_signal_meter_stop_req_t req = {0}; req.operation_token = st->ble_signal_token;
+            mtk_request_ctx_t ctx = make_ctx(st, &cap);
+            const mtk_opcode_entry_t *op = mtk_opcode_find(0x0002, 0x000B);
+            uint8_t buf[8]; size_t len = 0;
+            mtk_encode(op->req_desc, &req, buf, sizeof(buf), &len);
+            mtk_router_dispatch(&ctx, 0x0002, 0x000B, buf, len);
+            st->ble_signal_running = 0;
+        }
+        return emit(out, out_cap, 0, "[BLE:SIG:STOP]\n");
+    }
+    int id = -1;
+    if (strchr(arg, ':')) {
+        /* Resolve against the last published snapshot, then copy address+type.
+         * A later scan snapshot can never redirect this operation by index. */
+        for (unsigned i = 0; i < st->ble_count; ++i) {
+            char mac[18]; mac_to_str(st->ble_addr[i].b, mac);
+            if (strcmp(mac, arg) == 0) {
+                if (id >= 0) return emit(out, out_cap, 0, "[!] Ambiguous BLE address\n");
+                id = (int)i;
+            }
+        }
+    } else {
+        char *end; long n = strtol(arg, &end, 10);
+        if (end != arg && !*end && n >= 0 && n < st->ble_count) id = (int)n;
+    }
+    if (!st->ble_scan_valid || id < 0) return emit(out, out_cap, 0, "[!] Invalid BLE ID: %s\n", arg);
+    if (st->gatt_connected) return emit(out, out_cap, 0, "[!] Radio busy\n");
+    pause_ble_live(st);
+    if (st->ble_signal_running) return emit(out, out_cap, 0, "[!] Signal meter already running; stop first\n");
+    mtk_async_frame_t stale;
+    while (mtk_async_queue_pop(&st->session_queue, &stale)) { /* previous stopped meter */ }
     mtk_signal_meter_start_req_t req = {0};
     req.target.addr = st->ble_addr[id]; req.target.addr_type = st->ble_addr_type[id];
     /* Persistent, queue-backed sink : every SIGNAL_METER_UPDATE/LOST after the
@@ -1260,6 +1318,7 @@ static int mtek_uart_line_is_recognized(const mtk_uart_adapter_state_t *st, cons
     if (strcmp(line, "list") == 0 || strcmp(line, "list -d") == 0 || starts_with(line, "list ")) return 1;
     if (strcmp(line, "advertise") == 0 || starts_with(line, "advertise -n ")) return 1;
     if (starts_with(line, "signal ") || starts_with(line, "connect ")) return 1;
+    if (strcmp(line, "resume") == 0) return 1;
     if (strcmp(line, "services") == 0) return 1;
     if (starts_with(line, "read ") || starts_with(line, "write ") || starts_with(line, "writenr ")) return 1;
     if (strcmp(line, "confirm") == 0 || strcmp(line, "cancel") == 0) return 1;
@@ -1279,10 +1338,12 @@ size_t mtek_uart_process_line(mtk_uart_adapter_state_t *st, const char *line, ch
      * string on a bare Enter for this to take effect; previously it silently
      * discarded a bare Enter before ever reaching this function at all. */
     if (line[0] == 0) {
-        if (st->deauth_running || st->handshake_running || st->beacon_running || st->ble_adv_running || st->ble_signal_running)
+        if (st->deauth_pending || st->deauth_running || st->handshake_running || st->beacon_running || st->ble_adv_running || st->ble_signal_running)
             return handle_stop(st, out, out_cap);
         return 0;
     }
+    if (st->deauth_pending && strcmp(line, "stop") != 0)
+        return emit(out,out_cap,0,"[!] Deauth start pending.\n");
     if (strcmp(line, "help") == 0) return format_help_block(out, out_cap);
     if (strcmp(line, "version") == 0) {
         memset(&cap, 0, sizeof(cap));
@@ -1295,7 +1356,7 @@ size_t mtek_uart_process_line(mtk_uart_adapter_state_t *st, const char *line, ch
         return emit(out, out_cap, 0, "MonstaTek M1 ESP32-C6 v%u.%u.%u\n", v.product_major, v.product_minor, v.product_patch);
     }
     if (strcmp(line, "mode") == 0) return emit(out, out_cap, 0, "[*] Current mode: %s\n", st->mode == MTK_UART_MODE_WIFI ? "WIFI" : "BLE");
-    if (strcmp(line, "mode -w") == 0) { st->mode = MTK_UART_MODE_WIFI; return emit(out, out_cap, 0, "[*] Current mode: WIFI\n"); }
+    if (strcmp(line, "mode -w") == 0) { pause_ble_live(st); st->mode = MTK_UART_MODE_WIFI; return emit(out, out_cap, 0, "[*] Current mode: WIFI\n"); }
     if (strcmp(line, "mode -b") == 0) { st->mode = MTK_UART_MODE_BLE; return emit(out, out_cap, 0, "[*] Current mode: BLE\n"); }
     if (strcmp(line, "reboot") == 0) { st->reboot_requested = 1; return emit(out, out_cap, 0, "[*] Rebooting system...\n"); }
 
@@ -1310,11 +1371,13 @@ size_t mtek_uart_process_line(mtk_uart_adapter_state_t *st, const char *line, ch
         if (starts_with(line, "beacon ")) return handle_beacon(st, line + 7, out, out_cap);
         if (strcmp(line, "handshake") == 0) return handle_handshake(st, out, out_cap);
         if (starts_with(line, "deauth")) return handle_deauth(st, line + 6, out, out_cap);
-        if (strcmp(line, "stop") == 0) return handle_stop(st, out, out_cap);
+        if (strcmp(line, "stop") == 0) { pause_ble_live(st); return handle_stop(st, out, out_cap); }
         return emit(out, out_cap, 0, "[!] WIFI mode supports only WIFI commands. Type 'help' for available commands.\n");
     } else {
-        if (strcmp(line, "scan") == 0) return handle_ble_scan(st, 0, "", out, out_cap);
+        if (strcmp(line, "scan live") == 0 || strcmp(line, "resume") == 0) return handle_ble_live(st, out, out_cap);
+        if (strcmp(line, "scan") == 0) { pause_ble_live(st); return handle_ble_scan(st, 0, "", out, out_cap); }
         if (starts_with(line, "scan ")) {
+            pause_ble_live(st);
             const char *rest = line + 5;
             uint8_t passive = (strstr(rest, "-p") != NULL) ? 1 : 0;
             return handle_ble_scan(st, passive, rest, out, out_cap);
@@ -1325,7 +1388,16 @@ size_t mtek_uart_process_line(mtk_uart_adapter_state_t *st, const char *line, ch
         if (strcmp(line, "advertise") == 0) return handle_ble_advertise(st, NULL, out, out_cap);
         if (starts_with(line, "advertise -n ")) return handle_ble_advertise(st, line + 13, out, out_cap);
         if (starts_with(line, "signal ")) return handle_ble_signal(st, line + 7, out, out_cap);
-        if (starts_with(line, "connect ")) return handle_ble_connect(st, line + 8, out, out_cap);
+        if (starts_with(line, "connect ")) {
+            uint8_t was_live = st->ble_live;
+            pause_ble_live(st);
+            size_t used = handle_ble_connect(st, line + 8, out, out_cap);
+            if (was_live && !st->gatt_connected) {
+                mtk_request_ctx_t ctx = make_session_ctx(st);
+                st->ble_live = mtek_ble_live_start(&ctx) == 0;
+            }
+            return used;
+        }
         if (strcmp(line, "services") == 0) return handle_ble_services(st, out, out_cap);
         if (starts_with(line, "read ")) return handle_ble_read(st, line + 5, out, out_cap);
         if (starts_with(line, "write ")) return handle_ble_write_stage(st, line + 6, 1, out, out_cap);
@@ -1337,7 +1409,7 @@ size_t mtek_uart_process_line(mtk_uart_adapter_state_t *st, const char *line, ch
         if (starts_with(line, "unsubscribe ")) return handle_ble_unsubscribe(st, line + 12, out, out_cap);
         if (strcmp(line, "status") == 0) return handle_ble_status(st, out, out_cap);
         if (strcmp(line, "disconnect") == 0) return handle_ble_disconnect(st, out, out_cap);
-        if (strcmp(line, "stop") == 0) return handle_stop(st, out, out_cap);
+        if (strcmp(line, "stop") == 0) { pause_ble_live(st); return handle_stop(st, out, out_cap); }
         return emit(out, out_cap, 0,
             "[!] BLE mode supports 'scan', 'list <id>|all', 'advertise', and 'stop' commands. Type 'help' for available commands.\n");
     }
@@ -1353,6 +1425,11 @@ size_t mtek_uart_process_line(mtk_uart_adapter_state_t *st, const char *line, ch
  * (`[BLE:SIG]`/`[BLE:NTF]`/`[BLE:IND]`/handshake phase tags,), not an invented
  * format. */
 static size_t format_background_frame(const mtk_async_frame_t *f, char *out, size_t out_cap) {
+    if (f->kind == MTK_ASYNC_FRAME_EVENT && strcmp(f->event_name, "DEAUTH_PROGRESS") == 0) {
+        mtk_deauth_progress_ev_t ev = {0};
+        mtk_decode(&mtk_deauth_progress_ev_t_desc,&ev,f->body,f->body_len,NULL);
+        return emit(out,out_cap,0,"[*] %u pkts/s\n",ev.packets_per_second);
+    }
     if (f->kind == MTK_ASYNC_FRAME_EVENT && strcmp(f->event_name, "HANDSHAKE_EVENT") == 0) {
         mtk_handshake_event_ev_t ev = {0};
         mtk_decode(&mtk_handshake_event_ev_t_desc, &ev, f->body, f->body_len, NULL);
@@ -1403,6 +1480,33 @@ size_t mtek_uart_adapter_poll_background(mtk_uart_adapter_state_t *st, char *out
     }
     mtk_async_frame_t f;
     while (mtk_async_queue_pop(&st->session_queue, &f)) {
+        if (f.kind == MTK_ASYNC_FRAME_RESPONSE && st->deauth_pending && f.correlation == st->deauth_pending) {
+            st->deauth_pending = 0;
+            if (f.seq_or_status != MTK_STATUS_ACCEPTED) {
+                st->deauth_stop_pending = 0;
+                return emit(out,out_cap,0,"[!] Deauth start failed.\n");
+            }
+            mtk_deauth_start_resp_t r = {0};
+            mtk_decode(&mtk_deauth_start_resp_t_desc,&r,f.body,f.body_len,NULL);
+            st->deauth_token = r.operation_token; st->deauth_running = 1;
+            if (st->deauth_stop_pending) {
+                st->deauth_stop_pending = 0;
+                return handle_stop(st,out,out_cap);
+            }
+            return emit(out,out_cap,0,"[*] Deauth started.\n");
+        }
+        if (f.kind == MTK_ASYNC_FRAME_EVENT && strcmp(f.event_name,"DEAUTH_STOPPED")==0) {
+            mtk_deauth_stopped_ev_t ev = {0};
+            mtk_decode(&mtk_deauth_stopped_ev_t_desc,&ev,f.body,f.body_len,NULL);
+            if (ev.operation_token == st->deauth_token) st->deauth_running = 0;
+            return emit(out,out_cap,0,"[*] Deauth stopped.\n");
+        }
+        if (f.kind == MTK_ASYNC_FRAME_EVENT && strcmp(f.event_name,"BEACON_STOPPED")==0) {
+            mtk_beacon_stopped_ev_t ev = {0};
+            mtk_decode(&mtk_beacon_stopped_ev_t_desc,&ev,f.body,f.body_len,NULL);
+            if (ev.operation_token == st->beacon_token) st->beacon_running = 0;
+            return emit(out,out_cap,0,"[*] Beacon stopped. status=%u\n",ev.status);
+        }
         size_t n = format_background_frame(&f, out, out_cap);
         if (n) return n; /* one event per call, matching the REPL's own one-line-at-a-time idle poll */
     }

@@ -151,6 +151,7 @@ mtk_add_test(test_wifi_scan_connect)
 mtk_add_test(test_ble_scan_adv)
 mtk_add_test(test_gatt_rw_sub)
 mtk_add_test(test_signal_meter)
+mtk_add_test(test_ble_live_signal)
 mtk_add_test(test_release_artifact)
 # Release validation must validate the actual release pair: bake the real,
 # absolute project root
@@ -279,3 +280,9 @@ if(Python3_FOUND)
     # exercising validate_pair() against synthetic temp files.
     add_test(NAME test_release_negative COMMAND ${Python3_EXECUTABLE} ${ROOT}/tools/validate_release_negative.py --root ${ROOT})
 endif()
+mtk_add_test(test_wifi_station_filter)
+mtk_add_test(test_beacon_lifecycle)
+mtk_add_test(test_uart_deauth_worker)
+target_link_libraries(test_uart_deauth_worker PRIVATE pthread)
+mtk_add_test(test_cumulative_radio_flow)
+mtk_add_test(test_handshake_burst)

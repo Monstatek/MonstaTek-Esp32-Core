@@ -16,6 +16,7 @@
 #include "mtk_ble_op_generation.h"
 #include "mtk_ble_op_lifecycle.h"
 #include "mtek_ble_disc_status.h"
+#include "mtek_ble_adv_merge.h"
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "host/ble_hs.h"
@@ -25,6 +26,7 @@
 #include "host/util/util.h"
 #include "services/gap/ble_svc_gap.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include <string.h>
@@ -146,8 +148,10 @@ int mtek_ble_hal_esp32_init(void) {
 typedef struct {
     mtk_hal_ble_adv_t *out;
     unsigned max, count;
-    char name_filter[33];
     SemaphoreHandle_t done;
+    uint8_t target_only;
+    mtk_hal_mac6_t target;
+    uint8_t target_type;
 } scan_ctx_t;
 /* The per-operation context is no longer held in a separate
  * file-scope pointer that a callback reads outside the lifetime lock -- it is
@@ -176,67 +180,13 @@ typedef struct {
  * runs with the lifetime lock held (its caller entered via
  * mtk_ble_op_lifecycle_callback_begin), touching only the published `c`. */
 static void scan_handle_disc(scan_ctx_t *c, struct ble_gap_event *event) {
-    {
-        struct ble_hs_adv_fields fields;
-        memset(&fields, 0, sizeof(fields));
-        ble_hs_adv_parse_fields(&fields, event->disc.data, event->disc.length_data);
-        if (c->name_filter[0]) {
-            size_t filter_len = strlen(c->name_filter);
-            if (!fields.name || fields.name_len != filter_len ||
-                memcmp(fields.name, c->name_filter, filter_len) != 0) {
-                return;
-            }
-        }
-        for (unsigned i = 0; i < c->count; i++) {
-            if (memcmp(c->out[i].addr.b, event->disc.addr.val, 6) == 0 && c->out[i].addr_type == event->disc.addr.type) {
-                /* (rework): a genuine SCAN_RSP PDU for an already-recorded
-                 * device is merged into its own raw_scan_rsp instead of being
-                 * dropped like an ordinary repeat advertisement -- fixes the
-                 * previously- undiscovered dead-field bug where raw_scan_rsp was
-                 * never populated by any code path at all. Only the first scan
-                 * response seen for a device is kept (a real scan response is
-                 * static content re-broadcast identically on every SCAN_RSP for
-                 * one scan session). */
-                if (event->disc.event_type == BLE_HCI_ADV_RPT_EVTYPE_SCAN_RSP && c->out[i].raw_scan_rsp_len == 0) {
-                    uint8_t rlen = event->disc.length_data > 31 ? 31 : event->disc.length_data;
-                    memcpy(c->out[i].raw_scan_rsp, event->disc.data, rlen);
-                    c->out[i].raw_scan_rsp_len = rlen;
-                }
-                return; /* already recorded this scan -- a repeat advertisement, not a new device */
-            }
-        }
-        if (c->count < c->max) {
-            mtk_hal_ble_adv_t *o = &c->out[c->count];
-            memset(o, 0, sizeof(*o));
-            memcpy(o->addr.b, event->disc.addr.val, 6);
-            o->addr_type = event->disc.addr.type;
-            o->rssi = event->disc.rssi;
-            o->adv_type = event->disc.event_type;
-            if (fields.name && fields.name_len) {
-                uint8_t n = fields.name_len > 32 ? 32 : fields.name_len;
-                memcpy(o->name, fields.name, n);
-                o->name_len = n;
-            }
-            if (fields.tx_pwr_lvl_is_present) o->tx_power = (uint8_t)fields.tx_pwr_lvl;
-            else o->tx_power = 127;
-            /* struct ble_hs_adv_fields's own `flags` field (installed
-             * ESP-IDF v6.0.1 NimBLE headers) has no separate "is_present"
-             * bit, unlike most other fields here -- ble_hs_adv_parse_
-             * fields leaves it 0 (via this function's own memset above)
-             * when no Flags AD structure was present, which is already
-             * the correct default to report. */
-            o->flags = fields.flags;
-            if (fields.mfg_data && fields.mfg_data_len) {
-                uint8_t n = fields.mfg_data_len > sizeof(o->mfg_data) ? (uint8_t)sizeof(o->mfg_data) : (uint8_t)fields.mfg_data_len;
-                memcpy(o->mfg_data, fields.mfg_data, n);
-                o->mfg_len = n;
-            }
-            uint8_t raw_len = event->disc.length_data > 31 ? 31 : event->disc.length_data;
-            memcpy(o->raw_adv, event->disc.data, raw_len);
-            o->raw_adv_len = raw_len;
-            c->count++;
-        }
-    }
+    uint8_t address[6];
+    mtk_ble_addr_order(address, event->disc.addr.val);
+    mtk_ble_adv_observe(c->out, c->max, &c->count, address,
+        event->disc.addr.type, c->target_only ? c->target.b : NULL, c->target_type,
+        event->disc.data, event->disc.length_data,
+        event->disc.event_type == BLE_HCI_ADV_RPT_EVTYPE_SCAN_RSP,
+        event->disc.event_type, event->disc.rssi, (uint32_t)(esp_timer_get_time() / 1000));
 }
 
 /* Every NimBLE GAP/GATT callback in this file now enters through
@@ -280,7 +230,6 @@ static int esp32_ble_scan(uint8_t mode, uint16_t duration_ms, const char *name_f
     if (!atomic_load(&s_synced)) return -1;
     scan_ctx_t ctx = {0};
     ctx.out = out; ctx.max = max_out;
-    if (name_filter) strncpy(ctx.name_filter, name_filter, sizeof(ctx.name_filter) - 1);
     ctx.done = xSemaphoreCreateBinary();
     /* A failed allocation must never reach xSemaphoreTake/vSemaphoreDelete on a
      * NULL handle (undefined behavior) -- fail this one operation honestly
@@ -296,7 +245,14 @@ static int esp32_ble_scan(uint8_t mode, uint16_t duration_ms, const char *name_f
     if (rc != 0) { mtk_ble_op_lifecycle_retire(&s_op_lc); vSemaphoreDelete(ctx.done); return -1; }
     int signaled = (xSemaphoreTake(ctx.done, pdMS_TO_TICKS(dur + 1000)) == pdTRUE);
     esp32_ble_scan_teardown(&ctx, signaled);
-    return (int)ctx.count;
+    unsigned kept = 0;
+    for (unsigned i = 0; i < ctx.count; ++i) {
+        if (name_filter && *name_filter &&
+            (strlen(name_filter) != out[i].name_len || memcmp(name_filter, out[i].name, out[i].name_len))) continue;
+        if (kept != i) out[kept] = out[i];
+        kept++;
+    }
+    return (int)kept;
 }
 
 /* The shipping parity record is exact -- advertising must be non-connectable,
@@ -322,31 +278,69 @@ static int esp32_ble_adv_start(const uint8_t *name, uint8_t name_len) {
 }
 static void esp32_ble_adv_stop(void) { ble_gap_adv_stop(); }
 
-static int esp32_signal_sample(mtk_hal_mac6_t addr, uint8_t addr_type, int8_t *rssi_out, uint8_t *is_random_out) {
-    if (!atomic_load(&s_synced)) return -1;
-    mtk_hal_ble_adv_t recs[4];
-    scan_ctx_t ctx = {0};
-    ctx.out = recs; ctx.max = 4;
-    ctx.done = xSemaphoreCreateBinary();
-    if (!ctx.done) return -1; /* Item 4 -- see esp32_ble_scan's own doc comment */
-    uint32_t gen = mtk_ble_op_lifecycle_arm(&s_op_lc, &ctx);
-    struct ble_gap_disc_params params = {0};
-    params.passive = 1; params.itvl = 0x0010; params.window = 0x0010;
-    int rc = ble_gap_disc(s_own_addr_type, 300, &params, scan_gap_cb, (void *)(uintptr_t)gen);
-    int signaled = 0;
-    if (rc == 0) signaled = (xSemaphoreTake(ctx.done, pdMS_TO_TICKS(1000)) == pdTRUE);
-    /* Same teardown discipline as esp32_ble_scan: cancel the still-running
-     * discovery on the unsignalled (timeout) path before retiring, so no
-     * late DISC event lands after this sampling window's context is gone. */
-    esp32_ble_scan_teardown(&ctx, signaled || rc != 0);
-    for (unsigned i = 0; i < ctx.count; i++) {
-        if (memcmp(recs[i].addr.b, addr.b, 6) == 0) {
-            *rssi_out = recs[i].rssi;
-            *is_random_out = (addr_type != 0);
-            return 0;
-        }
+/* One persistent discovery context, protected by the existing callback lifetime
+ * lock. The service arbiter owns it for either discovery or signal tracking.
+ * No GATT operation is used to obtain RSSI or a local name. */
+static mtk_hal_ble_adv_t s_live_items[40];
+static scan_ctx_t s_live_ctx;
+static uint8_t s_live_running;
+
+static void esp32_live_stop(void) {
+    if (!s_live_running) return;
+    ble_gap_disc_cancel();
+    mtk_ble_op_lifecycle_retire(&s_op_lc);
+    s_live_running = 0;
+}
+
+static int esp32_live_start(uint8_t target_only, mtk_hal_mac6_t target, uint8_t type,
+                            const mtk_hal_ble_adv_t *previous, unsigned count) {
+    if (!atomic_load(&s_synced) || s_live_running) return -1;
+    memset(&s_live_ctx, 0, sizeof(s_live_ctx));
+    s_live_ctx.out = s_live_items;
+    s_live_ctx.max = target_only ? 1 : 40;
+    s_live_ctx.target_only = target_only;
+    s_live_ctx.target = target;
+    s_live_ctx.target_type = type;
+    if (previous) {
+        s_live_ctx.count = count < s_live_ctx.max ? count : s_live_ctx.max;
+        memcpy(s_live_items, previous, s_live_ctx.count * sizeof(*previous));
     }
-    return -1; /* lost / not observed this sampling window */
+    uint32_t gen = mtk_ble_op_lifecycle_arm(&s_op_lc, &s_live_ctx);
+    struct ble_gap_disc_params params = {0};
+    params.passive = target_only; /* picker collects scan responses; meter listens */
+    params.itvl = 0x0010; params.window = 0x0010; params.filter_duplicates = 0;
+    if (ble_gap_disc(s_own_addr_type, BLE_HS_FOREVER, &params, scan_gap_cb,
+                     (void *)(uintptr_t)gen) != 0) {
+        mtk_ble_op_lifecycle_retire(&s_op_lc);
+        return -1;
+    }
+    s_live_running = 1;
+    return 0;
+}
+static int esp32_live_discovery_start(const mtk_hal_ble_adv_t *previous, unsigned count) {
+    mtk_hal_mac6_t unused = {{0}};
+    return esp32_live_start(0, unused, 0, previous, count);
+}
+static int esp32_live_snapshot(mtk_hal_ble_adv_t *out, unsigned max) {
+    op_lc_take(s_op_lc_mutex);
+    unsigned n = s_live_ctx.count < max ? s_live_ctx.count : max;
+    memcpy(out, s_live_items, n * sizeof(*out));
+    op_lc_give(s_op_lc_mutex);
+    return (int)n;
+}
+static int esp32_signal_sample(mtk_hal_mac6_t addr, uint8_t addr_type, int8_t *rssi_out, uint8_t *is_random_out) {
+    if (!s_live_running && esp32_live_start(1, addr, addr_type, NULL, 0) != 0) return -1;
+    int rc = -1;
+    op_lc_take(s_op_lc_mutex);
+    if (s_live_ctx.target_only && s_live_ctx.count &&
+        s_live_items[0].rssi != 127) {
+        *rssi_out = s_live_items[0].rssi;
+        s_live_items[0].rssi = 127; /* consumed; only a new advertisement re-arms it */
+        *is_random_out = (addr_type != 0);
+        rc = 0;
+    }
+    op_lc_give(s_op_lc_mutex);
+    return rc;
 }
 
 /* GATT client ---------------------------- */
@@ -435,7 +429,7 @@ static int conn_gap_cb(struct ble_gap_event *event, void *arg) {
 
 static int esp32_gatt_connect(mtk_hal_mac6_t addr, uint8_t addr_type, uint32_t timeout_ms, uint16_t *vendor_handle_out) {
     if (!atomic_load(&s_synced)) return -1;
-    ble_addr_t peer; peer.type = addr_type; memcpy(peer.val, addr.b, 6);
+    ble_addr_t peer; peer.type = addr_type; mtk_ble_addr_order(peer.val, addr.b);
     conn_ctx_t ctx = { -1, 0, xSemaphoreCreateBinary() };
     /* See esp32_ble_scan's own doc comment. */
     if (!ctx.done) return -1;
@@ -969,6 +963,7 @@ static const mtk_ble_hal_t s_hal_impl = {
     esp32_gatt_discover_chars, esp32_gatt_discover_descs, esp32_gatt_read,
     esp32_gatt_write, esp32_gatt_subscribe, esp32_gatt_unsubscribe, esp32_gatt_poll_notify,
     esp32_gatt_poll_disconnected, esp32_gatt_notify_dropped_count,
+    esp32_live_discovery_start, esp32_live_snapshot, esp32_live_stop, esp32_live_stop,
 };
 
 const mtk_ble_hal_t *mtek_ble_hal_esp32_get(void) {

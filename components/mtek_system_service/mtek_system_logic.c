@@ -121,7 +121,6 @@ extern const mtk_opcode_entry_t mtk_opcode_table[MTK_OPCODE_COUNT];
 static int opcode_is_unimplemented_optional_wifi_module(uint16_t service_id, uint16_t opcode) {
     if (service_id != 0x0001) return 0;
     switch (opcode) {
-        case 0x000D: case 0x000E: case 0x000F: /* BEACON_START/STOP/STATUS */
         case 0x001C: case 0x001D: /* PROBE_FLOOD_START/STOP */
         case 0x001E: case 0x0026: /* PMKID_CAPTURE_START/STOP */
         case 0x001F: case 0x0020: /* KARMA_START/STOP */

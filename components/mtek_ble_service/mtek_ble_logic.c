@@ -80,6 +80,61 @@ static mtk_mac6_t from_hal_mac(mtk_hal_mac6_t h) { mtk_mac6_t m; memcpy(m.b, h.b
 
 static struct { uint32_t generation; uint16_t count; mtk_hal_ble_adv_t items[BLE_MAX_DEVICES]; } s_scan;
 
+/* UART continuous discovery uses the same radio arbiter as timed scans.
+ * Snapshots are copied under the HAL callback lock; canonical detail records
+ * remain stable until the next explicit list snapshot. */
+static uint32_t s_live_token;
+static uint32_t s_live_epoch;
+int mtek_ble_live_start(mtk_request_ctx_t *ctx) {
+    if (!s_hal || !s_hal->live_start || !s_hal->live_snapshot || !s_hal->live_stop) return -1;
+    if (!mtk_op_begin_admission_guard(ctx->session_generation)) return -1;
+    ble_lock();
+    if (s_live_token) { ble_unlock(); mtk_op_end_admission_guard(); return 0; }
+    int no_mem = 0;
+    mtk_op_id_t id = mtk_op_alloc_id(BLE_SERVICE_ID, BLE_SCAN_START_OPCODE, now_ms(), &no_mem);
+    if (!id.token) { ble_unlock(); mtk_op_end_admission_guard(); return -1; }
+    if (mtk_arbiter_acquire(MTK_ARB_BS, id.token) != MTK_ARB_GRANT_OK) {
+        mtk_op_discard_unpublished(id.token, id.boot_epoch);
+        ble_unlock(); mtk_op_end_admission_guard(); return -1;
+    }
+    if (s_hal->live_start(s_scan.items, s_scan.count) != 0) {
+        mtk_arbiter_release_if_owner(MTK_ARB_BS, id.token);
+        mtk_op_discard_unpublished(id.token, id.boot_epoch);
+        ble_unlock(); mtk_op_end_admission_guard(); return -1;
+    }
+    s_live_token = id.token; s_live_epoch = id.boot_epoch;
+    mtk_op_transition_by_token(id.token, id.boot_epoch, MTK_OPS_RUNNING, MTK_STATUS_OK, now_ms());
+    ble_unlock(); mtk_op_end_admission_guard(); return 0;
+}
+void mtek_ble_live_stop(void) {
+    ble_lock();
+    if (s_live_token) {
+        s_hal->live_stop(); /* retire callbacks before releasing radio ownership */
+        mtk_op_transition_by_token(s_live_token, s_live_epoch, MTK_OPS_STOPPED, MTK_STATUS_OK, now_ms());
+        mtk_arbiter_release_if_owner(MTK_ARB_BS, s_live_token);
+        s_live_token = 0;
+    }
+    ble_unlock();
+}
+unsigned mtek_ble_live_snapshot(uint32_t *generation) {
+    ble_lock();
+    if (s_live_token) {
+        int n = s_hal->live_snapshot(s_scan.items, BLE_MAX_DEVICES);
+        s_scan.count = n > 0 ? (uint16_t)n : 0;
+        s_scan.generation = s_live_token;
+    }
+    *generation = s_scan.generation;
+    unsigned n = s_scan.count;
+    ble_unlock();
+    return n;
+}
+const mtk_hal_ble_adv_t *mtek_ble_live_item(unsigned index) {
+    return index < s_scan.count ? &s_scan.items[index] : NULL;
+}
+uint32_t mtek_ble_observation_age(const mtk_hal_ble_adv_t *item) {
+    return (uint32_t)now_ms() - item->last_seen_ms;
+}
+
 static void fill_device_details_from_hal(const mtk_hal_ble_adv_t *a, mtk_ble_device_details_resp_t *r) {
     memset(r, 0, sizeof(*r));
     r->addr = from_hal_mac(a->addr);
@@ -357,22 +412,10 @@ static void handle_ble_adv_status(mtk_request_ctx_t *ctx, const mtk_opcode_entry
  * from the start rather than retrofitted, as the raw-pointer variant of this
  * bug had to be in the handshake session). */
 
-/* "Signal meter scans for 300 ms every 500 ms and declares LOST after one miss,
- * conflicting with the approximately five-second shipping behavior."
- * MTK_SIGNAL_METER_SAMPLE_INTERVAL_MS matches the audit's own stated confirmed
- * figure exactly.
- *
- * RC6's own MTK_SIGNAL_METER_MISS_TOLERANCE=3 (a disclosed engineering choice --
- * the RC5 audit confirmed one miss was too aggressive but did not itself state
- * an exact tolerance) over-corrected: once the sample interval itself is a real
- * 5 seconds, waiting for 3 CONSECUTIVE misses before declaring LOST takes ~15
- * seconds total, actively contradicting the confirmed "approximately five-second
- * signal loss" shipped behavior this whole change exists to match. Reverted to
- * 1: the very first missed sample (itself ~5 seconds after the last successful
- * one, given the real sampling cadence above) now declares LOST, matching the
- * confirmed ~5-second figure directly instead of a multiple of it. */
-#define MTK_SIGNAL_METER_SAMPLE_INTERVAL_MS 5000
-#define MTK_SIGNAL_METER_MISS_TOLERANCE 1
+/* Poll the continuous listener twice per second. Five seconds without a new
+ * observation emits LOST once; the operation and target remain active. */
+#define MTK_SIGNAL_METER_SAMPLE_INTERVAL_MS 500
+#define MTK_SIGNAL_METER_MISS_TOLERANCE 10
 
 /* TOKEN, not a retained `mtk_operation_record_t *` -- same ABA-hazard rationale
  * as mtek_wifi_logic.c's s_deauth/s_hs and mtek_capture_logic.c's s_cap (each
@@ -386,7 +429,7 @@ static void handle_ble_adv_status(mtk_request_ctx_t *ctx, const mtk_opcode_entry
  * (requirement 4: this struct had no dedicated lock of any kind before). */
 static struct { uint32_t token; mtk_request_ctx_t ctx; mtk_hal_mac6_t addr; uint8_t addr_type;
                 int32_t avg_x10; uint32_t started_ms; uint8_t active;
-                uint64_t last_sample_ms; uint8_t sampled_once; uint8_t consecutive_misses;
+                uint64_t last_sample_ms; uint8_t sampled_once; uint8_t consecutive_misses; uint8_t lost;
                 uint32_t session_generation; uint8_t sample_in_flight; } s_sig;
 
 /* STOP prevents new samples immediately, but the radio lease remains held until
@@ -399,7 +442,10 @@ static void signal_meter_cancel(uint32_t token) {
         release = !s_sig.sample_in_flight;
     }
     ble_unlock();
-    if (release) mtk_arbiter_release_if_owner(MTK_ARB_SM, token);
+    if (release) {
+        if (s_hal && s_hal->signal_stop) s_hal->signal_stop();
+        mtk_arbiter_release_if_owner(MTK_ARB_SM, token);
+    }
 }
 
 static void signal_meter_sample_finished(uint32_t token) {
@@ -410,14 +456,17 @@ static void signal_meter_sample_finished(uint32_t token) {
         release = !s_sig.active;
     }
     ble_unlock();
-    if (release) mtk_arbiter_release_if_owner(MTK_ARB_SM, token);
+    if (release) {
+        if (s_hal && s_hal->signal_stop) s_hal->signal_stop();
+        mtk_arbiter_release_if_owner(MTK_ARB_SM, token);
+    }
 }
 
 static uint8_t rssi_category(int8_t rssi) {
-    if (rssi >= -50) return 0;
-    if (rssi >= -60) return 1;
-    if (rssi >= -70) return 2;
-    if (rssi >= -80) return 3;
+    if (rssi >= -55) return 0;
+    if (rssi >= -67) return 1;
+    if (rssi >= -77) return 2;
+    if (rssi >= -87) return 3;
     return 4;
 }
 
@@ -510,38 +559,25 @@ void mtek_ble_signal_meter_tick(void) {
     if (rc != 0) {
         ble_lock();
         if (!s_sig.active || s_sig.token != token) { ble_unlock(); signal_meter_sample_finished(token); return; }
-        s_sig.consecutive_misses++;
-        if (s_sig.consecutive_misses < MTK_SIGNAL_METER_MISS_TOLERANCE) { ble_unlock(); signal_meter_sample_finished(token); return; } /* one missed sample is not yet LOST */
+        if (s_sig.consecutive_misses < MTK_SIGNAL_METER_MISS_TOLERANCE) s_sig.consecutive_misses++;
+        int notify = s_sig.consecutive_misses >= MTK_SIGNAL_METER_MISS_TOLERANCE && !s_sig.lost;
+        if (notify) s_sig.lost = 1;
         uint32_t session_generation = s_sig.session_generation;
         mtk_sink_t sink = s_sig.ctx.sink;
         ble_unlock();
-        /* Gated on mtk_op_transition's own return value (linearization), not a
-         * separate racy pre-check -- a concurrent STOP could otherwise race this
-         * exact LOST transition and double-release the arbiter/double-emit. */
-        if (!mtk_op_transition_by_token(token, boot_epoch, MTK_OPS_FAILED, MTK_STATUS_NOT_FOUND, now_ms())) {
-            ble_lock(); if (s_sig.token == token) s_sig.active = 0; ble_unlock();
-            signal_meter_sample_finished(token);
-            return;
-        }
-        /* Atomic ownership-checked release, matching every other class release
-         * site across this tree -- this one was missed in that round since s_sig
-         * had no lock/ generation infrastructure until now. */
-        ble_lock(); if (s_sig.token == token) s_sig.active = 0; ble_unlock();
-        signal_meter_sample_finished(token);
-        /* mtk_op_begin_publish_guard, held across the whole publish,
-         * closes the window between winning the transition above and
-         * actually emitting -- see its own doc comment in mtek_core.h. */
-        if (mtk_op_begin_publish_guard(session_generation)) {
+        if (notify && mtk_op_begin_publish_guard(session_generation)) {
             mtk_signal_meter_lost_ev_t ev; ev.operation_token = token; ev.status = MTK_STATUS_NOT_FOUND;
             sink.emit_event(sink.user, token, "SIGNAL_METER_LOST", &ev, &mtk_signal_meter_lost_ev_t_desc);
             mtk_op_end_publish_guard();
         }
+        signal_meter_sample_finished(token);
         return;
     }
 
     ble_lock();
     if (!s_sig.active || s_sig.token != token) { ble_unlock(); signal_meter_sample_finished(token); return; }
     s_sig.consecutive_misses = 0;
+    s_sig.lost = 0;
     s_sig.avg_x10 = s_sig.avg_x10 ? (s_sig.avg_x10 * 3 + rssi * 10) / 4 : rssi * 10;
     int32_t avg_x10 = s_sig.avg_x10;
     uint32_t started_ms = s_sig.started_ms;
@@ -552,7 +588,7 @@ void mtek_ble_signal_meter_tick(void) {
     if (mtk_op_begin_publish_guard(session_generation)) {
         mtk_signal_meter_update_ev_t ev = {0};
         ev.operation_token = token; ev.raw_rssi = rssi; ev.avg_rssi = (int8_t)(avg_x10 / 10);
-        ev.category = rssi_category(rssi); ev.age_ms = (uint16_t)((uint32_t)now_ms() - started_ms);
+        ev.category = rssi_category(ev.avg_rssi); ev.age_ms = (uint16_t)((uint32_t)now_ms() - started_ms);
         ev.is_random_address = is_random;
         sink.emit_event(sink.user, token, "SIGNAL_METER_UPDATE", &ev, &mtk_signal_meter_update_ev_t_desc);
         mtk_op_end_publish_guard();
@@ -1367,6 +1403,14 @@ mtk_op_id_t mtek_ble_cancel_active_for_peer_reset(void) {
     uint32_t epoch = mtk_core_boot_epoch();
     switch (active) {
         case MTK_ARB_BS:
+            ble_lock();
+            int is_live = s_live_token == tok;
+            ble_unlock();
+            if (is_live) {
+                mtek_ble_live_stop();
+                id.token = tok; id.boot_epoch = epoch;
+                break;
+            }
             /* Deliberately does NOT release MTK_ARB_BS here -- the old scan call
              * has no cancel hook and may still genuinely be running on another
              * thread; releasing here would let a brand-new BLE_SCAN_START
