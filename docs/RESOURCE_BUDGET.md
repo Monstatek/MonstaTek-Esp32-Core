@@ -17,7 +17,11 @@ and 500ms GATT delivery from blocking BLE sampling. Capture is serviced
 every 10ms rounded to at least one RTOS tick. Native SPI reassembly now
 expires after 2000ms without an accepted fragment, including while the
 master is silent; this is a local timeout policy, not a negotiated wire
-parameter. Task stack/heap high-water measurements still require hardware.
+parameter. Task stack/heap high-water measurements still require a hardware
+run; the firmware now carries the on-target instrument for it -- build with
+`CONFIG_MTEK_HW_INSTRUMENTATION=y` (default n, absent from release images) to
+log free heap, minimum-ever free heap and per-task stack high-water marks over
+the console. See "Measuring the disclosed high-water gap" below.
 
 | Budget | Value | Meaning |
 |---|---|---|
@@ -72,7 +76,39 @@ measured-safer starting point for what genuinely remains on them; the
 real per-transaction/per-command high-water mark
 (`uxTaskGetStackHighWaterMark`) still needs hardware measurement (no
 target access was available) and is an explicit validation gap, not a claimed-safe
-number.
+number. The gap is now instrumented rather than merely disclosed: see
+"Measuring the disclosed high-water gap" below.
+
+## Measuring the disclosed high-water gap
+
+The stack and heap high-water marks above are the one budget class that
+cannot be settled without a target. The firmware carries a compile-gated,
+default-off instrumentation path for exactly this bench measurement, absent
+from every release/factory image (`main/Kconfig.projbuild`,
+`CONFIG_MTEK_HW_INSTRUMENTATION`):
+
+```
+idf.py -B build.instr -D SDKCONFIG=build.instr/sdkconfig \
+       -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;<fragment with CONFIG_MTEK_HW_INSTRUMENTATION=y>" build
+```
+
+When enabled, one low-priority task logs, every
+`CONFIG_MTEK_HW_INSTRUMENTATION_PERIOD_MS` (default 5000):
+
+- `heap free=` -- current free heap (`esp_get_free_heap_size`).
+- `min_free_ever=` -- minimum free heap since boot
+  (`esp_get_minimum_free_heap_size`). Watched across a full radio-transition
+  cycle (BLE scan -> signal meter -> AP/STA scan -> deauth -> beacon ->
+  handshake -> back to BLE, repeated), a steadily falling floor is the
+  repeated-operation resource-leak signal; a floor that settles is not.
+- `task <name> stack_free_min=` -- smallest free stack ever seen for each
+  long-running task, in bytes, to compare against its configured stack size.
+  This is the direct per-task reading for the gap disclosed above.
+
+It uses only always-available FreeRTOS/heap introspection and does not enable
+the FreeRTOS trace facility, so leaving it off costs zero DIRAM against the
+floor. It reads counters only and never touches protocol state or wire
+responses.
 
 **The SRAM-budget half (a real, measured, documented contract exception):**
 even after every structure above was moved off the stack, real `idf.py

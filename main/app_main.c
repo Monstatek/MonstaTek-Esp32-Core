@@ -248,6 +248,49 @@ static int freertos_async_runner(void (*fn)(void *arg), void *arg) {
     return 0;
 }
 
+#if CONFIG_MTEK_HW_INSTRUMENTATION
+/* Compile-gated (default n) hardware bring-up instrumentation -- absent from
+ * every release/factory image (see main/Kconfig.projbuild). One low-priority
+ * task samples free heap, minimum-ever free heap, and the stack high-water
+ * mark of each long-running task by name, and logs them to the console. It is
+ * the bench operator's read on repeated-operation resource leakage across
+ * radio transitions and on the per-task stack headroom that
+ * docs/RESOURCE_BUDGET.md records as an unmeasured gap. Uses only
+ * always-available FreeRTOS/heap introspection (no trace facility), reads
+ * only, allocates nothing after startup, and never touches protocol state. */
+static void hw_instrumentation_task(void *arg) {
+    (void)arg;
+    /* Every task app_main / the SPI runtime create by a fixed name. Any not
+     * present this boot (an adapter compiled out, or its creation failed and
+     * the boot still reached readiness) is simply skipped -- xTaskGetHandle
+     * returns NULL. Both introspection calls are unconditionally available in
+     * ESP-IDF regardless of CONFIG_FREERTOS_USE_TRACE_FACILITY. */
+    static const char *const task_names[] = {
+        "mtek_uart_repl", "mtek_spi_runtime", "mtek_ble_tick",
+        "mtek_delivery",  "mtek_wifi_rx",
+    };
+    const TickType_t period = pdMS_TO_TICKS(CONFIG_MTEK_HW_INSTRUMENTATION_PERIOD_MS);
+    for (;;) {
+        ESP_LOGI("MTEK_INSTR", "heap free=%u min_free_ever=%u",
+                 (unsigned)esp_get_free_heap_size(),
+                 (unsigned)esp_get_minimum_free_heap_size());
+        for (size_t i = 0; i < sizeof(task_names) / sizeof(task_names[0]); i++) {
+            TaskHandle_t h = xTaskGetHandle(task_names[i]);
+            if (h) {
+                /* uxTaskGetStackHighWaterMark returns the smallest free stack
+                 * (in words) the task has ever had -- smaller is closer to
+                 * overflow. Report it in bytes for direct comparison against
+                 * the configured stack sizes in docs/RESOURCE_BUDGET.md. */
+                ESP_LOGI("MTEK_INSTR", "task %-16s stack_free_min=%u bytes",
+                         task_names[i],
+                         (unsigned)(uxTaskGetStackHighWaterMark(h) * sizeof(StackType_t)));
+            }
+        }
+        vTaskDelay(period);
+    }
+}
+#endif
+
 #if CONFIG_MTEK_ADAPTER_FACTORY_UART
 /* . Prior to this correction, uart_driver_install was called EXACTLY ONCE in
  * this whole firmware: inside uart_repl_task, itself only xTaskCreate'd in the
@@ -1086,6 +1129,19 @@ void app_main(void) {
         mtek_enter_safe_failure_state("no usable configured transport adapter started this boot session -- "
                                       "every compiled-in adapter's own task failed to start, or none is compiled in");
     }
+
+#if CONFIG_MTEK_HW_INSTRUMENTATION
+    /* Started only after the safe-failure gates above, so it runs solely on an
+     * otherwise-healthy boot. Low priority (1) so it never contends with the
+     * transport/radio tasks; failure to start is non-fatal -- instrumentation
+     * is a bench aid, not a shipped transport. */
+    if (xTaskCreate(hw_instrumentation_task, "mtek_instr", 3072, NULL, 1, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "xTaskCreate(mtek_instr) failed -- hardware instrumentation disabled this boot");
+    } else {
+        ESP_LOGI(TAG, "hardware instrumentation enabled (period=%d ms)",
+                 (int)CONFIG_MTEK_HW_INSTRUMENTATION_PERIOD_MS);
+    }
+#endif
 
     ESP_LOGI(TAG, "MonstaTek M1 ESP32-C6 firmware up (boot_epoch=0x%08x)", (unsigned)mtk_core_boot_epoch());
 }

@@ -100,4 +100,39 @@ menu "MonstaTek M1 Firmware"
             configuration for a lab/diagnostic image only -- never an
             unauthenticated runtime toggle.
 
+    menu "Hardware bring-up instrumentation"
+        config MTEK_HW_INSTRUMENTATION
+            bool "Heap/stack telemetry over the console log"
+            default n
+            help
+                Compile-gated, OFF by default and absent from every
+                release/factory image. Starts one low-priority background
+                task that periodically logs free heap, minimum-ever free
+                heap, and per-task stack high-water marks to the same
+                console (UART) log as the rest of ESP_LOG output. It exists
+                to give a bench operator the decisive repeated-operation
+                resource-leak signal across Wi-Fi/BLE/802.15.4 radio
+                transitions, and to measure the per-task stack high-water
+                marks that docs/RESOURCE_BUDGET.md records as a disclosed,
+                unmeasured gap.
+
+                Uses only always-available FreeRTOS/heap introspection
+                (esp_get_free_heap_size, esp_get_minimum_free_heap_size,
+                xTaskGetHandle, uxTaskGetStackHighWaterMark). It does NOT
+                enable the FreeRTOS trace facility, so leaving it off (the
+                shipped configuration) costs zero DIRAM against the
+                documented universal-image floor. It never touches protocol
+                state or wire responses.
+
+        config MTEK_HW_INSTRUMENTATION_PERIOD_MS
+            int "Instrumentation logging period (ms)"
+            depends on MTEK_HW_INSTRUMENTATION
+            default 5000
+            range 250 600000
+            help
+                How often the instrumentation task samples and logs. The
+                default (5 s) is slow enough to be unobtrusive yet frequent
+                enough to see a heap trend across a manual transition cycle.
+    endmenu
+
 endmenu
