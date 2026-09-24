@@ -22,9 +22,10 @@ but return neutral/IDLE output.
 | MonstaShark capture | Compiled; required List B capability |
 | Karma auto-responder | Compiled boundary; implementation unavailable, reports `UNSUPPORTED` |
 | Probe-request flood | Compiled boundary; implementation unavailable, reports `UNSUPPORTED` |
-| Captive portal | Compiled boundary; implementation unavailable, reports `UNSUPPORTED` |
-| Wi-Fi beacon flood | Compiled boundary; implementation unavailable, reports `UNSUPPORTED` |
-| SoftAP / PMKID capture | Not module-gated; implementation unavailable, reports `UNSUPPORTED` |
+| Captive portal | Compiled and started; `SUPPORTED` on native and Legacy SPI Compatibility (`UNAVAILABLE` on factory UART) |
+| Wi-Fi beacon flood | Compiled and started; `SUPPORTED` (`BEACON_START`/`STOP` all profiles; `BEACON_STATUS` native only) |
+| SoftAP | Compiled and started; `SUPPORTED` on native and Legacy SPI Compatibility (`UNAVAILABLE` on factory UART) |
+| PMKID capture | Compiled boundary; implementation unavailable, overlay reports `UNSUPPORTED` |
 | Lab controls (`WIFI_MODE_SET`) | Disabled (`MTEK_LAB_CONTROLS_ENABLED=n`) |
 
 The runtime capability overlay in `mtek_system_logic.c` ensures that an
