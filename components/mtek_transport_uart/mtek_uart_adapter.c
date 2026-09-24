@@ -21,6 +21,7 @@
 #include "mtek_schema_message_descs.h"
 #include "mtek_codec_api.h"
 #include "mtek_ble_service.h"
+#include "mtek_wifi_service.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
@@ -561,6 +562,7 @@ static size_t handle_handshake(mtk_uart_adapter_state_t *st, char *out, size_t o
     req.target_bssid = st->ap_table[st->ap_selected].bssid;
     req.channel = st->ap_table[st->ap_selected].channel;
     req.deauth_count = 150; /* historical 3-second burst, paced at 20ms */
+    st->hs_mask = 0; st->hs_count = 0; /* fresh capture: reset the running M1-M4 mask/count */
     /* Persistent, queue-backed sink : the real target's promiscuous-mode
      * callback delivers HANDSHAKE_EVENT frames from the Wi-Fi driver's own task,
      * well after this dispatch returns -- mtek_wifi_logic.c's
@@ -586,6 +588,40 @@ static size_t handle_handshake(mtk_uart_adapter_state_t *st, char *out, size_t o
      * call returns. HANDSHAKE_STATUS/HANDSHAKE_READ remain available for
      * polling the real outcome on demand regardless. */
     return emit(out, out_cap, 0, "[*] Handshake capture started.\n");
+}
+
+/* `list -h` : dump the captured EAPOL/handshake bytes for the current/last
+ * handshake, reproducing the historically validated factory-UART export the
+ * STM32 retrieves and stores to SD (reference firmware m1-esp32c6-fw). The STM32
+ * stores every returned line verbatim, so the exact framing is not parsed --
+ * only that captured bytes come back. Reads the capture through the wifi
+ * service's own accessor (like the tick/peer-reset calls this adapter already
+ * makes directly), not HANDSHAKE_READ, which is intentionally not a
+ * factory-UART opcode. Output is bounded to the console buffer; a real 4-way
+ * handshake is far smaller than the cap. */
+static size_t handle_list_h(mtk_uart_adapter_state_t *st, char *out, size_t out_cap) {
+    if (!st->handshake_token) return emit(out, out_cap, 0, "EAPOL: No packets captured yet.\n");
+    static uint8_t buf[2048]; /* == HANDSHAKE_MAX_BYTES; static, never on the REPL stack */
+    uint32_t total = 0;
+    size_t n = mtek_wifi_handshake_copy(st->handshake_token, buf, sizeof(buf), &total);
+    if (total == 0 || n == 0) return emit(out, out_cap, 0, "EAPOL: No packets captured yet.\n");
+    /* Byte budget that always fits the 4096-byte console buffer with margin
+     * (~2 hex chars + framing per byte); larger captures are truncated with a
+     * note rather than risking the buffer. */
+    const size_t MAX_DUMP = 1536;
+    size_t shown = n < MAX_DUMP ? n : MAX_DUMP;
+    size_t used = emit(out, out_cap, 0, "EAPOL Packets Captured: mask=0x%02X count=%u len=%u\n",
+                       st->hs_mask, (unsigned)st->hs_count, (unsigned)total);
+    char line[72];
+    for (size_t off = 0; off < shown; off += 32) {
+        size_t chunk = (shown - off) < 32 ? (shown - off) : 32;
+        bytes_to_hex(buf + off, (uint16_t)chunk, line, sizeof(line));
+        used = emit(out, out_cap, used, "%s\n", line);
+    }
+    if (shown < total) used = emit(out, out_cap, used, "[truncated: %u of %u bytes shown]\n",
+                                   (unsigned)shown, (unsigned)total);
+    if (used >= out_cap) used = out_cap - 1; /* defensive: never report past the buffer */
+    return used;
 }
 
 static size_t handle_stop(mtk_uart_adapter_state_t *st, char *out, size_t out_cap) {
@@ -1365,6 +1401,7 @@ size_t mtek_uart_process_line(mtk_uart_adapter_state_t *st, const char *line, ch
         if (strcmp(line, "scan -s") == 0) return handle_scan_s(st, out, out_cap);
         if (strcmp(line, "list -a") == 0) return handle_list_a(st, out, out_cap);
         if (strcmp(line, "list -s") == 0) return handle_list_s(st, out, out_cap);
+        if (strcmp(line, "list -h") == 0) return handle_list_h(st, out, out_cap);
         if (strcmp(line, "select -l") == 0) return handle_select_l(st, out, out_cap);
         if (starts_with(line, "select -a")) return handle_select_a(st, line + 9, out, out_cap);
         if (starts_with(line, "select -s")) return handle_select_s(st, line + 9, out, out_cap);
@@ -1430,18 +1467,10 @@ static size_t format_background_frame(const mtk_async_frame_t *f, char *out, siz
         mtk_decode(&mtk_deauth_progress_ev_t_desc,&ev,f->body,f->body_len,NULL);
         return emit(out,out_cap,0,"[*] %u pkts/s\n",ev.packets_per_second);
     }
-    if (f->kind == MTK_ASYNC_FRAME_EVENT && strcmp(f->event_name, "HANDSHAKE_EVENT") == 0) {
-        mtk_handshake_event_ev_t ev = {0};
-        mtk_decode(&mtk_handshake_event_ev_t_desc, &ev, f->body, f->body_len, NULL);
-        static const char *phase_tag[] = {"[FOUND EAPOL]", "[CAPTURED]", ">>> [SUCCESS]"};
-        const char *tag = ev.phase < 3 ? phase_tag[ev.phase] : "[HANDSHAKE]";
-        return emit(out, out_cap, 0, "%s key_frame=M%u\n", tag, ev.key_frame);
-    }
-    if (f->kind == MTK_ASYNC_FRAME_EVENT && strcmp(f->event_name, "HANDSHAKE_STOPPED") == 0) {
-        mtk_handshake_stopped_ev_t ev = {0};
-        mtk_decode(&mtk_handshake_stopped_ev_t_desc, &ev, f->body, f->body_len, NULL);
-        return emit(out, out_cap, 0, "[HANDSHAKE:STOPPED] status=%u captured_len=%u\n", ev.status, ev.captured_total_len);
-    }
+    /* HANDSHAKE_EVENT / HANDSHAKE_STOPPED are rendered inline in
+     * mtek_uart_adapter_poll_background (they need the running mask/count in
+     * `st` to reproduce the historically validated "[DONE] Capture finished.
+     * Mask: 0x.. Count: .." contract the STM32 parses). */
     if (f->kind == MTK_ASYNC_FRAME_EVENT && strcmp(f->event_name, "SIGNAL_METER_UPDATE") == 0) {
         mtk_signal_meter_update_ev_t ev = {0};
         mtk_decode(&mtk_signal_meter_update_ev_t_desc, &ev, f->body, f->body_len, NULL);
@@ -1506,6 +1535,35 @@ size_t mtek_uart_adapter_poll_background(mtk_uart_adapter_state_t *st, char *out
             mtk_decode(&mtk_beacon_stopped_ev_t_desc,&ev,f.body,f.body_len,NULL);
             if (ev.operation_token == st->beacon_token) st->beacon_running = 0;
             return emit(out,out_cap,0,"[*] Beacon stopped. status=%u\n",ev.status);
+        }
+        /* Handshake progress/completion render the historically validated
+         * STM32-facing contract (reference firmware m1-esp32c6-fw), NOT Core's own
+         * earlier "[HANDSHAKE:STOPPED] status=.. captured_len=.." wording, which
+         * the STM32 handshake flow (m1_wifi.c) does not parse. Handled inline
+         * here (not in format_background_frame) because the running M1-M4 mask
+         * and stored-message count are accumulated in `st`. */
+        if (f.kind == MTK_ASYNC_FRAME_EVENT && strcmp(f.event_name,"HANDSHAKE_EVENT")==0) {
+            mtk_handshake_event_ev_t ev = {0};
+            mtk_decode(&mtk_handshake_event_ev_t_desc,&ev,f.body,f.body_len,NULL);
+            if (ev.key_frame >= 1 && ev.key_frame <= 4) {
+                st->hs_mask |= (uint8_t)(1u << (ev.key_frame - 1));
+                st->hs_count++;
+            }
+            /* Live per-message line: any line carrying "Mask: 0x" drives the
+             * STM32 live M1-M4 view (it sscanf's "Mask: 0x%X"). */
+            return emit(out,out_cap,0," >>> [SUCCESS] Message %u stored! (Mask: 0x%02X)\n",
+                        ev.key_frame, st->hs_mask);
+        }
+        if (f.kind == MTK_ASYNC_FRAME_EVENT && strcmp(f.event_name,"HANDSHAKE_STOPPED")==0) {
+            mtk_handshake_stopped_ev_t ev = {0};
+            mtk_decode(&mtk_handshake_stopped_ev_t_desc,&ev,f.body,f.body_len,NULL);
+            if (ev.operation_token == st->handshake_token) st->handshake_running = 0;
+            /* Terminal line the STM32 keys success on ("[DONE] Capture
+             * finished."), with the real mask (0x0F == full 4-way) so complete
+             * vs. partial stays honest. Printed at the end of every attempt,
+             * matching the historically validated firmware. */
+            return emit(out,out_cap,0,"\n[DONE] Capture finished. Mask: 0x%02X, Count: %d\n",
+                        st->hs_mask, (int)st->hs_count);
         }
         size_t n = format_background_frame(&f, out, out_cap);
         if (n) return n; /* one event per call, matching the REPL's own one-line-at-a-time idle poll */

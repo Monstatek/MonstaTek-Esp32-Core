@@ -39,6 +39,14 @@ typedef struct mtk_uart_adapter_state {
     uint32_t deauth_pending;
     uint8_t deauth_stop_pending;
     uint8_t handshake_running; uint32_t handshake_token;
+    /* Running EAPOL M1-M4 mask (bit0..3) and stored-message count for the
+     * active/last handshake, accumulated from HANDSHAKE_EVENT deliveries so the
+     * factory-UART "[DONE] Capture finished. Mask: 0x.. Count: .." completion
+     * line and the live per-message "(Mask: 0x..)" lines match the historically
+     * validated STM32-facing handshake contract (reference firmware m1-esp32c6-fw;
+     * consumed by the STM32 m1_wifi.c handshake flow).
+     * Reset at each `handshake` command. */
+    uint8_t hs_mask; uint16_t hs_count;
     uint8_t beacon_running; uint32_t beacon_token;
 
     /* BLE: cached scan table, advertising/signal-meter/GATT session state. */

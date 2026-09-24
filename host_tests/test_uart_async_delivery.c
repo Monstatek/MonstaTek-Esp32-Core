@@ -110,7 +110,11 @@ MTK_TEST_MAIN_BEGIN
 
     size_t bn = mtek_uart_adapter_poll_background(&st, out, sizeof(out));
     MTK_CHECK(bn > 0);
-    MTK_CHECK(strcmp(out, "[FOUND EAPOL] key_frame=M1\n") == 0);
+    /* Restored STM32-facing handshake contract: each stored EAPOL message
+     * renders a live " >>> [SUCCESS] Message N stored! (Mask: 0x..)" line (the
+     * running M1-M4 mask the STM32 parses), not Core's earlier
+     * "[FOUND EAPOL] key_frame=M1" wording. M1 -> mask bit0. */
+    MTK_CHECK(strcmp(out, " >>> [SUCCESS] Message 1 stored! (Mask: 0x01)\n") == 0);
 
     /* Queue is drained after one poll; a second poll finds nothing new. */
     MTK_CHECK_EQ(mtek_uart_adapter_poll_background(&st, out, sizeof(out)), 0);

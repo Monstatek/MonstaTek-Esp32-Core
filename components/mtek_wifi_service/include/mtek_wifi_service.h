@@ -87,6 +87,15 @@ mtk_op_id_t mtek_wifi_cancel_active_for_peer_reset(void);
 typedef void (*mtk_wifi_dh_handoff_pause_hook_t)(void);
 void mtek_wifi_set_dh_handoff_pause_hook(mtk_wifi_dh_handoff_pause_hook_t hook);
 
+/* Copies up to `cap` bytes of the current/last handshake capture whose session
+ * token equals `token` into `out`, returning the number of bytes copied and
+ * writing the full captured length to *total_len_out (0 when `token` does not
+ * match the active capture session). A locked, read-only snapshot -- it never
+ * mutates capture state. Used by the factory-UART `list -h` export to
+ * reproduce the historically validated handshake dump directly, since
+ * HANDSHAKE_READ is intentionally not a factory-UART opcode. */
+size_t mtek_wifi_handshake_copy(uint32_t token, uint8_t *out, size_t cap, uint32_t *total_len_out);
+
 #ifdef __cplusplus
 }
 #endif

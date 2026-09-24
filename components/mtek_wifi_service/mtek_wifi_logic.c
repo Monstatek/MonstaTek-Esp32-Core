@@ -1577,6 +1577,24 @@ static void handle_handshake_read(mtk_request_ctx_t *ctx, const mtk_opcode_entry
     respond(ctx, MTK_STATUS_OK, &r, &mtk_handshake_read_resp_t_desc);
 }
 
+/* Direct read-only capture accessor for the factory-UART `list -h` export
+ * (mtk_uart_adapter.c). Same stale-session guard as handle_handshake_read: a
+ * token that does not match the current s_hs session yields 0 bytes / 0 total,
+ * never a prior session's leftover capture. Locked for the whole copy since
+ * hs_frame_cb can be appending concurrently on a real target's Wi-Fi task. */
+size_t mtek_wifi_handshake_copy(uint32_t token, uint8_t *out, size_t cap, uint32_t *total_len_out) {
+    size_t n = 0;
+    wifi_lock();
+    uint32_t total = (s_hs.token == token) ? s_hs.len : 0;
+    if (out && cap && total) {
+        n = (total < cap) ? total : cap;
+        memcpy(out, s_hs.buf, n);
+    }
+    wifi_unlock();
+    if (total_len_out) *total_len_out = total;
+    return n;
+}
+
 static void handle_handshake_stop(mtk_request_ctx_t *ctx, const mtk_opcode_entry_t *op,
                                    const uint8_t *req_bytes, size_t req_len) {
     mtk_handshake_stop_req_t req; memset(&req, 0, sizeof(req));
