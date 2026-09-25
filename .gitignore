@@ -55,15 +55,6 @@ sdkconfig.*.old
 .idea/
 .vscode/
 
-# Local assistant/agent configuration: machine-specific, never published
-CLAUDE.md
-.claude/
-AGENTS.md
-.cursor/
-.cursorrules
-.aider*
-.github/copilot-instructions.md
-
 .DS_Store
 __pycache__/
 *.py[cod]
