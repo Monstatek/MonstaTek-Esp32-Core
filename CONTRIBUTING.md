@@ -23,6 +23,15 @@ Keep generated files synchronized with their source definitions. Do not add
 build products, local evidence logs, credentials, personal paths, or reference
 material excluded by `.gitignore` and [Source scope](docs/SOURCE_SCOPE.md).
 
+## Commit history
+
+Develop on a focused branch. Maintainers normally squash each completed pull
+request into one descriptive commit on `main`. The final title should say what
+changed, while the pull request retains the rationale, verification evidence,
+limitations, and contributor credit. Use separate pull requests for unrelated
+changes. Keep published release tags and commits stable; do not rewrite public
+history solely to shorten the commit list.
+
 ## Bug reports
 
 Include the Core revision or package SHA-256, M1 firmware version, hardware
