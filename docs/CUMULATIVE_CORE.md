@@ -1,14 +1,14 @@
-# Cumulative M1 ESP32 Core engineering candidate — 2026-09-24
+# Wi-Fi and BLE integration record — 2026-09-24
 
-This candidate stays on current Core base f586b6d805aa2d8b1de0bdeea272bfd72325df1d, with the completed Signal Meter patch plus Wi-Fi reconciliation. No historical firmware lineage is shipped. The owner authorized a dedicated cumulative source checkpoint and branch push; no main merge, tag or release is authorized. Physical acceptance of this combined image is pending.
+This record covers the Signal Meter patch and Wi-Fi reconciliation developed from Core base `f586b6d805aa2d8b1de0bdeea272bfd72325df1d` and later incorporated into `main`. It documents source validation and remaining physical acceptance work. It does not identify a hardware-approved release.
 
 ## Reference and regression boundary
 
-Recovered `/Users/L/Documents/Esp32 Bin/Old/Esp32Mk1.bin` matches the historical hardware-validation record byte for byte: 1,457,568 bytes; MD5 `25C7892234953C707684FA9EDA1671F4`; SHA-256 `BDB98E84A94C6E4A8ED4397DE04FA840D000922223423DADDA009F5B4EF18BAD`. The record identifies source `78e6543decb02ecf66ac9f5f9acece4fa7123e11`, ESP-IDF 6.0.1, internal build ESP32MTk_06 / public Esp32Mk1. The preceding ESP32MTk_05 record includes all Wi-Fi A1–A7 PASS; _06 changed BLE only. This is existing owner hardware evidence, not a new physical test by this task.
+A recovered historical ESP32 binary matches the historical hardware-validation record byte for byte: 1,457,568 bytes; MD5 `25C7892234953C707684FA9EDA1671F4`; SHA-256 `BDB98E84A94C6E4A8ED4397DE04FA840D000922223423DADDA009F5B4EF18BAD`. The record identifies source `78e6543decb02ecf66ac9f5f9acece4fa7123e11`, ESP-IDF 6.0.1, internal build ESP32MTk_06 / public Esp32Mk1. The preceding ESP32MTk_05 record includes all Wi-Fi A1–A7 PASS; _06 changed BLE only. This is historical hardware evidence; the current integration has not inherited physical validation.
 
-Current Core's first available public source import `994e036547220943803c959e4e89319559db9ab3` already contains the identified omissions. Its station callback is byte-identical to the pre-repair callback at f586b6d. The older development import 8b32a93 also has that callback, but is not an ancestor of current public main. These are separate histories from historical m1-esp32c6-fw: there is no honest linear good-parent/bad-child bisect across them. We can identify the first available affected Core source, not the unavailable internal edit that originally introduced it. Complete current-ancestry and historical Wi-Fi-change lists are retained in the candidate logs. No attribution to an individual is made.
+Current Core's first available public source import `994e036547220943803c959e4e89319559db9ab3` already contains the identified omissions. Its station callback is byte-identical to the pre-repair callback at f586b6d. The older development import 8b32a93 also has that callback, but is not an ancestor of current public main. These are separate histories from historical m1-esp32c6-fw: there is no honest linear good-parent/bad-child bisect across them. The first available affected Core source can be identified, but the internal edit that introduced the regression cannot.
 
-The failed Signal Meter Core artifact had SHA-256 `234775486D84C0DD70D8556FF237C387F94C212EBA7FD90649F6F13E55C8517D`. Its BLE patch did not change the Wi-Fi parser or TX HAL. The owner reported phantom clients and failed Deauth in current Core; those regressions are not evidence against the preserved Signal Meter work.
+The failed Signal Meter Core artifact had SHA-256 `234775486D84C0DD70D8556FF237C387F94C212EBA7FD90649F6F13E55C8517D`. Its BLE patch did not change the Wi-Fi parser or TX HAL. Field reports identified phantom clients and failed Deauth in Core; those regressions are not evidence against the preserved Signal Meter work.
 
 ## Causes and restoration
 
@@ -26,8 +26,8 @@ AP scanning and its SSID/channel/RSSI results remain on current Core. Channel Su
 
 ## Validation scope
 
-Run the entire ASan/UBSan host suite, including existing AP/station scan, selected Deauth, UART/SPI, framing, handshake, peer-reset, ownership, radio-restore, BLE scan/naming and Signal Meter tests. Added tests cover real station parsing, Beacon lifecycle, a real pthread UART Deauth worker and pending STOP, repeated cumulative flows, and handshake burst timing/cancellation. The historical/current station callback reproducer and original UART reproducer establish before/after failures beyond fake-HAL success tests.
+Validation scope includes the ASan/UBSan host suite for AP/station scan, selected Deauth, UART/SPI, framing, handshake, peer reset, ownership, radio restore, BLE scan/naming and Signal Meter. Additional tests cover real station parsing, Beacon lifecycle, a pthread UART Deauth worker and pending STOP, repeated combined flows, and handshake burst timing/cancellation. The historical/current station callback reproducer and original UART reproducer establish before/after failures beyond fake-HAL success tests.
 
-The universal ESP32-C6 engineering build, variant configuration, map resource budget, expanded task-stack chains, final ELF TX-hook binding and merged-image/MD5 checks are recorded in the accompanying REPORT and logs. The host release-artifact test runs in documented pre-packaging mode; this is not a clean-commit release package. No alternate hardware variants are built or certified.
+The engineering candidate was checked with a universal ESP32-C6 build, resource-budget and task-stack analysis, ELF TX-hook inspection, and merged-image hash checks. The host release-artifact test used pre-packaging mode. These checks do not constitute a clean-commit release package or certify alternate hardware variants.
 
 Physical validation still must cover client-list ground truth, selected-client disconnect and STOP, actual Beacon visibility, captured-handshake usability, Channel Survey, BLE loss/reacquisition and repeated transitions against the exact combined hash. Runtime heap and stack high-water marks are not established by the static gates. No hardware outcome is claimed from passing host tests.

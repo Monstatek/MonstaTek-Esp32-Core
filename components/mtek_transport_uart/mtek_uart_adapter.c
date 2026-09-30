@@ -1032,13 +1032,9 @@ static size_t handle_ble_signal(mtk_uart_adapter_state_t *st, const char *arg, c
  * existing opcode's command ID, framing, or response shape changed.
  *
  * `gatt_discover_tree` below performs the full services->chars->descs walk once
- * and both callers (connect's auto-discovery, `services`'s own listing) reuse
- * it. The result tree is a file-static scratch object (large aggregate
- * objects must never live in a task's call stack --
- * ~6.7KB, far past what belongs in any UART command handler's own frame), not a
- * per-adapter- instance field: the whole UART REPL is single-threaded and
- * processes one command to completion before the next, so one shared static is
- * safe, matching this file's own established `cap`/`cap2`/`ev` pattern. Bounded
+ * for both callers (connect's auto-discovery, `services`'s own listing). It
+ * streams rows directly into the caller's bounded UART output instead of
+ * retaining a ~6.7KB static copy of the entire tree after discovery. Bounded
  * to GATT_TREE_MAX_SVC/_CHR/_DSC (8/8/4) -- a disclosed, reasonable practical
  * limit for a console-grade tool, not a claim that every real peripheral's GATT
  * database is always this small; the canonical opcodes themselves support
@@ -1049,21 +1045,30 @@ static size_t handle_ble_signal(mtk_uart_adapter_state_t *st, const char *arg, c
 #define GATT_TREE_MAX_SVC 8
 #define GATT_TREE_MAX_CHR 8
 #define GATT_TREE_MAX_DSC 4
-typedef struct { mtk_uuid_t uuid; uint16_t handle; } gatt_tree_dsc_t;
-typedef struct {
-    mtk_uuid_t uuid; uint16_t def_handle, val_handle; uint8_t properties;
-    gatt_tree_dsc_t dscs[GATT_TREE_MAX_DSC]; uint8_t dsc_count;
-} gatt_tree_chr_t;
-typedef struct {
-    mtk_uuid_t uuid; uint16_t start_handle, end_handle;
-    gatt_tree_chr_t chrs[GATT_TREE_MAX_CHR]; uint8_t chr_count;
-} gatt_tree_svc_t;
-typedef struct { gatt_tree_svc_t svcs[GATT_TREE_MAX_SVC]; uint8_t svc_count; uint32_t total_chrs, total_dscs; } gatt_tree_t;
-static gatt_tree_t s_gatt_tree;
+typedef struct { uint8_t svc_count, incomplete; uint32_t total_chrs, total_dscs; } gatt_tree_counts_t;
+static const char *gatt_props_str(uint8_t properties, char *buf, size_t buf_cap);
 
-static void gatt_discover_tree(mtk_uart_adapter_state_t *st) {
-    gatt_tree_t *t = &s_gatt_tree;
-    memset(t, 0, sizeof(*t));
+/* `used` is the number of bytes actually in `out`, never vsnprintf's larger
+ * would-have-written length. Leave room for a terminal truncation line so the
+ * STM32 never treats a cut-off tree as complete. */
+static size_t gatt_tree_emit(char *out, size_t out_cap, size_t used, uint8_t *truncated,
+                             const char *fmt, ...) {
+    if (!out || !out_cap || *truncated) return used;
+    const size_t reserve = sizeof("[BLE:ERR] discovery output truncated\n");
+    if (out_cap <= reserve + 1U || used >= out_cap - reserve) { *truncated = 1U; return used; }
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(out + used, out_cap - used - reserve, fmt, ap);
+    va_end(ap);
+    if (n < 0 || (size_t)n >= out_cap - used - reserve) { *truncated = 1U; return used; }
+    return used + (size_t)n;
+}
+
+static size_t gatt_discover_tree(mtk_uart_adapter_state_t *st, char *out, size_t out_cap,
+                                 gatt_tree_counts_t *counts) {
+    uint8_t truncated = 0U;
+    size_t used = 0U;
+    memset(counts, 0, sizeof(*counts));
 
     memset(&cap, 0, sizeof(cap));
     mtk_request_ctx_t sctx = make_ctx(st, &cap);
@@ -1072,67 +1077,98 @@ static void gatt_discover_tree(mtk_uart_adapter_state_t *st) {
     uint8_t sbuf[16]; size_t sblen = 0;
     mtk_encode(svc_op->req_desc, &sreq, sbuf, sizeof(sbuf), &sblen);
     mtk_router_dispatch(&sctx, 0x0003, 0x0004, sbuf, sblen);
-    if (cap.status != MTK_STATUS_OK) return;
+    if (cap.status != MTK_STATUS_OK) { counts->incomplete = 1U; goto finish; }
     mtk_gatt_discover_resp_t svc_resp = {0};
     mtk_decode(svc_op->resp_desc, &svc_resp, cap.body, cap.body_len, NULL);
-    t->svc_count = (uint8_t)(svc_resp.services.count > GATT_TREE_MAX_SVC ? GATT_TREE_MAX_SVC : svc_resp.services.count);
+    counts->svc_count = (uint8_t)(svc_resp.services.count > GATT_TREE_MAX_SVC ? GATT_TREE_MAX_SVC : svc_resp.services.count);
+    if (svc_resp.next_index != 0U || svc_resp.services.count > GATT_TREE_MAX_SVC) counts->incomplete = 1U;
 
     const mtk_opcode_entry_t *chr_op = mtk_opcode_find(0x0003, 0x0009);
     const mtk_opcode_entry_t *dsc_op = mtk_opcode_find(0x0003, 0x000A);
 
-    for (uint8_t si = 0; si < t->svc_count; si++) {
-        gatt_tree_svc_t *sv = &t->svcs[si];
-        sv->uuid = svc_resp.services.items[si].uuid;
-        sv->start_handle = svc_resp.services.items[si].start_handle;
-        sv->end_handle = svc_resp.services.items[si].end_handle;
+    for (uint8_t si = 0; si < counts->svc_count; si++) {
+        const mtk_uuid_t *svc_uuid = &svc_resp.services.items[si].uuid;
+        uint16_t start_handle = svc_resp.services.items[si].start_handle;
+        uint16_t end_handle = svc_resp.services.items[si].end_handle;
+        if (svc_uuid->width == 0)
+            used = gatt_tree_emit(out, out_cap, used, &truncated,
+                                  "[SVC %u] UUID16 0x%02X%02X handles %u-%u\n",
+                                  si, svc_uuid->value[1], svc_uuid->value[0], start_handle, end_handle);
+        else
+            used = gatt_tree_emit(out, out_cap, used, &truncated,
+                                  "[SVC %u] UUID128 handles %u-%u\n", si, start_handle, end_handle);
 
         memset(&cap2, 0, sizeof(cap2));
         mtk_request_ctx_t cctx = make_ctx(st, &cap2);
         mtk_gatt_discover_chars_req_t creq = {0};
-        creq.connection_token = st->gatt_conn_token; creq.start_handle = sv->start_handle; creq.end_handle = sv->end_handle;
+        creq.connection_token = st->gatt_conn_token; creq.start_handle = start_handle; creq.end_handle = end_handle;
         creq.max_items = GATT_TREE_MAX_CHR;
         uint8_t cbuf[16]; size_t cblen = 0;
         mtk_encode(chr_op->req_desc, &creq, cbuf, sizeof(cbuf), &cblen);
         mtk_router_dispatch(&cctx, 0x0003, 0x0009, cbuf, cblen);
-        if (cap2.status != MTK_STATUS_OK) continue;
+        if (cap2.status != MTK_STATUS_OK) { counts->incomplete = 1U; continue; }
         mtk_gatt_discover_chars_resp_t chr_resp = {0};
         mtk_decode(chr_op->resp_desc, &chr_resp, cap2.body, cap2.body_len, NULL);
-        sv->chr_count = (uint8_t)(chr_resp.items.count > GATT_TREE_MAX_CHR ? GATT_TREE_MAX_CHR : chr_resp.items.count);
-        t->total_chrs += sv->chr_count;
+        uint8_t chr_count = (uint8_t)(chr_resp.items.count > GATT_TREE_MAX_CHR ? GATT_TREE_MAX_CHR : chr_resp.items.count);
+        if (chr_resp.next_index != 0U || chr_resp.items.count > GATT_TREE_MAX_CHR) counts->incomplete = 1U;
+        counts->total_chrs += chr_count;
 
-        for (uint8_t ci = 0; ci < sv->chr_count; ci++) {
-            gatt_tree_chr_t *ch = &sv->chrs[ci];
-            ch->uuid = chr_resp.items.items[ci].uuid;
-            ch->def_handle = chr_resp.items.items[ci].def_handle;
-            ch->val_handle = chr_resp.items.items[ci].val_handle;
-            ch->properties = chr_resp.items.items[ci].properties;
+        for (uint8_t ci = 0; ci < chr_count; ci++) {
+            const mtk_uuid_t *chr_uuid = &chr_resp.items.items[ci].uuid;
+            uint16_t val_handle = chr_resp.items.items[ci].val_handle;
+            uint8_t properties = chr_resp.items.items[ci].properties;
+            char props[24];
+            gatt_props_str(properties, props, sizeof(props));
+            if (chr_uuid->width == 0)
+                used = gatt_tree_emit(out, out_cap, used, &truncated,
+                                      "  [CHR] UUID16 0x%02X%02X val=%u props=0x%02X [%s]\n",
+                                      chr_uuid->value[1], chr_uuid->value[0], val_handle, properties, props);
+            else
+                used = gatt_tree_emit(out, out_cap, used, &truncated,
+                                      "  [CHR] UUID128 val=%u props=0x%02X [%s]\n",
+                                      val_handle, properties, props);
 
-            uint16_t dsc_end = ((uint32_t)ci + 1 < chr_resp.items.count) ? (uint16_t)(chr_resp.items.items[ci + 1].def_handle - 1) : sv->end_handle;
-            if (dsc_end <= ch->val_handle) continue;
+            uint16_t dsc_end = ((uint32_t)ci + 1 < chr_resp.items.count) ? (uint16_t)(chr_resp.items.items[ci + 1].def_handle - 1) : end_handle;
+            if (dsc_end <= val_handle) continue;
 
             memset(&cap, 0, sizeof(cap));
             mtk_request_ctx_t dctx = make_ctx(st, &cap);
             mtk_gatt_discover_descs_req_t dreq = {0};
             dreq.connection_token = st->gatt_conn_token;
-            dreq.start_handle = (uint16_t)(ch->val_handle + 1); dreq.end_handle = dsc_end;
+            dreq.start_handle = (uint16_t)(val_handle + 1); dreq.end_handle = dsc_end;
             dreq.max_items = GATT_TREE_MAX_DSC;
             uint8_t dbuf[16]; size_t dblen = 0;
             mtk_encode(dsc_op->req_desc, &dreq, dbuf, sizeof(dbuf), &dblen);
             mtk_router_dispatch(&dctx, 0x0003, 0x000A, dbuf, dblen);
-            if (cap.status != MTK_STATUS_OK) continue;
+            if (cap.status != MTK_STATUS_OK) { counts->incomplete = 1U; continue; }
             mtk_gatt_discover_descs_resp_t dsc_resp = {0};
             mtk_decode(dsc_op->resp_desc, &dsc_resp, cap.body, cap.body_len, NULL);
-            ch->dsc_count = (uint8_t)(dsc_resp.items.count > GATT_TREE_MAX_DSC ? GATT_TREE_MAX_DSC : dsc_resp.items.count);
-            t->total_dscs += ch->dsc_count;
-            for (uint8_t di = 0; di < ch->dsc_count; di++) {
-                ch->dscs[di].uuid = dsc_resp.items.items[di].uuid;
-                ch->dscs[di].handle = dsc_resp.items.items[di].handle;
+            uint8_t dsc_count = (uint8_t)(dsc_resp.items.count > GATT_TREE_MAX_DSC ? GATT_TREE_MAX_DSC : dsc_resp.items.count);
+            if (dsc_resp.next_index != 0U || dsc_resp.items.count > GATT_TREE_MAX_DSC) counts->incomplete = 1U;
+            counts->total_dscs += dsc_count;
+            for (uint8_t di = 0; di < dsc_count; di++) {
+                const mtk_uuid_t *dsc_uuid = &dsc_resp.items.items[di].uuid;
+                uint16_t handle = dsc_resp.items.items[di].handle;
+                if (dsc_uuid->width == 0)
+                    used = gatt_tree_emit(out, out_cap, used, &truncated,
+                                          "    [DSC] UUID16 0x%02X%02X handle=%u\n",
+                                          dsc_uuid->value[1], dsc_uuid->value[0], handle);
+                else
+                    used = gatt_tree_emit(out, out_cap, used, &truncated,
+                                          "    [DSC] UUID128 handle=%u\n", handle);
             }
         }
     }
+finish:
+    if (truncated && out && out_cap - used >= sizeof("[BLE:ERR] discovery output truncated\n")) {
+        used = emit(out, out_cap, used, "[BLE:ERR] discovery output truncated\n");
+    } else if (counts->incomplete && out && out_cap - used >= sizeof("[BLE:ERR] discovery incomplete\n")) {
+        used = emit(out, out_cap, used, "[BLE:ERR] discovery incomplete\n");
+    }
+    return used;
 }
 
-static size_t handle_ble_connect(mtk_uart_adapter_state_t *st, const char *arg, char *out, size_t out_cap) {
+static size_t handle_ble_connect(mtk_uart_adapter_state_t *st, const char *arg, uint8_t discover, char *out, size_t out_cap) {
     int id = -1; sscanf(arg, "%d", &id);
     if (!st->ble_scan_valid || id < 0 || (unsigned)id >= st->ble_count) return emit(out, out_cap, 0, "[!] Invalid BLE ID: %s\n", arg);
     char mac[18]; mac_to_str(st->ble_addr[id].b, mac);
@@ -1154,9 +1190,14 @@ static size_t handle_ble_connect(mtk_uart_adapter_state_t *st, const char *arg, 
     if (done.status != MTK_STATUS_OK) return emit(out, out_cap, used, "[BLE:ERR] connect failed status=%u\n", done.status);
     st->gatt_connected = 1; st->gatt_conn_token = done.connection_token;
     used = emit(out, out_cap, used, "[BLE:CONN] connected handle=%u\n", done.connection_token);
-    gatt_discover_tree(st);
+    /* The Explorer discovers with a separate `services` command. Keep legacy
+     * `connect` auto-discovery for existing UART users. */
+    if (!discover) return used;
+    gatt_tree_counts_t counts;
+    (void)gatt_discover_tree(st, NULL, 0U, &counts);
+    if (counts.incomplete) return emit(out, out_cap, used, "[BLE:ERR] discovery incomplete\n");
     return emit(out, out_cap, used, "[BLE:DISC] complete: %u service(s), %lu characteristic(s), %lu descriptor(s)\n",
-                s_gatt_tree.svc_count, (unsigned long)s_gatt_tree.total_chrs, (unsigned long)s_gatt_tree.total_dscs);
+                counts.svc_count, (unsigned long)counts.total_chrs, (unsigned long)counts.total_dscs);
 }
 
 static const char *gatt_props_str(uint8_t properties, char *buf, size_t buf_cap) {
@@ -1176,25 +1217,8 @@ static const char *gatt_props_str(uint8_t properties, char *buf, size_t buf_cap)
 
 static size_t handle_ble_services(mtk_uart_adapter_state_t *st, char *out, size_t out_cap) {
     if (!st->gatt_connected) return emit(out, out_cap, 0, "[!] Not connected.\n");
-    gatt_discover_tree(st);
-    size_t used = 0;
-    for (uint8_t si = 0; si < s_gatt_tree.svc_count; si++) {
-        gatt_tree_svc_t *sv = &s_gatt_tree.svcs[si];
-        if (sv->uuid.width == 0) used = emit(out, out_cap, used, "[SVC %u] UUID16 0x%02X%02X handles %u-%u\n", si, sv->uuid.value[1], sv->uuid.value[0], sv->start_handle, sv->end_handle);
-        else used = emit(out, out_cap, used, "[SVC %u] UUID128 handles %u-%u\n", si, sv->start_handle, sv->end_handle);
-        for (uint8_t ci = 0; ci < sv->chr_count; ci++) {
-            gatt_tree_chr_t *ch = &sv->chrs[ci];
-            char props[24]; gatt_props_str(ch->properties, props, sizeof(props));
-            if (ch->uuid.width == 0) used = emit(out, out_cap, used, "  [CHR] UUID16 0x%02X%02X val=%u props=0x%02X [%s]\n", ch->uuid.value[1], ch->uuid.value[0], ch->val_handle, ch->properties, props);
-            else used = emit(out, out_cap, used, "  [CHR] UUID128 val=%u props=0x%02X [%s]\n", ch->val_handle, ch->properties, props);
-            for (uint8_t di = 0; di < ch->dsc_count; di++) {
-                gatt_tree_dsc_t *ds = &ch->dscs[di];
-                if (ds->uuid.width == 0) used = emit(out, out_cap, used, "    [DSC] UUID16 0x%02X%02X handle=%u\n", ds->uuid.value[1], ds->uuid.value[0], ds->handle);
-                else used = emit(out, out_cap, used, "    [DSC] UUID128 handle=%u\n", ds->handle);
-            }
-        }
-    }
-    return used;
+    gatt_tree_counts_t counts;
+    return gatt_discover_tree(st, out, out_cap, &counts);
 }
 
 static size_t handle_ble_read(mtk_uart_adapter_state_t *st, const char *arg, char *out, size_t out_cap) {
@@ -1284,8 +1308,8 @@ static size_t handle_ble_unsubscribe(mtk_uart_adapter_state_t *st, const char *a
     uint8_t buf[8]; size_t blen = 0;
     mtk_encode(op->req_desc, &req, buf, sizeof(buf), &blen);
     mtk_router_dispatch(&ctx, 0x0003, 0x0008, buf, blen);
-    (void)cap;
-    return 0;
+    if (cap.status != MTK_STATUS_OK) return emit(out, out_cap, 0, "[BLE:ERR] unsubscribe failed status=%u\n", cap.status);
+    return emit(out, out_cap, 0, "[BLE:UNSUB] ok\n");
 }
 
 static size_t handle_ble_status(mtk_uart_adapter_state_t *st, char *out, size_t out_cap) {
@@ -1353,7 +1377,7 @@ static int mtek_uart_line_is_recognized(const mtk_uart_adapter_state_t *st, cons
     if (strcmp(line, "scan") == 0 || starts_with(line, "scan ")) return 1;
     if (strcmp(line, "list") == 0 || strcmp(line, "list -d") == 0 || starts_with(line, "list ")) return 1;
     if (strcmp(line, "advertise") == 0 || starts_with(line, "advertise -n ")) return 1;
-    if (starts_with(line, "signal ") || starts_with(line, "connect ")) return 1;
+    if (starts_with(line, "signal ") || starts_with(line, "connect ") || starts_with(line, "connect-only ")) return 1;
     if (strcmp(line, "resume") == 0) return 1;
     if (strcmp(line, "services") == 0) return 1;
     if (starts_with(line, "read ") || starts_with(line, "write ") || starts_with(line, "writenr ")) return 1;
@@ -1425,10 +1449,11 @@ size_t mtek_uart_process_line(mtk_uart_adapter_state_t *st, const char *line, ch
         if (strcmp(line, "advertise") == 0) return handle_ble_advertise(st, NULL, out, out_cap);
         if (starts_with(line, "advertise -n ")) return handle_ble_advertise(st, line + 13, out, out_cap);
         if (starts_with(line, "signal ")) return handle_ble_signal(st, line + 7, out, out_cap);
-        if (starts_with(line, "connect ")) {
+        if (starts_with(line, "connect ") || starts_with(line, "connect-only ")) {
+            uint8_t discover = (uint8_t)starts_with(line, "connect ");
             uint8_t was_live = st->ble_live;
             pause_ble_live(st);
-            size_t used = handle_ble_connect(st, line + 8, out, out_cap);
+            size_t used = handle_ble_connect(st, line + (discover ? 8 : 13), discover != 0, out, out_cap);
             if (was_live && !st->gatt_connected) {
                 mtk_request_ctx_t ctx = make_session_ctx(st);
                 st->ble_live = mtek_ble_live_start(&ctx) == 0;
@@ -1501,11 +1526,20 @@ size_t mtek_uart_adapter_poll_background(mtk_uart_adapter_state_t *st, char *out
     /* See mtek_ble_service.h's own doc comment on this accessor for why it is
      * polled directly here instead of flowing through session_queue like every
      * other background delivery below. Checked first so it is never starved by
-     * other pending traffic. the real HCI-level reason, threaded all the way
+     * other pending traffic. The full NimBLE reason is threaded all the way
      * from the HAL's own GAP callback. */
-    uint8_t disc_reason = 0;
-    if (mtek_ble_gatt_take_remote_disconnect_notice(&disc_reason)) {
-        return emit(out, out_cap, 0, "[BLE:CONN] disconnected reason=%u\n", disc_reason);
+    mtk_hal_gatt_disconnect_info_t disc_info = {0};
+    uint32_t disc_token = 0;
+    if (mtek_ble_gatt_take_remote_disconnect_notice(&disc_info, &disc_token)) {
+        if (!st->gatt_connected || st->gatt_conn_token != disc_token) return 0;
+        st->gatt_connected = 0;
+        st->gatt_conn_token = 0;
+        st->write_staged = 0;
+        return emit(out, out_cap, 0,
+                    "[BLE:CONN] disconnected reason=%d local=%u interval=%u latency=%u supervision=%u updates=%u update_status=%d\n",
+                    disc_info.reason, disc_info.local_terminate_requested, disc_info.interval,
+                    disc_info.latency, disc_info.supervision_timeout,
+                    disc_info.conn_update_count, disc_info.conn_update_status);
     }
     mtk_async_frame_t f;
     while (mtk_async_queue_pop(&st->session_queue, &f)) {

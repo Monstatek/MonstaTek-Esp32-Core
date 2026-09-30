@@ -17,12 +17,12 @@ typedef struct {
     int adv_start_rc;
     int signal_rc; int8_t signal_rssi; uint8_t signal_is_random;
     int gatt_connect_rc; uint16_t gatt_vendor_handle;
-    mtk_hal_gatt_service_t gatt_services[4]; unsigned gatt_service_count;
+    mtk_hal_gatt_service_t gatt_services[9]; unsigned gatt_service_count;
     /* Filtered by requested [start_handle, end_handle] at call time (like a real
      * HAL would), so a test can populate the full connection's chars/descs once
      * and different per-service/per-characteristic discovery calls each see only
      * the subset whose handle actually falls in their own real range. */
-    mtk_hal_gatt_char_t gatt_chars[8]; unsigned gatt_char_count;
+    mtk_hal_gatt_char_t gatt_chars[9]; unsigned gatt_char_count;
     mtk_hal_gatt_desc_t gatt_descs[8]; unsigned gatt_desc_count;
     uint8_t gatt_read_data[64]; uint16_t gatt_read_len; int gatt_read_rc;
     int gatt_write_rc;
@@ -35,8 +35,11 @@ typedef struct {
     uint16_t last_unsubscribe_attr_handle, last_unsubscribe_end_handle;
     uint16_t notify_handle; uint8_t notify_data[32]; uint16_t notify_len; int notify_pending;
     int remote_disconnect_pending; /* test sets this to simulate a real BLE_GAP_EVENT_DISCONNECT */
-    uint8_t remote_disconnect_reason; /* Test sets this to simulate a real
-                                       * HCI-level reason code */
+    int remote_disconnect_reason; /* Full NimBLE reason, including HCI base. */
+    uint16_t remote_disconnect_interval, remote_disconnect_latency, remote_disconnect_supervision;
+    uint8_t remote_disconnect_local_requested;
+    uint16_t remote_disconnect_update_count;
+    int remote_disconnect_update_status;
     uint32_t notify_dropped_count; /* Test sets this to simulate real HAL-side
                                     * overflow */
     unsigned gatt_disconnect_call_count; /* Proves a peer-reset invalidation
@@ -206,11 +209,21 @@ static int fake_ble_gatt_poll_notify(uint16_t vendor_handle, uint16_t *attr_hand
     return 1;
 }
 
-static int fake_ble_gatt_poll_disconnected(uint16_t vendor_handle, uint8_t *reason_out) {
+static int fake_ble_gatt_poll_disconnected(uint16_t vendor_handle, mtk_hal_gatt_disconnect_info_t *info_out) {
     (void)vendor_handle;
     if (!g_fake_ble.remote_disconnect_pending) return 0;
     g_fake_ble.remote_disconnect_pending = 0;
-    if (reason_out) *reason_out = g_fake_ble.remote_disconnect_reason;
+    if (info_out) {
+        *info_out = (mtk_hal_gatt_disconnect_info_t){
+            .reason = g_fake_ble.remote_disconnect_reason,
+            .interval = g_fake_ble.remote_disconnect_interval,
+            .latency = g_fake_ble.remote_disconnect_latency,
+            .supervision_timeout = g_fake_ble.remote_disconnect_supervision,
+            .local_terminate_requested = g_fake_ble.remote_disconnect_local_requested,
+            .conn_update_count = g_fake_ble.remote_disconnect_update_count,
+            .conn_update_status = g_fake_ble.remote_disconnect_update_status,
+        };
+    }
     return 1;
 }
 

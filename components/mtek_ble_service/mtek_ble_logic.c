@@ -1268,20 +1268,24 @@ static void handle_gatt_unsubscribe(mtk_request_ctx_t *ctx, const mtk_opcode_ent
 static uint8_t s_gatt_remote_disconnect_pending;
 /* The real reason captured alongside the pending flag above -- never a
  * hard-coded placeholder. */
-static uint8_t s_gatt_remote_disconnect_reason;
+static mtk_hal_gatt_disconnect_info_t s_gatt_remote_disconnect_info;
+static uint32_t s_gatt_remote_disconnect_token;
 
-uint8_t mtek_ble_gatt_take_remote_disconnect_notice(uint8_t *reason_out) {
+uint8_t mtek_ble_gatt_take_remote_disconnect_notice(mtk_hal_gatt_disconnect_info_t *info_out,
+                                                     uint32_t *connection_token_out) {
     /* This accessor and mtek_ble_gatt_tick's remote-disconnect branch below run
      * on separate tasks on a real target (the UART adapter's own background poll
      * vs. the BLE tick task) -- both statics need the same dedicated lock as
      * s_gatt. */
     ble_lock();
     uint8_t pending = s_gatt_remote_disconnect_pending;
-    uint8_t reason = s_gatt_remote_disconnect_reason;
+    mtk_hal_gatt_disconnect_info_t info = s_gatt_remote_disconnect_info;
+    uint32_t token = s_gatt_remote_disconnect_token;
     if (pending) s_gatt_remote_disconnect_pending = 0;
     ble_unlock();
     if (!pending) return 0;
-    if (reason_out) *reason_out = reason;
+    if (info_out) *info_out = info;
+    if (connection_token_out) *connection_token_out = token;
     return 1;
 }
 
@@ -1319,8 +1323,8 @@ void mtek_ble_gatt_tick(void) {
      * mtek_ble_service.h's doc comment on the accessor above -- deliberately not
      * routed through emit_event, so this branch needs no publish guard: nothing
      * is ever emitted). */
-    uint8_t disc_reason = 0;
-    if (s_hal->gatt_poll_disconnected && s_hal->gatt_poll_disconnected(vendor_handle, &disc_reason)) {
+    mtk_hal_gatt_disconnect_info_t disc_info = {0};
+    if (s_hal->gatt_poll_disconnected && s_hal->gatt_poll_disconnected(vendor_handle, &disc_info)) {
         ble_lock();
         /* Re-validate -- s_gatt could have already been
          * disconnected-and-reconnected for a wholly different connection since
@@ -1337,7 +1341,8 @@ void mtek_ble_gatt_tick(void) {
             mtk_arbiter_release_if_owner(MTK_ARB_GC, connection_token);
             ble_lock();
             s_gatt_remote_disconnect_pending = 1;
-            s_gatt_remote_disconnect_reason = disc_reason;
+            s_gatt_remote_disconnect_info = disc_info;
+            s_gatt_remote_disconnect_token = connection_token;
             ble_unlock();
         } else {
             ble_unlock();

@@ -94,11 +94,11 @@ void mtek_ble_service_mark_tick_task_failed(void);
  * instead a UART-adapter-only channel: returns 1 exactly once per remote
  * disconnect the caller hasn't yet consumed, 0 otherwise.
  *
- * "Remote disconnect currently loses the real reason and emits a hard-coded
- * reason." `*reason_out` (valid only when this returns 1) is now the real
- * HCI-level disconnect reason from the HAL's own GAP callback
- * (mtek_ble_hal_esp32.c's conn_gap_cb), not a placeholder. */
-uint8_t mtek_ble_gatt_take_remote_disconnect_notice(uint8_t *reason_out);
+ * The details are copied from the GAP callback and retain the full NimBLE
+ * reason, negotiated connection parameters, and whether Core requested a
+ * local termination. */
+uint8_t mtek_ble_gatt_take_remote_disconnect_notice(mtk_hal_gatt_disconnect_info_t *info_out,
+                                                     uint32_t *connection_token_out);
 
 /* See mtek_wifi_service.h's mtek_wifi_cancel_ active_for_peer_reset for the full
  * rationale -- the BLE-owned counterpart. Cancels and cleans up whatever

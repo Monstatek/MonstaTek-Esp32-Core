@@ -151,21 +151,42 @@ MTK_TEST_MAIN_BEGIN
          * already returned -- mtek_ble_gatt_tick (this target's own
          * periodic driver, main/app_main.c's ble_tick_task) is what
          * would observe this on real hardware; called directly here. */
-        /* A genuinely nonzero reason code here (0x213, NimBLE's own
-         * BLE_HS_HCI_ERR connection-timeout example) proves the real value
+        /* 0x213 (NimBLE's HCI-base encoding of HCI reason 0x13) proves the full value
          * threads all the way through the HAL/service/adapter chain, not just
          * that SOME reason (indistinguishable from the old hard-coded 0) was
          * printed. */
         g_fake_ble.remote_disconnect_pending = 1;
-        g_fake_ble.remote_disconnect_reason = 0x13;
+        g_fake_ble.remote_disconnect_reason = 0x213;
+        g_fake_ble.remote_disconnect_interval = 36;
+        g_fake_ble.remote_disconnect_latency = 0;
+        g_fake_ble.remote_disconnect_supervision = 256;
+        g_fake_ble.remote_disconnect_local_requested = 0;
+        g_fake_ble.remote_disconnect_update_count = 1;
+        g_fake_ble.remote_disconnect_update_status = 19;
         mtek_ble_gatt_tick();
 
         size_t dn = mtek_uart_adapter_poll_background(&st, out, sizeof(out));
         MTK_CHECK(dn > 0);
-        MTK_CHECK(strcmp(out, "[BLE:CONN] disconnected reason=19\n") == 0);
+        MTK_CHECK(strcmp(out, "[BLE:CONN] disconnected reason=531 local=0 interval=36 latency=0 supervision=256 updates=1 update_status=19\n") == 0);
+        MTK_CHECK_EQ(st.gatt_connected, 0);
+        MTK_CHECK_EQ(st.gatt_conn_token, 0);
+        mtek_uart_process_line(&st, "status", out, sizeof(out));
+        MTK_CHECK(strstr(out, "connected=0") != NULL);
 
         /* Consumed exactly once. */
         MTK_CHECK_EQ(mtek_uart_adapter_poll_background(&st, out, sizeof(out)), 0);
+
+        /* If UART has already moved to a newer link before consuming a
+         * notice, the old token must not retire that newer link. */
+        mtek_uart_process_line(&st, "connect 0", out, sizeof(out));
+        MTK_CHECK_EQ(st.gatt_connected, 1);
+        g_fake_ble.remote_disconnect_pending = 1;
+        g_fake_ble.remote_disconnect_reason = 0x213;
+        mtek_ble_gatt_tick();
+        st.gatt_conn_token++;
+        MTK_CHECK_EQ(mtek_uart_adapter_poll_background(&st, out, sizeof(out)), 0);
+        MTK_CHECK_EQ(st.gatt_connected, 1);
+
     }
 
 MTK_TEST_MAIN_END

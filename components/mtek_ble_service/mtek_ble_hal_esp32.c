@@ -359,10 +359,13 @@ static unsigned s_notify_head, s_notify_count;
  * and reported but never actually incremented anywhere. */
 static uint32_t s_notify_dropped_count;
 static uint16_t s_disconnected_handle = 0xFFFF; /* 0xFFFF sentinel: none pending */
-/* The real HCI-level disconnect reason (event->disconnect.reason), guarded by
+/* The full NimBLE disconnect reason (event->disconnect.reason), guarded by
  * the same s_notify_mutex as s_disconnected_handle -- never a hard-coded
  * placeholder. */
-static uint8_t s_disconnect_reason;
+static mtk_hal_gatt_disconnect_info_t s_disconnect_info;
+static uint16_t s_local_terminate_handle = 0xFFFF;
+static uint16_t s_conn_update_count;
+static int s_conn_update_status = -1;
 /* "Notification queue access crosses callback/task contexts without
  * synchronization." s_notify_queue/head/count and s_disconnected_handle above
  * are written from conn_gap_cb (NimBLE's own host task) and read/cleared from
@@ -375,6 +378,16 @@ static uint8_t s_disconnect_reason;
 
 static int conn_gap_cb(struct ble_gap_event *event, void *arg) {
     if (event->type == BLE_GAP_EVENT_CONNECT) {
+        if (event->connect.status == 0) {
+            struct ble_gap_conn_desc desc;
+            if (ble_gap_conn_find(event->connect.conn_handle, &desc) == 0) {
+                ESP_LOGI(TAG, "GATT link connected handle=%u interval=%u latency=%u supervision=%u",
+                         desc.conn_handle, desc.conn_itvl, desc.conn_latency, desc.supervision_timeout);
+            }
+        } else {
+            ESP_LOGW(TAG, "GATT link connect failed status=%d (0x%04x)",
+                     event->connect.status, (unsigned)event->connect.status);
+        }
         /* A CONNECT event belongs to whichever esp32_gatt_connect
          * call registered THIS callback instance -- callback_begin rejects it
          * (and never hands back a context) if that call has already timed out
@@ -394,6 +407,17 @@ static int conn_gap_cb(struct ble_gap_event *event, void *arg) {
             }
             mtk_ble_op_lifecycle_callback_end(&s_op_lc);
         }
+    } else if (event->type == BLE_GAP_EVENT_CONN_UPDATE) {
+        notify_lock();
+        s_conn_update_count++;
+        s_conn_update_status = event->conn_update.status;
+        notify_unlock();
+        struct ble_gap_conn_desc desc;
+        if (ble_gap_conn_find(event->conn_update.conn_handle, &desc) == 0) {
+            ESP_LOGI(TAG, "GATT link updated handle=%u status=%d interval=%u latency=%u supervision=%u",
+                     desc.conn_handle, event->conn_update.status, desc.conn_itvl,
+                     desc.conn_latency, desc.supervision_timeout);
+        }
     } else if (event->type == BLE_GAP_EVENT_NOTIFY_RX) {
         notify_lock();
         if (s_notify_count < NOTIFY_QUEUE_LEN) {
@@ -410,6 +434,10 @@ static int conn_gap_cb(struct ble_gap_event *event, void *arg) {
         }
         notify_unlock();
     } else if (event->type == BLE_GAP_EVENT_DISCONNECT) {
+        ESP_LOGW(TAG, "GATT link disconnected handle=%u reason=%d (0x%04x) interval=%u latency=%u supervision=%u",
+                 event->disconnect.conn.conn_handle, event->disconnect.reason,
+                 (unsigned)event->disconnect.reason, event->disconnect.conn.conn_itvl,
+                 event->disconnect.conn.conn_latency, event->disconnect.conn.supervision_timeout);
         /* "Remote disconnect is ignored, leaving connection/arbiter state
          * stale." A remote/peer-initiated disconnect must be observable by the
          * service layer so it can release the GC arbiter lease and clear its own
@@ -421,7 +449,15 @@ static int conn_gap_cb(struct ble_gap_event *event, void *arg) {
          * (mtek_ble_logic.c). */
         notify_lock();
         s_disconnected_handle = event->disconnect.conn.conn_handle;
-        s_disconnect_reason = (uint8_t)event->disconnect.reason;
+        s_disconnect_info.reason = event->disconnect.reason;
+        s_disconnect_info.interval = event->disconnect.conn.conn_itvl;
+        s_disconnect_info.latency = event->disconnect.conn.conn_latency;
+        s_disconnect_info.supervision_timeout = event->disconnect.conn.supervision_timeout;
+        s_disconnect_info.local_terminate_requested =
+            (s_local_terminate_handle == s_disconnected_handle);
+        s_disconnect_info.conn_update_count = s_conn_update_count;
+        s_disconnect_info.conn_update_status = s_conn_update_status;
+        s_local_terminate_handle = 0xFFFF;
         notify_unlock();
     }
     return 0;
@@ -455,6 +491,11 @@ static int esp32_gatt_connect(mtk_hal_mac6_t addr, uint8_t addr_type, uint32_t t
     params.supervision_timeout = 256; /* 2.56s (256 * 10ms) */
     params.min_ce_len = 0x0010;
     params.max_ce_len = 0x0300;
+    notify_lock();
+    s_conn_update_count = 0;
+    s_conn_update_status = -1;
+    s_local_terminate_handle = 0xFFFF;
+    notify_unlock();
     uint32_t gen = mtk_ble_op_lifecycle_arm(&s_op_lc, &ctx);
     int rc = ble_gap_connect(s_own_addr_type, &peer, (int32_t)timeout_ms, &params, conn_gap_cb, (void *)(uintptr_t)gen);
     if (rc != 0) { mtk_ble_op_lifecycle_retire(&s_op_lc); vSemaphoreDelete(ctx.done); return -1; }
@@ -478,10 +519,22 @@ static int esp32_gatt_connect(mtk_hal_mac6_t addr, uint8_t addr_type, uint32_t t
     s_notify_head = 0; s_notify_count = 0;
     s_notify_dropped_count = 0;
     s_disconnected_handle = 0xFFFF;
+    s_local_terminate_handle = 0xFFFF;
     notify_unlock();
     return 0;
 }
-static void esp32_gatt_disconnect(uint16_t vendor_handle) { ble_gap_terminate(vendor_handle, BLE_ERR_REM_USER_CONN_TERM); }
+static void esp32_gatt_disconnect(uint16_t vendor_handle) {
+    notify_lock();
+    s_local_terminate_handle = vendor_handle;
+    notify_unlock();
+    int rc = ble_gap_terminate(vendor_handle, BLE_ERR_REM_USER_CONN_TERM);
+    if (rc != 0) {
+        notify_lock();
+        if (s_local_terminate_handle == vendor_handle) s_local_terminate_handle = 0xFFFF;
+        notify_unlock();
+    }
+    ESP_LOGI(TAG, "GATT local terminate handle=%u rc=%d", vendor_handle, rc);
+}
 
 /* "The target HAL... passes stack contexts to asynchronous
  * discovery/read/write/descriptor callbacks. Timeout paths delete the semaphore
@@ -514,7 +567,7 @@ static void esp32_gatt_disconnect(uint16_t vendor_handle) { ble_gap_terminate(ve
  * EDONE, real error) is exactly what every discovery function below now checks
  * after its own semaphore wait, instead of trusting a plain "the wait returned"
  * signal to mean "this was a clean completion". */
-typedef struct { mtk_hal_gatt_service_t *out; unsigned max, count; SemaphoreHandle_t done; int done_status; } disc_ctx_t;
+typedef struct { mtk_hal_gatt_service_t *out; unsigned max, count; uint8_t overflow; SemaphoreHandle_t done; int done_status; } disc_ctx_t;
 static int disc_svc_cb(uint16_t conn_handle, const struct ble_gatt_error *error, const struct ble_gatt_svc *service, void *arg) {
     (void)conn_handle;
     /* See mtk_ble_op_lifecycle.h -- the whole body runs under the
@@ -523,6 +576,7 @@ static int disc_svc_cb(uint16_t conn_handle, const struct ble_gatt_error *error,
     disc_ctx_t *c = NULL;
     if (!mtk_ble_op_lifecycle_callback_begin(&s_op_lc, (uint32_t)(uintptr_t)arg, (void **)&c)) return 0;
     if (!c) { mtk_ble_op_lifecycle_callback_end(&s_op_lc); return 0; }
+    if (service && error->status == 0 && c->count >= c->max) c->overflow = 1U;
     if (service && error->status == 0 && c->count < c->max) {
         mtk_hal_gatt_service_t *o = &c->out[c->count];
         /* A 16-bit UUID only ever writes uuid_value[0..1] below, but the
@@ -580,7 +634,7 @@ static int esp32_gatt_discover(uint16_t vendor_handle, mtk_hal_gatt_service_t *o
      * allowed to leave scope. */
     mtk_ble_op_lifecycle_retire(&s_op_lc);
     vSemaphoreDelete(ctx.done);
-    return failed ? -1 : (int)ctx.count;
+    return (failed || ctx.overflow) ? -1 : (int)ctx.count;
 }
 
 /* Full-result-set discovery, companion to disc_svc_cb above (which only ever
@@ -589,14 +643,16 @@ static int esp32_gatt_discover(uint16_t vendor_handle, mtk_hal_gatt_service_t *o
  * characteristic/descriptor NimBLE reports in the requested range, up to max_out
  * -- the canonical GATT_DISCOVER_CHARS/GATT_DISCOVER_DESCS opcodes (new, purely
  * additive; see schemas.json) surface these results over the wire for the UART
- * `connect`/`services` commands. */
-typedef struct { mtk_hal_gatt_char_t *out; unsigned max, count; SemaphoreHandle_t done; int done_status; } disc_chr_ctx_t;
+ * `connect`/`services` commands. A callback beyond max_out makes discovery
+ * fail rather than silently claiming a complete bounded result. */
+typedef struct { mtk_hal_gatt_char_t *out; unsigned max, count; uint8_t overflow; SemaphoreHandle_t done; int done_status; } disc_chr_ctx_t;
 static int disc_chr_cb(uint16_t conn_handle, const struct ble_gatt_error *error, const struct ble_gatt_chr *chr, void *arg) {
     (void)conn_handle;
     /* See mtk_ble_op_lifecycle.h. */
     disc_chr_ctx_t *c = NULL;
     if (!mtk_ble_op_lifecycle_callback_begin(&s_op_lc, (uint32_t)(uintptr_t)arg, (void **)&c)) return 0;
     if (!c) { mtk_ble_op_lifecycle_callback_end(&s_op_lc); return 0; }
+    if (chr && error->status == 0 && c->count >= c->max) c->overflow = 1U;
     if (chr && error->status == 0 && c->count < c->max) {
         mtk_hal_gatt_char_t *o = &c->out[c->count];
         memset(o->uuid_value, 0, sizeof(o->uuid_value));
@@ -636,10 +692,10 @@ static int esp32_gatt_discover_chars(uint16_t vendor_handle, uint16_t start_hand
     int failed = mtek_ble_disc_failed(start_rc, semaphore_signaled, ctx.done_status, BLE_HS_EDONE);
     mtk_ble_op_lifecycle_retire(&s_op_lc);
     vSemaphoreDelete(ctx.done);
-    return failed ? -1 : (int)ctx.count;
+    return (failed || ctx.overflow) ? -1 : (int)ctx.count;
 }
 
-typedef struct { mtk_hal_gatt_desc_t *out; unsigned max, count; SemaphoreHandle_t done; int done_status; } disc_dsc_ctx_t;
+typedef struct { mtk_hal_gatt_desc_t *out; unsigned max, count; uint8_t overflow; SemaphoreHandle_t done; int done_status; } disc_dsc_ctx_t;
 static int disc_dsc_full_cb(uint16_t conn_handle, const struct ble_gatt_error *error, uint16_t chr_val_handle,
                              const struct ble_gatt_dsc *dsc, void *arg) {
     (void)conn_handle; (void)chr_val_handle;
@@ -647,6 +703,7 @@ static int disc_dsc_full_cb(uint16_t conn_handle, const struct ble_gatt_error *e
     disc_dsc_ctx_t *c = NULL;
     if (!mtk_ble_op_lifecycle_callback_begin(&s_op_lc, (uint32_t)(uintptr_t)arg, (void **)&c)) return 0;
     if (!c) { mtk_ble_op_lifecycle_callback_end(&s_op_lc); return 0; }
+    if (dsc && error->status == 0 && c->count >= c->max) c->overflow = 1U;
     if (dsc && error->status == 0 && c->count < c->max) {
         mtk_hal_gatt_desc_t *o = &c->out[c->count];
         memset(o->uuid_value, 0, sizeof(o->uuid_value));
@@ -675,14 +732,19 @@ static int esp32_gatt_discover_descs(uint16_t vendor_handle, uint16_t start_hand
                                * a real, distinct failure, never conflated with a
                                * genuine zero-descriptor result */
     uint32_t gen = mtk_ble_op_lifecycle_arm(&s_op_lc, &ctx);
-    int start_rc = ble_gattc_disc_all_dscs(vendor_handle, start_handle, end_handle, disc_dsc_full_cb, (void *)(uintptr_t)gen);
+    /* The HAL range starts at the first descriptor, but NimBLE treats its
+     * start_handle as the preceding characteristic value handle and searches
+     * from start_handle + 1. Pass the preceding handle so a lone descriptor
+     * (especially a CCCD) is included rather than skipped. */
+    int start_rc = ble_gattc_disc_all_dscs(vendor_handle, start_handle ? (uint16_t)(start_handle - 1U) : 0U,
+                                           end_handle, disc_dsc_full_cb, (void *)(uintptr_t)gen);
     /* See esp32_gatt_discover's own doc comment for the full rationale. */
     int semaphore_signaled = 0;
     if (start_rc == 0) semaphore_signaled = (xSemaphoreTake(ctx.done, pdMS_TO_TICKS(5000)) == pdTRUE);
     int failed = mtek_ble_disc_failed(start_rc, semaphore_signaled, ctx.done_status, BLE_HS_EDONE);
     mtk_ble_op_lifecycle_retire(&s_op_lc);
     vSemaphoreDelete(ctx.done);
-    return failed ? -1 : (int)ctx.count;
+    return (failed || ctx.overflow) ? -1 : (int)ctx.count;
 }
 
 typedef struct { uint8_t *out; uint16_t max, len; int rc; SemaphoreHandle_t done; } read_ctx_t;
@@ -793,7 +855,11 @@ static uint16_t find_cccd_handle_in_range(uint16_t vendor_handle, uint16_t searc
     ctx.done = xSemaphoreCreateBinary();
     if (!ctx.done) return MTK_GATT_CCCD_ALLOC_FAILED;
     uint32_t gen = mtk_ble_op_lifecycle_arm(&s_op_lc, &ctx);
-    int start_rc = ble_gattc_disc_all_dscs(vendor_handle, search_start, search_end, dsc_cb, (void *)(uintptr_t)gen);
+    /* search_start is the first descriptor in the HAL contract. NimBLE begins
+     * at one handle AFTER its start argument; passing search_start directly
+     * silently omits a CCCD when it is the characteristic's only descriptor. */
+    int start_rc = ble_gattc_disc_all_dscs(vendor_handle, search_start ? (uint16_t)(search_start - 1U) : 0U,
+                                           search_end, dsc_cb, (void *)(uintptr_t)gen);
     /* See esp32_gatt_discover's own doc comment for the full rationale -- an
      * immediate start failure, a semaphore timeout, or a real callback-reported
      * error must never be reported the same way as a genuine, complete search
@@ -938,12 +1004,12 @@ static int esp32_gatt_poll_notify(uint16_t vendor_handle, uint16_t *attr_handle_
  * currently thinks is active (a stale flag from an already-superseded connection
  * is otherwise possible in principle, though the arbiter's
  * single-active-GC-class model means at most one is ever really live). */
-static int esp32_gatt_poll_disconnected(uint16_t vendor_handle, uint8_t *reason_out) {
+static int esp32_gatt_poll_disconnected(uint16_t vendor_handle, mtk_hal_gatt_disconnect_info_t *info_out) {
     notify_lock();
     int hit = (s_disconnected_handle == vendor_handle);
     if (hit) {
         s_disconnected_handle = 0xFFFF;
-        if (reason_out) *reason_out = s_disconnect_reason;
+        if (info_out) *info_out = s_disconnect_info;
     }
     notify_unlock();
     return hit;

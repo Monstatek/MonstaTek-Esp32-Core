@@ -63,6 +63,19 @@ typedef struct {
     uint16_t handle;
 } mtk_hal_gatt_desc_t;
 
+/* GAP disconnect details are copied in the NimBLE callback before the
+ * connection descriptor disappears. Interval is in 1.25 ms units and
+ * supervision timeout in 10 ms units, as in ble_gap_conn_desc. */
+typedef struct {
+    int reason;
+    uint16_t interval;
+    uint16_t latency;
+    uint16_t supervision_timeout;
+    uint8_t local_terminate_requested;
+    uint16_t conn_update_count;
+    int conn_update_status; /* Last NimBLE status; -1 if no update event. */
+} mtk_hal_gatt_disconnect_info_t;
+
 typedef struct mtk_ble_hal {
     int (*scan)(uint8_t mode, uint16_t duration_ms, const char *name_filter,
                 mtk_hal_ble_adv_t *out, unsigned max_out);
@@ -119,9 +132,9 @@ typedef struct mtk_ble_hal {
      * does. NULL-safe (older/host-fake HALs that never model an async remote
      * disconnect may omit it).
      *
-     * `*reason_out` (valid only when this returns 1) is the real HCI-level
-     * disconnect reason -- never a hard-coded placeholder. */
-    int (*gatt_poll_disconnected)(uint16_t vendor_handle, uint8_t *reason_out);
+     * `info_out->reason` is the full NimBLE host reason, including its HCI
+     * error base (e.g. 0x213), without narrowing it to the low HCI byte. */
+    int (*gatt_poll_disconnected)(uint16_t vendor_handle, mtk_hal_gatt_disconnect_info_t *info_out);
     /* A running total of notifications the HAL's own bounded queue has dropped
      * since the current connection was established (reset to 0 on each new
      * gatt_connect). NULL-safe (older/host-fake HALs that never model overflow

@@ -161,4 +161,125 @@ MTK_TEST_MAIN_BEGIN
     MTK_CHECK(p_chr0 && p_dsc && p_chr1);
     MTK_CHECK(p_chr0 < p_dsc); MTK_CHECK(p_dsc < p_chr1);
 
+    /* The UART output length must never exceed its actual buffer capacity,
+     * even when a peripheral's tree is larger than the caller's output. */
+    struct { char text[96]; uint8_t guard[16]; } bounded;
+    memset(&bounded, 0xA5, sizeof(bounded));
+    size_t bounded_len = mtek_uart_process_line(&st, "services", bounded.text, sizeof(bounded.text));
+    MTK_CHECK(bounded_len < sizeof(bounded.text));
+    MTK_CHECK(strstr(bounded.text, "[BLE:ERR] discovery output truncated\n") != NULL);
+    for (size_t i = 0; i < sizeof(bounded.guard); i++) MTK_CHECK_EQ(bounded.guard[i], 0xA5);
+    struct { char text[8]; uint8_t guard[16]; } tiny;
+    memset(&tiny, 0xA5, sizeof(tiny));
+    size_t tiny_len = mtek_uart_process_line(&st, "services", tiny.text, sizeof(tiny.text));
+    MTK_CHECK(tiny_len < sizeof(tiny.text));
+    for (size_t i = 0; i < sizeof(tiny.guard); i++) MTK_CHECK_EQ(tiny.guard[i], 0xA5);
+
+    /* A failed CCCD clear must remain visible over the STM32-facing UART.
+     * Retry succeeds without dropping the connection or leaking notifications. */
+    mtek_uart_process_line(&st, "subscribe 3", out, sizeof(out));
+    MTK_CHECK(strcmp(out, "[BLE:SUB] ok\n") == 0);
+    g_fake_ble.gatt_unsubscribe_rc = -1;
+    size_t un = mtek_uart_process_line(&st, "unsubscribe 3", out, sizeof(out));
+    char expected_error[80];
+    snprintf(expected_error, sizeof(expected_error),
+             "[BLE:ERR] unsubscribe failed status=%u\n", (unsigned)MTK_STATUS_IO_ERROR);
+    MTK_CHECK_EQ(un, strlen(expected_error));
+    MTK_CHECK(strcmp(out, expected_error) == 0);
+    MTK_CHECK_EQ(g_fake_ble.last_unsubscribe_attr_handle, 3);
+    MTK_CHECK_EQ(g_fake_ble.last_unsubscribe_end_handle, 10);
+    g_fake_ble.notify_pending = 1;
+    g_fake_ble.notify_handle = 3;
+    g_fake_ble.notify_len = 1;
+    g_fake_ble.notify_data[0] = 0x42;
+    mtek_ble_gatt_tick();
+    mtek_uart_adapter_poll_background(&st, out, sizeof(out));
+    MTK_CHECK(strstr(out, "[BLE:NTF] handle=3 len=1 data=42") != NULL);
+
+    g_fake_ble.gatt_unsubscribe_rc = 0;
+    un = mtek_uart_process_line(&st, "unsubscribe 3", out, sizeof(out));
+    MTK_CHECK_EQ(un, strlen("[BLE:UNSUB] ok\n"));
+    MTK_CHECK(strcmp(out, "[BLE:UNSUB] ok\n") == 0);
+    MTK_CHECK_EQ(st.gatt_connected, 1);
+    g_fake_ble.notify_pending = 1;
+    mtek_ble_gatt_tick();
+    MTK_CHECK_EQ(mtek_uart_adapter_poll_background(&st, out, sizeof(out)), 0);
+
+    /* The Explorer's split connection command obeys the 30-second connect
+     * contract without waiting for a synchronous tree walk. Legacy `connect`
+     * above still auto-discovers for existing UART clients. */
+    mtek_uart_process_line(&st, "disconnect", out, sizeof(out));
+    mtk_fake_ble_reset();
+    memcpy(g_fake_ble.scan_results[0].addr.b, (uint8_t[]){1,2,3,4,5,6}, 6);
+    g_fake_ble.scan_count = 1;
+    g_fake_ble.gatt_vendor_handle = 9;
+    g_fake_ble.gatt_discover_force_fail = 1;
+    mtek_uart_process_line(&st, "scan", out, sizeof(out));
+    MTK_CHECK(mtek_uart_adapter_line_is_recognized(&st, "connect-only 0"));
+    cn = mtek_uart_process_line(&st, "connect-only 0", out, sizeof(out));
+    MTK_CHECK(cn > 0);
+    MTK_CHECK_EQ(st.gatt_connected, 1);
+    MTK_CHECK(strstr(out, "[BLE:CONN] connected handle=") != NULL);
+    MTK_CHECK(strstr(out, "[BLE:DISC]") == NULL);
+
+    /* A discovery failure must not turn into an apparently empty Services
+     * list, nor may legacy connect claim its auto-discovery was complete. */
+    mtek_uart_process_line(&st, "services", out, sizeof(out));
+    MTK_CHECK(strstr(out, "[BLE:ERR] discovery incomplete\n") != NULL);
+    mtek_uart_process_line(&st, "disconnect", out, sizeof(out));
+    mtek_uart_process_line(&st, "connect 0", out, sizeof(out));
+    MTK_CHECK(strstr(out, "[BLE:ERR] discovery incomplete\n") != NULL);
+    MTK_CHECK(strstr(out, "[BLE:DISC] complete") == NULL);
+
+    /* The ninth service is beyond the UART view's first page. The response
+     * must identify the partial tree instead of declaring eight services a
+     * complete peripheral database. */
+    mtek_uart_process_line(&st, "disconnect", out, sizeof(out));
+    mtk_fake_ble_reset();
+    memcpy(g_fake_ble.scan_results[0].addr.b, (uint8_t[]){1,2,3,4,5,6}, 6);
+    g_fake_ble.scan_count = 1;
+    g_fake_ble.gatt_vendor_handle = 10;
+    g_fake_ble.gatt_service_count = 9;
+    for (unsigned i = 0; i < 9; i++) {
+        g_fake_ble.gatt_services[i].start_handle = (uint16_t)(i * 10 + 1);
+        g_fake_ble.gatt_services[i].end_handle = (uint16_t)(i * 10 + 10);
+    }
+    mtek_uart_process_line(&st, "scan", out, sizeof(out));
+    mtek_uart_process_line(&st, "connect-only 0", out, sizeof(out));
+    MTK_CHECK_EQ(st.gatt_connected, 1);
+    mtek_uart_process_line(&st, "services", out, sizeof(out));
+    MTK_CHECK(strstr(out, "[SVC 7]") != NULL);
+    MTK_CHECK(strstr(out, "[SVC 8]") == NULL);
+    MTK_CHECK(strstr(out, "[BLE:ERR] discovery incomplete\n") != NULL);
+
+    /* The same incomplete marker covers characteristic and descriptor pages.
+     * A partly populated tree is never an ordinary successful Services list. */
+    mtek_uart_process_line(&st, "disconnect", out, sizeof(out));
+    mtk_fake_ble_reset();
+    memcpy(g_fake_ble.scan_results[0].addr.b, (uint8_t[]){1,2,3,4,5,6}, 6);
+    g_fake_ble.scan_count = 1;
+    g_fake_ble.gatt_vendor_handle = 11;
+    g_fake_ble.gatt_service_count = 1;
+    g_fake_ble.gatt_services[0].start_handle = 1;
+    g_fake_ble.gatt_services[0].end_handle = 30;
+    g_fake_ble.gatt_char_count = 9;
+    for (unsigned i = 0; i < 9; i++) {
+        g_fake_ble.gatt_chars[i].def_handle = (uint16_t)(i * 2 + 2);
+        g_fake_ble.gatt_chars[i].val_handle = (uint16_t)(i * 2 + 3);
+    }
+    mtek_uart_process_line(&st, "scan", out, sizeof(out));
+    mtek_uart_process_line(&st, "connect-only 0", out, sizeof(out));
+    mtek_uart_process_line(&st, "services", out, sizeof(out));
+    MTK_CHECK(strstr(out, "[BLE:ERR] discovery incomplete\n") != NULL);
+
+    mtek_uart_process_line(&st, "disconnect", out, sizeof(out));
+    g_fake_ble.gatt_char_count = 1;
+    g_fake_ble.gatt_chars[0].def_handle = 2;
+    g_fake_ble.gatt_chars[0].val_handle = 3;
+    g_fake_ble.gatt_desc_count = 5;
+    for (unsigned i = 0; i < 5; i++) g_fake_ble.gatt_descs[i].handle = (uint16_t)(i + 4);
+    mtek_uart_process_line(&st, "connect-only 0", out, sizeof(out));
+    mtek_uart_process_line(&st, "services", out, sizeof(out));
+    MTK_CHECK(strstr(out, "[BLE:ERR] discovery incomplete\n") != NULL);
+
 MTK_TEST_MAIN_END
