@@ -186,6 +186,8 @@ MTK_TEST_MAIN_BEGIN
              "[BLE:ERR] unsubscribe failed status=%u\n", (unsigned)MTK_STATUS_IO_ERROR);
     MTK_CHECK_EQ(un, strlen(expected_error));
     MTK_CHECK(strcmp(out, expected_error) == 0);
+    /* A failed clear must not also report success on the same line. */
+    MTK_CHECK(strstr(out, "[BLE:UNSUB] ok") == NULL);
     MTK_CHECK_EQ(g_fake_ble.last_unsubscribe_attr_handle, 3);
     MTK_CHECK_EQ(g_fake_ble.last_unsubscribe_end_handle, 10);
     g_fake_ble.notify_pending = 1;

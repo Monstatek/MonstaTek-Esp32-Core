@@ -33,9 +33,15 @@ It must retain that identity. It is not an artifact of the new initial commit.
 
 The organization-repository candidate previously labeled `rc12-pcap1` at
 `9e65d5e28c6b7bb23cdd2dc166a5fec11aba8338` is likewise superseded for release
-identity purposes. The immutable `rc13` tag and its package manifest are the
-authoritative source and artifact identity for the next hardware-validation
-round.
+identity purposes, as are the later `rc13` and `rc14` candidate identities.
+Those remain immutable as historical hardware-test candidates and are not the
+current release.
+
+The current release identity is the product version **0.8.1.0**, embedded in
+`MTK_BUILD_ID` and reported by `GET_VERSION`. Its package manifest is the
+authoritative source and artifact identity. The Core host API version is
+tracked separately and remains 1.0: the product version changing does not
+alter the API contract.
 
 ## Publication
 
